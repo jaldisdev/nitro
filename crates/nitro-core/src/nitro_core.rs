@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod disconnect;
+pub mod files;
 pub mod headers;
 pub mod lifecycle;
 pub mod router;

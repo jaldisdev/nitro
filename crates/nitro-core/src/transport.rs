@@ -18,6 +18,7 @@ use http::{Method, StatusCode, Uri, Version};
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 
 use crate::disconnect::DisconnectWatcher;
+use crate::files::FileBody;
 use crate::headers::Headers;
 use crate::streaming::{StreamBody, StreamError};
 
@@ -127,6 +128,7 @@ pub enum ResponseBody {
     Empty,
     Bytes(Bytes),
     Stream(StreamBody),
+    File(FileBody),
 }
 
 impl ResponseBody {
@@ -135,6 +137,7 @@ impl ResponseBody {
         match self {
             Self::Empty => Some(0),
             Self::Bytes(bytes) => Some(bytes.len() as u64),
+            Self::File(body) => Some(body.remaining()),
             Self::Stream(_) => None,
         }
     }
@@ -144,6 +147,7 @@ impl ResponseBody {
             Self::Empty => Empty::new().map_err(|never| match never {}).boxed(),
             Self::Bytes(bytes) => Full::new(bytes).map_err(|never| match never {}).boxed(),
             Self::Stream(body) => body.boxed(),
+            Self::File(body) => body.boxed(),
         }
     }
 }

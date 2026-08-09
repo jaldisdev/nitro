@@ -176,7 +176,12 @@ fn run_worker(
     lifecycle::call_startup(bound_application, &event_loop)?;
 
     let locals = TaskLocals::new(event_loop.clone()).copy_context(python)?;
-    let dispatch = PythonDispatch::new(application.clone_ref(python), routes, locals);
+    let dispatch = PythonDispatch::new(
+        application.clone_ref(python),
+        routes,
+        locals,
+        config.stream_queue_capacity,
+    );
 
     let controller = ShutdownController::new();
     let shutdown = controller.subscribe();
