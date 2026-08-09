@@ -22,14 +22,14 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
 
   python:
     name: Python ${{ matrix.python-version }}
@@ -48,8 +48,8 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -58,12 +58,12 @@ jobs:
       - run: pip install maturin
       - name: Build and install nitro
         run: |
-          maturin build --release -o dist
+          maturin build --locked --release -o dist
           pip install "$(ls dist/nitro-*.whl)[dev,all]"
       - name: Build and install nitro-intercom
         working-directory: nitro-intercom
         run: |
-          maturin build --release -o dist
+          maturin build --locked --release -o dist
           pip install "$(ls dist/nitro_intercom-*.whl)[dev]"
       - run: pytest
       - name: Test nitro-intercom
