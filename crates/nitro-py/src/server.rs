@@ -17,6 +17,7 @@ use nitro_core::config::ServerConfig;
 use nitro_core::lifecycle::drain::{DrainCoordinator, DrainOutcome};
 use nitro_core::lifecycle::init_tracing;
 use nitro_core::lifecycle::signals::ShutdownController;
+use nitro_core::router::{ParameterSpec, RouteDefinition, RouteTable};
 use nitro_core::transport::accept::{self, BoundSockets};
 use nitro_core::transport::tls::TlsMaterial;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -39,6 +40,7 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 #[pyclass(name = "Server", module = "nitro._nitro")]
 pub struct Server {
     application: Py<PyAny>,
+    routes: Arc<RouteTable>,
     config: Arc<ServerConfig>,
     tls: Option<TlsMaterial>,
     /// Taken when serving starts, so a second call is refused rather than
@@ -51,9 +53,18 @@ pub struct Server {
 impl Server {
     /// Build a server for `application`, reading its settings from `settings`
     /// and binding every socket immediately.
+    ///
+    /// `routes` describes the route table: for each route its identifier, path,
+    /// methods, and the parameters it captures as `(name, expression, greedy)`.
     #[new]
-    fn new(application: Py<PyAny>, settings: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (application, settings, routes=Vec::new()))]
+    fn new(
+        application: Py<PyAny>,
+        settings: &Bound<'_, PyAny>,
+        routes: Vec<RouteSpec>,
+    ) -> PyResult<Self> {
         let config = config::server_config(settings)?;
+        let routes = build_routes(routes)?;
 
         let tls = match &config.tls {
             Some(settings) => Some(
@@ -77,6 +88,7 @@ impl Server {
 
         Ok(Self {
             application,
+            routes: Arc::new(routes),
             config: Arc::new(config),
             tls,
             sockets: Mutex::new(Some(sockets)),
@@ -116,6 +128,7 @@ impl Server {
             run_worker(
                 python,
                 &self.application,
+                Arc::clone(&self.routes),
                 Arc::clone(&self.config),
                 self.tls.clone(),
                 sockets,
@@ -125,6 +138,7 @@ impl Server {
             supervise(
                 python,
                 &self.application,
+                Arc::clone(&self.routes),
                 Arc::clone(&self.config),
                 self.tls.clone(),
                 &sockets,
@@ -145,6 +159,7 @@ impl Server {
 fn run_worker(
     python: Python<'_>,
     application: &Py<PyAny>,
+    routes: Arc<RouteTable>,
     config: Arc<ServerConfig>,
     tls: Option<TlsMaterial>,
     sockets: BoundSockets,
@@ -161,7 +176,7 @@ fn run_worker(
     lifecycle::call_startup(bound_application, &event_loop)?;
 
     let locals = TaskLocals::new(event_loop.clone()).copy_context(python)?;
-    let dispatch = PythonDispatch::new(application.clone_ref(python), locals);
+    let dispatch = PythonDispatch::new(application.clone_ref(python), routes, locals);
 
     let controller = ShutdownController::new();
     let shutdown = controller.subscribe();
@@ -204,6 +219,32 @@ fn run_worker(
             Ok(outcome)
         }
     }
+}
+
+/// A route as the application describes it: identifier, path, methods, and each
+/// captured parameter as `(name, expression, spans separators)`.
+type RouteSpec = (u64, String, Vec<String>, Vec<(String, String, bool)>);
+
+fn build_routes(specifications: Vec<RouteSpec>) -> PyResult<RouteTable> {
+    let definitions = specifications
+        .into_iter()
+        .map(|(id, path, methods, parameters)| {
+            RouteDefinition::new(id, path, methods).with_parameters(
+                parameters
+                    .into_iter()
+                    .map(|(name, pattern, greedy)| {
+                        let specification = ParameterSpec::new(name, pattern);
+                        if greedy {
+                            specification.greedy()
+                        } else {
+                            specification
+                        }
+                    })
+                    .collect(),
+            )
+        });
+
+    RouteTable::build(definitions).map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 // ── signals ──────────────────────────────────────────────────────────────────
@@ -268,6 +309,7 @@ mod process_signals {
 fn supervise(
     python: Python<'_>,
     application: &Py<PyAny>,
+    routes: Arc<RouteTable>,
     config: Arc<ServerConfig>,
     tls: Option<TlsMaterial>,
     sockets: &BoundSockets,
@@ -277,6 +319,7 @@ fn supervise(
         children.push(fork_worker(
             python,
             application,
+            &routes,
             &config,
             &tls,
             sockets,
@@ -296,7 +339,8 @@ fn supervise(
                 }
                 tracing::error!(pid, status, "worker exited unexpectedly; replacing it");
                 std::thread::sleep(RESPAWN_DELAY);
-                children[slot] = fork_worker(python, application, &config, &tls, sockets, slot)?;
+                children[slot] =
+                    fork_worker(python, application, &routes, &config, &tls, sockets, slot)?;
             }
             None => {
                 // Releasing the interpreter while idling lets a signal handler
@@ -316,6 +360,7 @@ fn supervise(
 fn supervise(
     python: Python<'_>,
     application: &Py<PyAny>,
+    routes: Arc<RouteTable>,
     config: Arc<ServerConfig>,
     tls: Option<TlsMaterial>,
     sockets: &BoundSockets,
@@ -330,9 +375,11 @@ fn supervise(
 /// `os.fork` is used rather than the system call directly so the interpreter
 /// runs its own after-fork bookkeeping in the child.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 fn fork_worker(
     python: Python<'_>,
     application: &Py<PyAny>,
+    routes: &Arc<RouteTable>,
     config: &Arc<ServerConfig>,
     tls: &Option<TlsMaterial>,
     sockets: &BoundSockets,
@@ -360,6 +407,7 @@ fn fork_worker(
     let code = match run_worker(
         python,
         application,
+        Arc::clone(routes),
         Arc::clone(config),
         tls.clone(),
         inherited,

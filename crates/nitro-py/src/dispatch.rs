@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use http::StatusCode;
+use nitro_core::router::RouteTable;
 use nitro_core::transport::{Dispatch, HttpRequest, HttpResponse};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
@@ -23,13 +24,15 @@ pub const HTTP_ENTRY_POINT: &str = "__handle_http__";
 #[derive(Clone)]
 pub struct PythonDispatch {
     application: Arc<Py<PyAny>>,
+    routes: Arc<RouteTable>,
     locals: TaskLocals,
 }
 
 impl PythonDispatch {
-    pub fn new(application: Py<PyAny>, locals: TaskLocals) -> Self {
+    pub fn new(application: Py<PyAny>, routes: Arc<RouteTable>, locals: TaskLocals) -> Self {
         Self {
             application: Arc::new(application),
+            routes,
             locals,
         }
     }
@@ -44,8 +47,18 @@ impl PythonDispatch {
     )> {
         let (responder, receiver) = oneshot::channel();
 
+        // Matching happens before the handler is built so the scope can carry
+        // the route and its captured parameters, and so an application never
+        // has to work out which route a path belongs to.
+        let matched = self
+            .routes
+            .find(request.parts.method.as_str(), request.parts.path());
+
         let coroutine = Python::attach(|python| -> PyResult<_> {
-            let scope = Py::new(python, HttpScope::from_parts(python, &request.parts)?)?;
+            let scope = Py::new(
+                python,
+                HttpScope::from_parts(python, &request.parts, &matched)?,
+            )?;
             let protocol = Py::new(
                 python,
                 HttpProtocol::new(request.body, responder, request.disconnect),

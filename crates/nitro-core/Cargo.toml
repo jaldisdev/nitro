@@ -36,6 +36,7 @@ sha1.workspace = true
 base64.workspace = true
 
 matchit.workspace = true
+regex.workspace = true
 
 bytes.workspace = true
 httpdate.workspace = true
