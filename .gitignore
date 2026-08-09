@@ -48,7 +48,10 @@ pyrightconfig.json
 
 # Rust
 target/
-Cargo.lock
+# Cargo.lock is committed deliberately: this repository builds wheels rather
+# than publishing a library, so every build should resolve to the same
+# dependency versions, and a dependency bump should arrive as a reviewable
+# change rather than happening silently on whichever machine builds next.
 
 # maturin / PyO3 built extension modules
 *.so
