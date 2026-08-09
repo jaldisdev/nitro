@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <meta name="robots" content="NONE,NOARCHIVE" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ exception_type }} at {{ path }}</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: oklch(95.7% 0.012 266.3);
+        --surface: oklch(100% 0 0);
+        --surface-2: oklch(97.4% 0.009 268.5);
+        --border: oklch(91.5% 0.018 270.8);
+        --border-2: oklch(84.8% 0.028 272.5);
+        --text: oklch(21.6% 0.006 56.043);
+        --text-muted: oklch(55.3% 0.013 58.071);
+        --text-dim: oklch(86.9% 0.005 56.366);
+        --accent: oklch(54.1% 0.281 293.009);
+        --error: oklch(27.8% 0.004 56.037);
+        --code: oklch(54.6% 0.245 262.881);
+        --code-bg: oklch(54.6% 0.245 262.881 / 6%);
+        --code-border: oklch(54.6% 0.245 262.881 / 14%);
+        --debug: oklch(55.5% 0.163 48.998);
+        --debug-soft: oklch(95.4% 0.038 75.164);
+        --debug-border: oklch(90.1% 0.074 70.697);
+        --green: oklch(52.7% 0.154 150.069);
+        --green-soft: oklch(52.7% 0.154 150.069 / 8%);
+        --green-border: oklch(52.7% 0.154 150.069 / 20%);
+        --error-line: oklch(97% 0.018 20);
+        --error-mark: oklch(60% 0.2 22);
+        --mono:
+          ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas,
+          "Courier New", monospace;
+        --sans:
+          -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui,
+          sans-serif;
+        --r: 6px;
+        --r-md: 8px;
+      }
+
+      body {
+        font-family: var(--sans);
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* ── Top bar ──────────────────────────── */
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 24px;
+        height: 44px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        z-index: 10;
+      }
+
+      .topbar-brand {
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent);
+        letter-spacing: 0.02em;
+      }
+
+      .topbar-dot {
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: var(--text-dim);
+        flex-shrink: 0;
+      }
+
+      .topbar-badge {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: var(--debug-soft);
+        color: var(--debug);
+        border: 1px solid var(--debug-border);
+      }
+
+      /* ── Main layout ──────────────────────── */
+
+      .main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 52px 24px 72px;
+      }
+
+      /* ── Hero ─────────────────────────────── */
+
+      .hero {
+        margin-bottom: 44px;
+      }
+
+      .hero-status {
+        font-family: var(--mono);
+        font-size: clamp(28px, 5vw, 52px);
+        font-weight: 700;
+        line-height: 1.1;
+        letter-spacing: -0.03em;
+        color: var(--error);
+        opacity: 0.88;
+        word-break: break-word;
+        margin-bottom: 6px;
+      }
+
+      .hero-title {
+        font-family: var(--mono);
+        font-size: 14px;
+        font-weight: 400;
+        color: var(--text-muted);
+        margin-bottom: 18px;
+      }
+
+      .exception-value {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.65;
+        padding: 12px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border-2);
+        border-radius: var(--r-md);
+        margin-bottom: 18px;
+      }
+
+      /* ── Request pill ─────────────────────── */
+
+      .request-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border-2);
+        border-radius: var(--r-md);
+        font-family: var(--mono);
+        font-size: 13px;
+        max-width: 100%;
+        overflow: hidden;
+      }
+
+      .method-tag {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: var(--green-soft);
+        color: var(--green);
+        border: 1px solid var(--green-border);
+        flex-shrink: 0;
+      }
+
+      .request-url {
+        color: var(--code);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* ── Divider ──────────────────────────── */
+
+      .rule {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 40px 0;
+      }
+
+      /* ── Section eyebrow ──────────────────── */
+
+      .section-eyebrow {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin-bottom: 14px;
+      }
+
+      /* ── Meta grid ────────────────────────── */
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: 10em 1fr;
+        border-top: 1px dashed var(--border);
+      }
+
+      .meta-grid dt,
+      .meta-grid dd {
+        padding: 8px 0;
+        font-size: 13px;
+        border-bottom: 1px dashed var(--border);
+      }
+
+      .meta-grid dt {
+        font-size: 12px;
+        color: var(--text-muted);
+        padding-right: 16px;
+      }
+
+      .meta-grid dd {
+        font-family: var(--mono);
+      }
+
+      .meta-grid dd pre {
+        font-family: inherit;
+        font-size: 13px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .meta-grid dd code {
+        font-family: inherit;
+        font-size: 13px;
+      }
+
+      /* ── Traceback ────────────────────────── */
+
+      .traceback-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .frame {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+      }
+
+      .frame--error {
+        border-color: var(--border-2);
+      }
+
+      .frame-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 10px;
+        padding: 8px 14px;
+      }
+
+      .frame-filename {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--code);
+        user-select: all;
+      }
+
+      .frame-loc {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      /* ── Code context ─────────────────────── */
+
+      .context-block {
+        border-top: 1px solid var(--border);
+        overflow: hidden;
+      }
+
+      .context-block ol {
+        list-style-type: decimal;
+        list-style-position: inside;
+        margin: 0;
+        padding: 3px 14px;
+        background: var(--surface-2);
+        overflow-x: auto;
+      }
+
+      .context-block li {
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.65;
+        color: var(--text-muted);
+        cursor: pointer;
+      }
+
+      .context-block li::marker {
+        color: var(--text-dim);
+        font-size: 10px;
+      }
+
+      .context-block li pre {
+        display: inline;
+        font-family: inherit;
+        font-size: inherit;
+        white-space: pre;
+      }
+
+      .context-block ol.context-line {
+        background: var(--error-line);
+        padding-top: 4px;
+        padding-bottom: 4px;
+      }
+
+      .context-block ol.context-line li {
+        color: var(--text);
+      }
+
+      .context-block ol.context-line li::marker {
+        color: var(--error-mark);
+      }
+
+      .expand-hint {
+        color: var(--text-dim);
+        font-size: 11px;
+        margin-left: 6px;
+        user-select: none;
+      }
+
+      /* ── Debug notice ─────────────────────── */
+
+      .debug-notice {
+        display: flex;
+        gap: 12px;
+        margin-top: 52px;
+        padding: 14px 16px;
+        border-radius: var(--r-md);
+        background: var(--debug-soft);
+        border: 1px solid var(--debug-border);
+      }
+
+      .debug-notice-icon {
+        font-size: 20px;
+        color: var(--debug);
+        flex-shrink: 0;
+        margin-top: -2px;
+        opacity: 0.9;
+      }
+
+      .debug-notice-text {
+        font-size: 13px;
+        color: oklch(37.2% 0 0);
+        line-height: 1.7;
+      }
+
+      .debug-notice-text code {
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: oklch(90.1% 0.074 70.697);
+        color: var(--debug);
+      }
+    </style>
+    <script>
+      function hideAll(elems) {
+        for (var i = 0; i < elems.length; i++) {
+          elems[i].style.display = "none";
+        }
+      }
+      window.onload = function () {
+        hideAll(document.querySelectorAll("ol.pre-context"));
+        hideAll(document.querySelectorAll("ol.post-context"));
+      };
+      function toggle() {
+        var e0 = document.getElementById(arguments[0]);
+        if (!e0) return false;
+        var expanding = e0.style.display === "none";
+        for (var i = 0; i < arguments.length; i++) {
+          var e = document.getElementById(arguments[i]);
+          if (e) e.style.display = expanding ? "block" : "none";
+        }
+        var block = e0.closest(".context-block");
+        if (block) {
+          var ind = parseInt(block.getAttribute("data-indent")) || 0;
+          if (ind > 0) {
+            var pre = block.querySelector("ol.context-line li pre");
+            if (pre) {
+              pre.textContent = expanding
+                ? " ".repeat(ind) + pre.textContent
+                : pre.textContent.replace(/^ +/, "");
+            }
+          }
+        }
+        return false;
+      }
+    </script>
+  </head>
+  <body>
+    <div class="topbar">
+      <span class="topbar-brand">Nitro</span>
+      <span class="topbar-dot" aria-hidden="true"></span>
+      <span class="topbar-badge">debug</span>
+    </div>
+
+    <main class="main">
+      <div class="hero">
+        <h1 class="hero-status">{{ exception_type }}</h1>
+        <p class="hero-title">at {{ path }}</p>
+        <pre class="exception-value">{{ exception_value }}</pre>
+        <div class="request-pill">
+          <span class="method-tag">{{ method }}</span>
+          <span class="request-url">{{ path }}</span>
+        </div>
+      </div>
+
+      <hr class="rule" />
+
+      <section>
+        <p class="section-eyebrow">Details</p>
+        <dl class="meta-grid">
+          <dt>Exception type</dt>
+          <dd>{{ exception_type }}</dd>
+          <dt>Exception value</dt>
+          <dd><pre>{{ exception_value }}</pre></dd>
+          {% if frames %}
+          <dt>Exception location</dt>
+          <dd>
+            <code class="fname">{{ frames[-1].filename }}</code>, line {{
+            frames[-1].lineno }}, in {{ frames[-1].name }}
+          </dd>
+          {% endif %}
+          <dt>Request method</dt>
+          <dd>{{ method }}</dd>
+          <dt>Request URL</dt>
+          <dd>{{ path }}</dd>
+          <dt>Python version</dt>
+          <dd>{{ python_version }}</dd>
+        </dl>
+      </section>
+
+      <hr class="rule" />
+
+      <section>
+        <p class="section-eyebrow">Traceback &middot; most recent call last</p>
+        <ul class="traceback-list">
+          {% for frame in frames %}
+          <li class="frame{% if loop.last %} frame--error{% endif %}">
+            <div class="frame-header">
+              <code class="frame-filename fname">{{ frame.filename }}</code>
+              <span class="frame-loc"
+                >line {{ frame.lineno }} &middot; {{ frame.name }}</span
+              >
+            </div>
+            {% if frame.context_line is not none %} {%- set _ctx =
+            ((frame.pre_context or []) + [frame.context_line] +
+            (frame.post_context or [])) -%} {%- set _ns = namespace(ind=999) -%}
+            {%- for _l in _ctx -%} {%- set _li = (_l | length) - (_l.lstrip() |
+            length) -%} {%- if _l.strip() and _li > 0 and _li < _ns.ind -%}{%-
+            set _ns.ind = _li -%}{%- endif -%} {%- endfor -%} {%- set _ind =
+            _ns.ind if _ns.ind < 999 else 0 -%} {%- set _cli =
+            (frame.context_line | length) - (frame.context_line.lstrip() |
+            length) -%} {%- set _rel = _cli - _ind if _cli >= _ind else 0 -%}
+            <div class="context-block" data-indent="{{ _rel }}">
+              {% if frame.pre_context %}
+              <ol
+                start="{{ frame.pre_context_lineno }}"
+                class="pre-context"
+                id="pre{{ frame.id }}"
+              >
+                {% for line in frame.pre_context %} {%- set _li = (line |
+                length) - (line.lstrip() | length) -%} {%- set _v = line[_ind:]
+                if _li >= _ind else line -%}
+                <li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">
+                  <pre>{{ _v.rstrip('\n\r') }}</pre>
+                </li>
+                {% endfor %}
+              </ol>
+              {% endif %}
+              <ol start="{{ frame.lineno }}" class="context-line">
+                <li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">
+                  <pre>{{ frame.context_line.rstrip('\n\r').lstrip() }}</pre>
+                  <span class="expand-hint">…</span>
+                </li>
+              </ol>
+              {% if frame.post_context %}
+              <ol
+                start="{{ frame.lineno + 1 }}"
+                class="post-context"
+                id="post{{ frame.id }}"
+              >
+                {% for line in frame.post_context %} {%- set _li = (line |
+                length) - (line.lstrip() | length) -%} {%- set _v = line[_ind:]
+                if _li >= _ind else line -%}
+                <li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">
+                  <pre>{{ _v.rstrip('\n\r') }}</pre>
+                </li>
+                {% endfor %}
+              </ol>
+              {% endif %}
+            </div>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </section>
+
+      <div class="debug-notice" role="note">
+        <span class="debug-notice-icon" aria-hidden="true">⚠</span>
+        <p class="debug-notice-text">
+          You're seeing this because <code>DEBUG = True</code> in your Nitro
+          settings. Set it to <code>False</code> in production and Nitro will
+          display a standard 500 page instead.
+        </p>
+      </div>
+    </main>
+  </body>
+</html>

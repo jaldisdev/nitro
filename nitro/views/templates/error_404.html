@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <meta name="robots" content="NONE,NOARCHIVE" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>404 — {{ path }}</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: oklch(95.7% 0.012 266.3);
+        --surface: oklch(100% 0 0);
+        --surface-2: oklch(97.4% 0.009 268.5);
+        --border: oklch(91.5% 0.018 270.8);
+        --border-2: oklch(84.8% 0.028 272.5);
+        --text: oklch(21.6% 0.006 56.043);
+        --text-muted: oklch(55.3% 0.013 58.071);
+        --text-dim: oklch(86.9% 0.005 56.366);
+        --accent: oklch(54.1% 0.281 293.009);
+        --error: oklch(27.8% 0.004 56.037);
+        --code: oklch(54.6% 0.245 262.881);
+        --code-bg: oklch(54.6% 0.245 262.881 / 6%);
+        --code-border: oklch(54.6% 0.245 262.881 / 14%);
+        --debug: oklch(55.5% 0.163 48.998);
+        --debug-soft: oklch(95.4% 0.038 75.164);
+        --debug-border: oklch(90.1% 0.074 70.697);
+        --green: oklch(52.7% 0.154 150.069);
+        --green-soft: oklch(52.7% 0.154 150.069 / 8%);
+        --green-border: oklch(52.7% 0.154 150.069 / 20%);
+        --mono:
+          ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas,
+          "Courier New", monospace;
+        --sans:
+          -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui,
+          sans-serif;
+        --r: 6px;
+        --r-md: 8px;
+      }
+
+      body {
+        font-family: var(--sans);
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* ── Top bar ──────────────────────────── */
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 24px;
+        height: 44px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        z-index: 10;
+      }
+
+      .topbar-brand {
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent);
+        letter-spacing: 0.02em;
+      }
+
+      .topbar-dot {
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: var(--text-dim);
+        flex-shrink: 0;
+      }
+
+      .topbar-badge {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: var(--debug-soft);
+        color: var(--debug);
+        border: 1px solid var(--debug-border);
+      }
+
+      /* ── Main layout ──────────────────────── */
+
+      .main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 52px 24px 72px;
+      }
+
+      /* ── Hero ─────────────────────────────── */
+
+      .hero {
+        margin-bottom: 44px;
+      }
+
+      .hero-status {
+        font-family: var(--mono);
+        font-size: clamp(80px, 14vw, 128px);
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: -0.04em;
+        color: var(--error);
+        margin-bottom: 10px;
+        opacity: 0.88;
+      }
+
+      .hero-title {
+        font-size: 18px;
+        font-weight: 500;
+        color: var(--text);
+        margin-bottom: 22px;
+        letter-spacing: -0.01em;
+      }
+
+      /* ── Request pill ─────────────────────── */
+
+      .request-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border-2);
+        border-radius: var(--r-md);
+        font-family: var(--mono);
+        font-size: 13px;
+        max-width: 100%;
+        overflow: hidden;
+      }
+
+      .method-tag {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: var(--green-soft);
+        color: var(--green);
+        border: 1px solid var(--green-border);
+        flex-shrink: 0;
+      }
+
+      .request-url {
+        color: var(--code);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* ── Divider ──────────────────────────── */
+
+      .rule {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 40px 0;
+      }
+
+      /* ── Section eyebrow ──────────────────── */
+
+      .section-eyebrow {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin-bottom: 14px;
+      }
+
+      /* ── Pattern list ─────────────────────── */
+
+      .pattern-list {
+        list-style: none;
+        counter-reset: routes;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-bottom: 18px;
+      }
+
+      .pattern-list li {
+        counter-increment: routes;
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        padding: 7px 10px;
+        border-radius: var(--r);
+        transition: background 0.1s ease;
+      }
+
+      .pattern-list li:hover {
+        background: var(--surface);
+      }
+
+      .pattern-list li::before {
+        content: counter(routes);
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-dim);
+        min-width: 16px;
+        text-align: right;
+        flex-shrink: 0;
+        user-select: none;
+      }
+
+      .pattern-list li code {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--text);
+      }
+
+      /* ── No-match note ────────────────────── */
+
+      .miss-note {
+        font-size: 13px;
+        color: var(--text-muted);
+        line-height: 1.7;
+      }
+
+      .miss-note code {
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: var(--code-bg);
+        color: var(--code);
+        border: 1px solid var(--code-border);
+      }
+
+      .no-patterns {
+        font-size: 13px;
+        color: var(--text-muted);
+        font-style: italic;
+      }
+
+      /* ── Debug notice ─────────────────────── */
+
+      .debug-notice {
+        display: flex;
+        gap: 12px;
+        margin-top: 52px;
+        padding: 14px 16px;
+        border-radius: var(--r-md);
+        background: var(--debug-soft);
+        border: 1px solid var(--debug-border);
+      }
+
+      .debug-notice-icon {
+        font-size: 20px;
+        color: var(--debug);
+        flex-shrink: 0;
+        margin-top: -2px;
+        opacity: 0.9;
+      }
+
+      .debug-notice-text {
+        font-size: 13px;
+        color: oklch(37.2% 0 0);
+        line-height: 1.7;
+      }
+
+      .debug-notice-text code {
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: oklch(90.1% 0.074 70.697);
+        color: var(--debug);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <span class="topbar-brand">Nitro</span>
+      <span class="topbar-dot" aria-hidden="true"></span>
+      <span class="topbar-badge">debug</span>
+    </div>
+
+    <main class="main">
+      <div class="hero">
+        <div class="hero-status" aria-label="HTTP 404">404</div>
+        <h1 class="hero-title">Page not found</h1>
+        <div class="request-pill">
+          <span class="method-tag">{{ method }}</span>
+          <span class="request-url">{{ path }}</span>
+        </div>
+      </div>
+
+      <hr class="rule" />
+
+      <section>
+        {% if url_patterns %}
+        <p class="section-eyebrow">Routes tried</p>
+        <ol class="pattern-list">
+          {% for pattern in url_patterns %}
+          <li><code>{{ pattern }}</code></li>
+          {% endfor %}
+        </ol>
+        <p class="miss-note">
+          The current path <code>{{ path }}</code> didn't match any of these.
+        </p>
+        {% else %}
+        <p class="no-patterns">No URL patterns are registered.</p>
+        {% endif %}
+      </section>
+
+      <div class="debug-notice" role="note">
+        <span class="debug-notice-icon" aria-hidden="true">⚠</span>
+        <p class="debug-notice-text">
+          You're seeing this because <code>DEBUG = True</code> in your Nitro
+          settings. Set it to <code>False</code> in production and Nitro will
+          display a standard 404 page instead.
+        </p>
+      </div>
+    </main>
+  </body>
+</html>

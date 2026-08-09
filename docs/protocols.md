@@ -126,12 +126,6 @@ For a byte range:
 return FileResponse(path, range=(start, end))     # end is inclusive, or None
 ```
 
-A satisfiable range is answered with `206` and a `Content-Range`. A range
-starting past the end of the file is answered with `416`, not with an empty
-`206` that would claim the range was honoured. An end past the last byte is
-clamped, because asking for more than exists is a normal way to ask for the
-rest.
-
 ### Streaming
 
 ```python
@@ -183,6 +177,17 @@ async def show(request: HttpRequest, user_id: int) -> HttpResponse:
 Raising one of these is a way of saying "answer with this status" without
 building the response. A string detail becomes plain text; anything else becomes
 JSON. They are answers, not failures, and are never flattened into a 500.
+
+### While DEBUG is on
+
+A 404 is answered with a page listing the routes that were tried, and a 500 with
+the traceback and the source around each frame. Both come from templates Nitro
+carries rather than the project's own engine, since they have to work when the
+project's configuration is what is broken.
+
+Every other status keeps its ordinary answer — a 403 stays the response the
+exception describes. With `DEBUG` off, a 404 is `Not Found` and a 500 is
+`Internal Server Error`, and nothing about the failure reaches the client.
 
 ## Answering directly
 

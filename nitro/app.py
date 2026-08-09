@@ -45,6 +45,15 @@ LifecycleCallback = Callable[[], Any]
 _PLAIN_TEXT = ("content-type", "text/plain; charset=utf-8")
 
 
+def _full_path(scope: Any) -> str:
+    """The path a request asked for, query string included."""
+    path = getattr(scope, "path", "/")
+    query = getattr(scope, "query_string", "") or ""
+    if isinstance(query, bytes):
+        query = query.decode("utf-8", errors="replace")
+    return f"{path}?{query}" if query else path
+
+
 def _is_async_callable(handler: Any) -> bool:
     """Whether `handler` can be awaited when called.
 
@@ -238,7 +247,7 @@ class Nitro:
                     "Method Not Allowed",
                 )
             else:
-                protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
+                await self._not_found(scope, protocol)
             return
 
         try:
@@ -248,7 +257,7 @@ class Nitro:
             # into a value, so as far as the application is concerned the path
             # does not name anything.
             logger.debug("path parameters for %s could not be converted", scope.path, exc_info=True)
-            protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
+            await self._not_found(scope, protocol)
             return
 
         request = HttpRequest(scope, protocol, parameters)
@@ -259,15 +268,51 @@ class Nitro:
         try:
             result = await self.middleware.execute_http(request, call_handler)
         except HttpException as exception:
-            await exception.as_response().__http__(protocol)
-        except Exception:
+            page = self._debug_page(scope, exception.status_code, exception)
+            await (page or exception.as_response()).__http__(protocol)
+        except Exception as exception:
             logger.exception("handler for %s %s failed", scope.method, scope.path)
-            protocol.response_str(500, [_PLAIN_TEXT], "Internal Server Error")
+            page = self._debug_page(scope, 500, exception)
+            if page is not None:
+                await page.__http__(protocol)
+            else:
+                protocol.response_str(500, [_PLAIN_TEXT], "Internal Server Error")
         else:
             # A handler may answer through the protocol itself and return
             # nothing; only a returned response has to be written here.
             if result is not None:
                 await self._write(result, protocol)
+
+    async def _not_found(self, scope: Any, protocol: Any) -> None:
+        page = self._debug_page(scope, 404)
+        if page is None:
+            protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
+            return
+        await page.__http__(protocol)
+
+    def _debug_page(
+        self, scope: Any, status_code: int, exception: BaseException | None = None
+    ) -> Any:
+        """The debug page for `status_code`, or `None` when there is not one.
+
+        Imported here rather than at module level: the pages pull in a template
+        environment of their own, which a production application never needs.
+        """
+        from nitro.views.debug import debug_response
+
+        try:
+            return debug_response(
+                status_code,
+                getattr(scope, "method", "GET"),
+                _full_path(scope),
+                exception=exception,
+                routes=[route.path for route in self.router],
+            )
+        except Exception:
+            # The page is a convenience; failing to build it must not replace
+            # the status the client is owed with a different one.
+            logger.exception("the debug page for %s could not be rendered", status_code)
+            return None
 
     async def _write(self, result: Any, protocol: Any) -> None:
         writer = getattr(result, "__http__", None)

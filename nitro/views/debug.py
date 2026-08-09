@@ -1,15 +1,64 @@
+"""The pages shown in place of a bare status while ``DEBUG`` is on.
+
+A 404 lists the routes that were tried and a 500 shows the traceback, which is
+what makes either of them worth reading. Both are built from templates of their
+own rather than the project's engine: they have to work when the project's
+configuration is what is broken.
+"""
+
+from __future__ import annotations
+
 import linecache
 import sys
 import traceback as tb
+from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader
 
+if TYPE_CHECKING:
+    from nitro.protocols.http import HttpResponse
+
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+#: The statuses a debug page exists for. Anything else keeps its plain answer.
+_PAGES = (404, 500)
 
 
 def _env() -> Environment:
     return Environment(loader=FileSystemLoader(_TEMPLATES_DIR), autoescape=True)
+
+
+def debug_response(
+    status_code: int,
+    method: str,
+    path: str,
+    *,
+    exception: BaseException | None = None,
+    routes: Iterable[str] = (),
+) -> HttpResponse | None:
+    """The debug page for `status_code`, or `None` if there is not one.
+
+    `None` also comes back with ``DEBUG`` off, so a caller can ask for the page
+    unconditionally and fall back to its plain answer.
+    """
+    from nitro.protocols.http import HttpResponse
+    from nitro.settings import settings
+
+    if status_code not in _PAGES or not settings.DEBUG:
+        return None
+
+    if status_code == 404:
+        html = render_404_page(method=method, path=path, url_patterns=list(routes))
+    elif exception is not None:
+        html = render_500_page(method=method, path=path, exc=exception)
+    else:
+        return None
+
+    return HttpResponse(
+        html, status_code=status_code, content_type="text/html; charset=utf-8"
+    )
 
 
 def _extract_frames(exc: BaseException) -> list[dict]:

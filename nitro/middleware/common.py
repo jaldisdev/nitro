@@ -195,23 +195,35 @@ class ExceptionMiddleware(Middleware):
             # Raising one of these is how a handler asks for a particular
             # status, so it is an answer rather than a failure and must not be
             # flattened into a 500.
-            return e.as_response()
+            return self._debug_page(request, e.status_code, e) or e.as_response()
         except Exception as e:
             logger.exception(f"Unhandled exception in HTTP handler: {e}")
 
-            from nitro.settings import settings
+            page = self._debug_page(request, 500, e)
+            if page is not None:
+                return page
 
-            debug = getattr(settings, "DEBUG", False)
+            return HttpResponse(content={"error": "Internal server error"}, status_code=500)
 
-            if debug:
-                content = {
-                    "error": str(e),
-                    "type": type(e).__name__,
-                }
-            else:
-                content = {"error": "Internal server error"}
+    def _debug_page(
+        self, request: HttpRequest, status_code: int, exception: BaseException
+    ) -> HttpResponse | None:
+        """The same page the application shows, so both routes agree."""
+        from nitro.views.debug import debug_response
 
-            return HttpResponse(content=content, status_code=500)
+        router = getattr(self.app, "router", None)
+        query = request.url.query
+        try:
+            return debug_response(
+                status_code,
+                request.method,
+                f"{request.path}?{query}" if query else request.path,
+                exception=exception,
+                routes=[route.path for route in router] if router is not None else (),
+            )
+        except Exception:
+            logger.exception("the debug page for %s could not be rendered", status_code)
+            return None
 
     async def __websocket__(self, websocket: WebSocket, call_next):
         """Handle WebSocket exceptions."""
