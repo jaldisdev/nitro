@@ -40,9 +40,29 @@ class RecordingProtocol:
 
 
 class Scope:
-    def __init__(self, method="GET", path="/"):
+    """Stands in for the compiled scope object.
+
+    Matching has already happened by the time an application sees a scope, so a
+    scope carries the route it belongs to rather than the app working it out.
+    """
+
+    def __init__(self, method="GET", path="/", route_id=None, path_params=None, allowed=()):
         self.method = method
         self.path = path
+        self.route_id = route_id
+        self.path_params = path_params or {}
+        self.allowed_methods = tuple(allowed)
+
+
+def scope_for(app, method, path, **path_params):
+    """Build a scope the way the matcher would for `method` and `path`."""
+    for route in app.routes:
+        if route.path != path or method not in route.methods:
+            continue
+        return Scope(method, path, route_id=route.id, path_params=path_params)
+
+    allowed = sorted({m for route in app.routes if route.path == path for m in route.methods})
+    return Scope(method, path, allowed=allowed)
 
 
 async def ok(scope, protocol):
@@ -50,10 +70,12 @@ async def ok(scope, protocol):
 
 
 class TestRouteRegistration:
-    def test_a_route_is_registered_for_each_method(self):
+    def test_a_route_records_every_method(self):
         app = Nitro()
         app.add_route("/things", ok, methods=["GET", "POST"])
-        assert app.routes == [("GET", "/things"), ("POST", "/things")]
+        assert [(route.path, route.methods) for route in app.routes] == [
+            ("/things", ("GET", "POST"))
+        ]
 
     def test_the_decorator_returns_the_handler(self):
         app = Nitro()
@@ -81,10 +103,38 @@ class TestDispatch:
         app.add_route("/hello", ok)
         protocol = RecordingProtocol()
 
-        await app.__handle_http__(Scope(path="/hello"), protocol)
+        await app.__handle_http__(scope_for(app, "GET", "/hello"), protocol)
 
         assert protocol.status == 200
         assert protocol.body == b"handled /hello"
+
+    async def test_path_parameters_arrive_as_converted_keywords(self):
+        app = Nitro()
+        seen = {}
+
+        @app.route("/users/<int:user_id>/<slug:tab>")
+        async def show(scope, protocol, user_id, tab):
+            seen["user_id"] = user_id
+            seen["tab"] = tab
+            protocol.response_empty(204)
+
+        scope = scope_for(app, "GET", "/users/<int:user_id>/<slug:tab>", user_id="42", tab="posts")
+        await app.__handle_http__(scope, protocol := RecordingProtocol())
+
+        assert protocol.status == 204
+        assert seen == {"user_id": 42, "tab": "posts"}
+
+    async def test_a_parameter_the_converter_rejects_is_a_404(self):
+        app = Nitro()
+
+        @app.route("/items/<uuid:identifier>")
+        async def show(scope, protocol, identifier):
+            protocol.response_empty(204)
+
+        scope = scope_for(app, "GET", "/items/<uuid:identifier>", identifier="not-a-uuid")
+        await app.__handle_http__(scope, protocol := RecordingProtocol())
+
+        assert protocol.status == 404
 
     async def test_an_unknown_path_is_a_404(self):
         protocol = RecordingProtocol()
@@ -96,19 +146,12 @@ class TestDispatch:
         app.add_route("/only-post", ok, methods=["POST"])
         protocol = RecordingProtocol()
 
-        await app.__handle_http__(Scope(method="DELETE", path="/only-post"), protocol)
+        await app.__handle_http__(
+            Scope(method="DELETE", path="/only-post", allowed=["POST"]), protocol
+        )
 
         assert protocol.status == 405
         assert protocol.header("allow") == "POST"
-
-    async def test_head_falls_back_to_get(self):
-        app = Nitro()
-        app.add_route("/page", ok, methods=["GET"])
-        protocol = RecordingProtocol()
-
-        await app.__handle_http__(Scope(method="HEAD", path="/page"), protocol)
-
-        assert protocol.status == 200
 
     async def test_a_failing_handler_becomes_a_500(self, caplog):
         app = Nitro()
@@ -118,7 +161,7 @@ class TestDispatch:
             raise RuntimeError("handler exploded")
 
         protocol = RecordingProtocol()
-        await app.__handle_http__(Scope(path="/boom"), protocol)
+        await app.__handle_http__(scope_for(app, "GET", "/boom"), protocol)
 
         assert protocol.status == 500
         assert "handler exploded" in caplog.text
@@ -131,7 +174,7 @@ class TestDispatch:
             protocol.response_bytes(200, [], await protocol())
 
         protocol = RecordingProtocol(body=b"payload")
-        await app.__handle_http__(Scope(method="POST", path="/echo"), protocol)
+        await app.__handle_http__(scope_for(app, "POST", "/echo"), protocol)
 
         assert protocol.body == b"payload"
 

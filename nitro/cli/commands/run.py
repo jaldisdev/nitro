@@ -87,8 +87,11 @@ def run(application: str, **overrides: Any) -> None:
     except ImproperlyConfigured as error:
         raise click.ClickException(str(error)) from error
 
+    route_table = getattr(loaded, "route_table", None)
+    routes = route_table() if callable(route_table) else []
+
     try:
-        server = Server(loaded, options)
+        server = Server(loaded, options, routes)
     except (ValueError, RuntimeError) as error:
         raise click.ClickException(str(error)) from error
 

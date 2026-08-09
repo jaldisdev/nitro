@@ -4,6 +4,11 @@ A Nitro application is what the bundled server calls into. It exposes the
 protocol entry points the server looks for — ``__handle_http__`` for requests,
 ``__startup__`` and ``__shutdown__`` for the worker lifetime — and holds the
 route table those entry points consult.
+
+Matching itself happens in the compiled matcher, which is given the route table
+at startup. By the time a request reaches :meth:`Nitro.__handle_http__` the
+route is already known; what is left is turning the captured text into Python
+values and calling the handler.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
+from nitro.routing.mount import Mount
+from nitro.routing.router import DEFAULT_METHODS, Route, Router, RouteTable
 from nitro.settings import ServerOptions
 
 logger = logging.getLogger("nitro")
@@ -21,18 +28,18 @@ logger = logging.getLogger("nitro")
 Handler = Callable[..., Awaitable[None]]
 LifecycleCallback = Callable[[], Any]
 
-_DEFAULT_METHODS: tuple[str, ...] = ("GET", "HEAD")
+_PLAIN_TEXT = ("content-type", "text/plain; charset=utf-8")
 
 
 class Nitro:
     """A Nitro application.
 
     Keyword arguments are server options and take precedence over the project's
-    ``SERVER`` setting, so a value passed here always wins.
+    ``SERVER`` setting.
     """
 
     def __init__(self, **options: Any) -> None:
-        self._routes: dict[tuple[str, str], Handler] = {}
+        self.router = Router()
         self._startup_callbacks: list[LifecycleCallback] = []
         self._shutdown_callbacks: list[LifecycleCallback] = []
         self._option_overrides = options
@@ -44,43 +51,51 @@ class Nitro:
         path: str,
         handler: Handler,
         *,
-        methods: Sequence[str] = _DEFAULT_METHODS,
-    ) -> None:
+        methods: Sequence[str] = DEFAULT_METHODS,
+        name: str | None = None,
+    ) -> Route:
         """Register `handler` for `path`.
 
-        The handler is called with the request scope and the protocol object,
-        and is responsible for sending a response through the latter.
+        The handler is called with the request scope, the protocol object, and
+        any captured path parameters as keyword arguments. Sending a response
+        through the protocol is the handler's job.
         """
-        if not path.startswith("/"):
-            raise ValueError(f"route path must start with '/', got {path!r}")
         if not inspect.iscoroutinefunction(handler):
             raise TypeError(f"handler for {path!r} must be an async function")
-
-        for method in methods:
-            key = (method.upper(), path)
-            if key in self._routes:
-                raise ValueError(f"{method.upper()} {path} is already registered")
-            self._routes[key] = handler
+        return self.router.add(path, handler, methods=methods, name=name)
 
     def route(
-        self, path: str, *, methods: Sequence[str] = _DEFAULT_METHODS
+        self,
+        path: str,
+        *,
+        methods: Sequence[str] = DEFAULT_METHODS,
+        name: str | None = None,
     ) -> Callable[[Handler], Handler]:
         """Decorator form of :meth:`add_route`."""
 
         def register(handler: Handler) -> Handler:
-            self.add_route(path, handler, methods=methods)
+            self.add_route(path, handler, methods=methods, name=name)
             return handler
 
         return register
 
-    def include(self, routes: Iterable[tuple[str, Handler]]) -> None:
-        for path, handler in routes:
-            self.add_route(path, handler)
+    def mount(self, mount: Mount) -> None:
+        """Attach a sub-router's routes under its prefix."""
+        mount.attach(self.router)
+
+    def include(self, routes: Iterable[Route] | Router) -> None:
+        self.router.include(routes)
 
     @property
-    def routes(self) -> list[tuple[str, str]]:
-        """Every registered route, as ``(method, path)`` pairs."""
-        return sorted(self._routes)
+    def routes(self) -> list[Route]:
+        return self.router.routes
+
+    def route_table(self) -> RouteTable:
+        """The route table, described for the compiled matcher."""
+        return self.router.table()
+
+    def url_for(self, name: str, **values: Any) -> str:
+        return self.router.url_for(name, **values)
 
     # ── lifecycle registration ───────────────────────────────────────────────
 
@@ -108,35 +123,34 @@ class Nitro:
     # ── protocol entry points ────────────────────────────────────────────────
 
     async def __handle_http__(self, scope: Any, protocol: Any) -> None:
-        handler = self._routes.get((scope.method, scope.path))
+        route = self.router.get(scope.route_id) if scope.route_id is not None else None
 
-        if handler is None:
-            if scope.method == "HEAD" and ("GET", scope.path) in self._routes:
-                handler = self._routes[("GET", scope.path)]
-            elif any(path == scope.path for _method, path in self._routes):
+        if route is None:
+            if scope.allowed_methods:
                 protocol.response_str(
                     405,
-                    [("content-type", "text/plain; charset=utf-8"), ("allow", self._allowed(scope.path))],
+                    [_PLAIN_TEXT, ("allow", ", ".join(scope.allowed_methods))],
                     "Method Not Allowed",
                 )
-                return
             else:
-                protocol.response_str(
-                    404, [("content-type", "text/plain; charset=utf-8")], "Not Found"
-                )
-                return
+                protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
+            return
 
         try:
-            await handler(scope, protocol)
+            parameters = route.convert(dict(scope.path_params))
+        except (ValueError, TypeError):
+            # The matcher accepted the text but the converter could not turn it
+            # into a value, so as far as the application is concerned the path
+            # does not name anything.
+            logger.debug("path parameters for %s could not be converted", scope.path, exc_info=True)
+            protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
+            return
+
+        try:
+            await route.handler(scope, protocol, **parameters)
         except Exception:
             logger.exception("handler for %s %s failed", scope.method, scope.path)
-            protocol.response_str(
-                500, [("content-type", "text/plain; charset=utf-8")], "Internal Server Error"
-            )
-
-    def _allowed(self, path: str) -> str:
-        methods = sorted(method for method, route in self._routes if route == path)
-        return ", ".join(methods)
+            protocol.response_str(500, [_PLAIN_TEXT], "Internal Server Error")
 
     def __startup__(self, loop: asyncio.AbstractEventLoop) -> None:
         """Run startup callbacks before the worker accepts anything.
@@ -163,4 +177,4 @@ class Nitro:
             logger.debug("%s callback %s completed", stage, getattr(callback, "__name__", callback))
 
     def __repr__(self) -> str:
-        return f"Nitro(routes={len(self._routes)})"
+        return f"Nitro(routes={len(self.router)})"

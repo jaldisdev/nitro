@@ -376,3 +376,127 @@ class TestConfiguration:
 
         assert finished.returncode != 0
         assert "Address already in use" in (finished.stderr + finished.stdout)
+
+
+class TestRouting:
+    ROUTING_APP = """
+        from nitro import Nitro
+        from nitro.routing import Mount, Router
+
+        app = Nitro(http="1", log_level="warning")
+
+        @app.route("/users/<int:user_id>")
+        async def user(scope, protocol, user_id):
+            protocol.response_str(200, [], f"user {user_id!r} {type(user_id).__name__}")
+
+        @app.route("/users/new")
+        async def new_user(scope, protocol):
+            protocol.response_str(200, [], "new user form")
+
+        @app.route("/posts/<slug:title>")
+        async def post(scope, protocol, title):
+            protocol.response_str(200, [], f"post {title}")
+
+        @app.route("/files/<path:rest>")
+        async def file(scope, protocol, rest):
+            protocol.response_str(200, [], f"file {rest}")
+
+        @app.route("/items/<uuid:identifier>")
+        async def item(scope, protocol, identifier):
+            protocol.response_str(200, [], f"item {identifier}")
+
+        @app.route("/things", methods=["POST"])
+        async def create(scope, protocol):
+            protocol.response_str(201, [], "created")
+
+        @app.route("/named/<int:number>", name="named")
+        async def named(scope, protocol, number):
+            protocol.response_str(200, [], app.url_for("named", number=number + 1))
+
+        api = Router()
+
+        @api.route("/status")
+        async def status(scope, protocol):
+            protocol.response_str(200, [], "api ok")
+
+        app.mount(Mount("/api", api))
+    """
+
+    def test_a_parameter_reaches_the_handler_converted(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/users/42").text == "user 42 int"
+        server.stop()
+
+    def test_a_static_segment_beats_a_parameter(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/users/new").text == "new user form"
+        server.stop()
+
+    def test_a_value_the_converter_rejects_is_a_404(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/users/abc").status == 404
+        assert server.request("/items/not-a-uuid").status == 404
+        server.stop()
+
+    def test_a_uuid_is_converted(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        identifier = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        assert server.request(f"/items/{identifier}").text == f"item {identifier}"
+        server.stop()
+
+    def test_a_greedy_parameter_spans_separators(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/files/deep/nested/name.txt").text == "file deep/nested/name.txt"
+        server.stop()
+
+    def test_a_slug_stops_at_a_separator(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/posts/hello-world").text == "post hello-world"
+        assert server.request("/posts/hello/world").status == 404
+        server.stop()
+
+    def test_the_wrong_method_is_a_405_that_says_what_is_allowed(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        response = server.request("/things", method="GET")
+
+        assert response.status == 405
+        assert response.headers["allow"] == "POST"
+        server.stop()
+
+    def test_the_right_method_is_answered(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/things", method="POST", data=b"").status == 201
+        server.stop()
+
+    def test_a_mounted_router_is_served_under_its_prefix(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/api/status").text == "api ok"
+        assert server.request("/status").status == 404
+        server.stop()
+
+    def test_reverse_routing_produces_a_usable_path(self, server_factory):
+        server = server_factory(self.ROUTING_APP)
+        assert server.request("/named/7").text == "/named/8"
+        server.stop()
+
+    def test_a_broken_route_stops_startup(self, tmp_path):
+        import subprocess
+        import sys
+
+        (tmp_path / "app.py").write_text(
+            "from nitro import Nitro\n"
+            "app = Nitro(http='1')\n"
+            "@app.route('/broken/<bad:value>')\n"
+            "async def broken(scope, protocol, value):\n"
+            "    protocol.response_empty(204)\n"
+        )
+        finished = subprocess.run(
+            [sys.executable, "-m", "nitro.cli", "run", "app:app", "-p", "0"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert finished.returncode != 0
+        assert "bad" in (finished.stdout + finished.stderr)

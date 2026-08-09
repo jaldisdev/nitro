@@ -6,8 +6,10 @@
 
 use std::net::SocketAddr;
 
+use nitro_core::router::RouteMatch;
 use nitro_core::transport::RequestParts;
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::headers::Headers;
 
@@ -39,10 +41,45 @@ pub struct HttpScope {
     pub client: Option<(String, u16)>,
     #[pyo3(get)]
     pub headers: Py<Headers>,
+    /// The route that answers this request, or `None` when none does.
+    #[pyo3(get)]
+    pub route_id: Option<u64>,
+    /// Captured path parameters, as the text they were captured from.
+    /// Converting them to Python values is the application's job.
+    #[pyo3(get)]
+    pub path_params: Py<PyDict>,
+    /// When no route answers this method but some route answers the path, the
+    /// methods that would have worked. Empty otherwise.
+    #[pyo3(get)]
+    pub allowed_methods: Py<PyTuple>,
 }
 
 impl HttpScope {
-    pub fn from_parts(python: Python<'_>, parts: &RequestParts) -> PyResult<Self> {
+    pub fn from_parts(
+        python: Python<'_>,
+        parts: &RequestParts,
+        matched: &RouteMatch,
+    ) -> PyResult<Self> {
+        let path_params = PyDict::new(python);
+        let mut route_id = None;
+        let mut allowed: Vec<&str> = Vec::new();
+
+        match matched {
+            RouteMatch::Found {
+                route_id: identifier,
+                parameters,
+            } => {
+                route_id = Some(*identifier);
+                for (name, value) in parameters {
+                    path_params.set_item(name, value)?;
+                }
+            }
+            RouteMatch::MethodNotAllowed { allowed: methods } => {
+                allowed = methods.iter().map(String::as_str).collect();
+            }
+            RouteMatch::NotFound => {}
+        }
+
         Ok(Self {
             proto: "http",
             http_version: parts.http_version(),
@@ -54,6 +91,9 @@ impl HttpScope {
             server: address_pair(parts.server),
             client: address_pair(parts.client),
             headers: Py::new(python, Headers::new(parts.headers.clone()))?,
+            route_id,
+            path_params: path_params.unbind(),
+            allowed_methods: PyTuple::new(python, allowed)?.unbind(),
         })
     }
 }
