@@ -6,6 +6,7 @@ import pytest
 
 from nitro import Nitro
 from nitro.endpoints import HTTPEndpoint
+from nitro.protocols import Http404, HttpForbidden
 from nitro.routing import HTTPRoute
 from nitro.settings import settings
 
@@ -418,3 +419,98 @@ class TestProtocolDispatch:
         await Nitro().__handle_wt__(WsScope(), session)
         assert session.rejected == 404
 
+
+class TestDebugPages:
+    async def test_an_unmatched_path_is_plain_by_default(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+        app = Nitro()
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "GET", "/missing"), protocol)
+
+        assert protocol.status == 404
+        assert protocol.body == b"Not Found"
+
+    async def test_debug_answers_a_404_with_the_routes_it_tried(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        app = Nitro()
+        app.add_route("/things/<int:identifier>", ok)
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "GET", "/missing"), protocol)
+
+        assert protocol.status == 404
+        assert protocol.header("content-type") == "text/html; charset=utf-8"
+        page = protocol.body.decode()
+        assert "/things/&lt;int:identifier&gt;" in page
+        assert "/missing" in page
+
+    async def test_debug_answers_a_500_with_the_traceback(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        app = Nitro()
+
+        @app.route("/boom")
+        async def boom(request):
+            raise ValueError("a distinctive message")
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/boom"), protocol)
+
+        assert protocol.status == 500
+        page = protocol.body.decode()
+        assert "ValueError" in page
+        assert "a distinctive message" in page
+
+    async def test_a_500_stays_plain_without_debug(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+        app = Nitro()
+
+        @app.route("/boom")
+        async def boom(request):
+            raise ValueError("a distinctive message")
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/boom"), protocol)
+
+        assert protocol.status == 500
+        assert protocol.body == b"Internal Server Error"
+        assert b"distinctive" not in protocol.body
+
+    async def test_a_raised_404_reaches_the_page_too(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        app = Nitro()
+
+        @app.route("/gone")
+        async def gone(request):
+            raise Http404()
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/gone"), protocol)
+
+        assert protocol.status == 404
+        assert protocol.header("content-type") == "text/html; charset=utf-8"
+
+    async def test_another_status_keeps_its_own_answer(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        app = Nitro()
+
+        @app.route("/nope")
+        async def nope(request):
+            raise HttpForbidden({"reason": "not yours"})
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/nope"), protocol)
+
+        assert protocol.status == 403
+        assert b"not yours" in protocol.body
+
+    async def test_a_405_is_not_replaced_by_the_404_page(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        app = Nitro()
+        app.add_route("/things", ok, methods=["GET"])
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "POST", "/things"), protocol)
+
+        assert protocol.status == 405
+        assert protocol.body == b"Method Not Allowed"
