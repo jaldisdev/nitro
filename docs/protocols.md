@@ -126,6 +126,34 @@ For a byte range:
 return FileResponse(path, range=(start, end))     # end is inclusive, or None
 ```
 
+### A directory of them
+
+```python
+from nitro.staticfiles import StaticFiles
+
+patterns = [
+    HTTPRoute("/static/<path:path>", StaticFiles(directory="static"), name="static"),
+]
+```
+
+`StaticFiles` is an ordinary handler, so it sits in the route table beside
+everything else and serves whatever its route captures. It answers `GET` and
+`HEAD`, sends an entity tag and a last-modified date, and answers `304` when the
+client already holds the version it would send.
+
+A path that climbs out of the directory is a 404, and so is a symlink pointing
+out of it unless `follow_symlink=True` says otherwise. A directory is a 403
+rather than a listing, since listing publishes names nothing asked to publish.
+
+With `html=True` a directory is served by its `index.html` and a miss by a
+`404.html` if there is one, which is what a single-page application needs.
+
+A satisfiable range is answered with `206` and a `Content-Range`. A range
+starting past the end of the file is answered with `416`, not with an empty
+`206` that would claim the range was honoured. An end past the last byte is
+clamped, because asking for more than exists is a normal way to ask for the
+rest.
+
 ### Streaming
 
 ```python
