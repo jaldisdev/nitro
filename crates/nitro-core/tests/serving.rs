@@ -483,3 +483,245 @@ async fn concurrent_connections_are_capped() {
     drop(queued);
     server.shutdown().await;
 }
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+
+use nitro_core::transport::WebSocketRequest;
+use nitro_core::websocket::{WebSocketError, WebSocketMessage};
+
+/// Accepts every upgrade and echoes what it receives.
+#[derive(Clone)]
+struct EchoSocket {
+    subprotocol: Option<String>,
+    accepted: Arc<AtomicUsize>,
+}
+
+impl Dispatch for EchoSocket {
+    async fn handle_http(&self, _request: HttpRequest) -> HttpResponse {
+        HttpResponse::text(StatusCode::OK, "plain")
+    }
+
+    async fn handle_websocket(&self, request: WebSocketRequest) {
+        let mut request = request;
+        let offered = request.handshake.subprotocols().to_vec();
+
+        let mut connection = match request.handshake.accept(self.subprotocol.clone()).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                eprintln!("accepting failed: {error}");
+                return;
+            }
+        };
+        self.accepted.fetch_add(1, Ordering::Release);
+
+        if !offered.is_empty() {
+            let _sent = connection
+                .send(WebSocketMessage::Text(format!(
+                    "offered:{}",
+                    offered.join("+")
+                )))
+                .await;
+        }
+
+        loop {
+            match connection.receive().await {
+                Some(Ok(WebSocketMessage::Text(text))) => {
+                    if connection
+                        .send(WebSocketMessage::Text(format!("echo:{text}")))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Some(Ok(WebSocketMessage::Binary(data))) => {
+                    if connection
+                        .send(WebSocketMessage::Binary(data))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Some(Ok(WebSocketMessage::Close { .. })) | None => break,
+                Some(Ok(_)) => {}
+                Some(Err(WebSocketError::Closed)) => break,
+                Some(Err(error)) => {
+                    eprintln!("receive failed: {error}");
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Refuses every upgrade.
+#[derive(Clone)]
+struct RefuseSocket;
+
+impl Dispatch for RefuseSocket {
+    async fn handle_http(&self, _request: HttpRequest) -> HttpResponse {
+        HttpResponse::text(StatusCode::OK, "plain")
+    }
+
+    async fn handle_websocket(&self, request: WebSocketRequest) {
+        let mut request = request;
+        let _refused = request
+            .handshake
+            .reject(StatusCode::FORBIDDEN, "not for you");
+    }
+}
+
+/// Returns without answering the handshake at all.
+#[derive(Clone)]
+struct SilentSocket;
+
+impl Dispatch for SilentSocket {
+    async fn handle_http(&self, _request: HttpRequest) -> HttpResponse {
+        HttpResponse::text(StatusCode::OK, "plain")
+    }
+
+    async fn handle_websocket(&self, _request: WebSocketRequest) {}
+}
+
+async fn connect(
+    server: &TestServer,
+    subprotocols: &[&str],
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    tokio_tungstenite::tungstenite::Error,
+> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let mut request = format!("ws://{}/socket", server.address.unwrap())
+        .into_client_request()
+        .expect("a well-formed request");
+    if !subprotocols.is_empty() {
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            subprotocols.join(", ").parse().unwrap(),
+        );
+    }
+    tokio_tungstenite::connect_async(request)
+        .await
+        .map(|(stream, _response)| stream)
+}
+
+#[tokio::test]
+async fn a_websocket_upgrade_is_accepted_and_messages_round_trip() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let dispatch = EchoSocket {
+        subprotocol: None,
+        accepted: Arc::clone(&accepted),
+    };
+    let server = TestServer::start(cleartext_config(), dispatch, None);
+
+    let mut socket = connect(&server, &[])
+        .await
+        .expect("the upgrade must succeed");
+    socket.send(Message::Text("hello".into())).await.unwrap();
+
+    let reply = socket.next().await.expect("a reply").unwrap();
+    assert_eq!(reply.into_text().unwrap().as_str(), "echo:hello");
+
+    socket
+        .send(Message::Binary(Bytes::from_static(b"\x01\x02")))
+        .await
+        .unwrap();
+    let reply = socket.next().await.expect("a reply").unwrap();
+    assert_eq!(reply.into_data(), Bytes::from_static(b"\x01\x02"));
+
+    socket.close(None).await.unwrap();
+    assert_eq!(accepted.load(Ordering::Acquire), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_subprotocol_the_client_offered_is_selected() {
+    use futures_util::StreamExt;
+
+    let dispatch = EchoSocket {
+        subprotocol: Some("chat".to_owned()),
+        accepted: Arc::new(AtomicUsize::new(0)),
+    };
+    let server = TestServer::start(cleartext_config(), dispatch, None);
+
+    let mut socket = connect(&server, &["chat", "superchat"])
+        .await
+        .expect("the upgrade must succeed");
+
+    let greeting = socket.next().await.expect("a greeting").unwrap();
+    assert_eq!(
+        greeting.into_text().unwrap().as_str(),
+        "offered:chat+superchat"
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_refused_upgrade_answers_with_an_ordinary_response() {
+    let server = TestServer::start(cleartext_config(), RefuseSocket, None);
+
+    let error = connect(&server, &[])
+        .await
+        .expect_err("the upgrade must be refused");
+    let message = error.to_string();
+    assert!(
+        message.contains("403") || message.to_lowercase().contains("forbidden"),
+        "the refusal should surface as an HTTP status, got {message}"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_handler_that_never_answers_does_not_leave_the_client_waiting() {
+    let server = TestServer::start(cleartext_config(), SilentSocket, None);
+
+    let outcome = tokio::time::timeout(Duration::from_secs(10), connect(&server, &[])).await;
+    assert!(
+        matches!(outcome, Ok(Err(_))),
+        "an unanswered handshake must still produce a response"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_ordinary_request_is_unaffected_by_websocket_support() {
+    let dispatch = EchoSocket {
+        subprotocol: None,
+        accepted: Arc::new(AtomicUsize::new(0)),
+    };
+    let server = TestServer::start(cleartext_config(), dispatch, None);
+
+    let response = client()
+        .get(server.base_url("http"))
+        .send()
+        .await
+        .expect("the request must succeed");
+    assert_eq!(response.text().await.unwrap(), "plain");
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn upgrades_can_be_switched_off() {
+    let mut config = cleartext_config();
+    config.websockets = false;
+
+    let dispatch = EchoSocket {
+        subprotocol: None,
+        accepted: Arc::new(AtomicUsize::new(0)),
+    };
+    let server = TestServer::start(config, dispatch, None);
+
+    assert!(
+        connect(&server, &[]).await.is_err(),
+        "with WebSocket off, an upgrade must not be honoured"
+    );
+    server.shutdown().await;
+}

@@ -23,7 +23,10 @@ use crate::disconnect::{DisconnectGuard, DisconnectSignal, DisconnectWatcher};
 use crate::headers::Headers;
 use crate::lifecycle::{AccessLogger, AccessRecord};
 use crate::streaming::StreamError;
-use crate::transport::{Dispatch, HttpRequest, HttpResponse, RequestBody, RequestParts, Scheme};
+use crate::transport::{
+    Dispatch, HttpRequest, HttpResponse, RequestBody, RequestParts, Scheme, WebSocketRequest,
+};
+use crate::websocket::{self, HandshakeOutcome, WebSocketHandshake};
 
 /// State shared by every connection a worker serves.
 #[derive(Debug)]
@@ -208,14 +211,134 @@ impl<D: Dispatch> Service<Request<Incoming>> for RequestService<D> {
     type Future =
         std::pin::Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn call(&self, request: Request<Incoming>) -> Self::Future {
+    fn call(&self, mut request: Request<Incoming>) -> Self::Future {
         let context = self.context.clone();
         let addresses = self.addresses;
         let scheme = self.scheme;
         let watcher =
             DisconnectWatcher::new(self.disconnect.clone(), self.context.server_drain.clone());
 
+        if context.config.websockets && websocket::is_upgrade_request(request.headers()) {
+            let upgrading = start_upgrade(&mut request, addresses, scheme, watcher, context);
+            return Box::pin(async move { Ok(upgrading.await) });
+        }
+
         Box::pin(async move { Ok(exchange(request, addresses, scheme, watcher, context).await) })
+    }
+}
+
+/// Hand a WebSocket upgrade to the application and answer with whatever it
+/// decides.
+///
+/// The handler runs as its own task because the upgrade only completes after
+/// the acceptance has been written, which cannot happen until this function has
+/// returned the response.
+fn start_upgrade<D: Dispatch>(
+    request: &mut Request<Incoming>,
+    addresses: ConnectionAddresses,
+    scheme: Scheme,
+    disconnect: DisconnectWatcher,
+    context: ConnectionContext<D>,
+) -> impl Future<Output = Response<BoxBody<Bytes, StreamError>>> + Send + use<D> {
+    let key = request
+        .headers()
+        .get("sec-websocket-key")
+        .map(|key| key.as_bytes().to_vec())
+        .unwrap_or_default();
+    let subprotocols = websocket::offered_subprotocols(request.headers());
+
+    let parts = request_parts(
+        request.method().clone(),
+        request.uri().clone(),
+        request.version(),
+        request.headers().clone(),
+        scheme,
+        addresses,
+    );
+
+    let (answer, outcome) = tokio::sync::oneshot::channel();
+    let handshake = WebSocketHandshake::new(subprotocols, answer, hyper::upgrade::on(request));
+
+    tokio::spawn(async move {
+        context
+            .dispatch
+            .handle_websocket(WebSocketRequest {
+                parts,
+                handshake,
+                disconnect,
+            })
+            .await;
+    });
+
+    async move {
+        match outcome.await {
+            Ok(HandshakeOutcome::Accepted { subprotocol }) => acceptance(&key, subprotocol),
+            Ok(HandshakeOutcome::Rejected { status, reason }) => {
+                finish_plain(HttpResponse::text(status, reason))
+            }
+            Err(_) => {
+                tracing::error!("a WebSocket handler ended without answering the handshake");
+                finish_plain(HttpResponse::text(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error",
+                ))
+            }
+        }
+    }
+}
+
+fn acceptance(key: &[u8], subprotocol: Option<String>) -> Response<BoxBody<Bytes, StreamError>> {
+    let mut response = HttpResponse::empty(StatusCode::SWITCHING_PROTOCOLS)
+        .with_header("connection", "Upgrade")
+        .with_header("upgrade", "websocket")
+        .with_header("sec-websocket-accept", &websocket::accept_key(key));
+
+    if let Some(subprotocol) = subprotocol {
+        response = response.with_header("sec-websocket-protocol", &subprotocol);
+    }
+    finish_plain(response)
+}
+
+/// Build a response without the headers the server adds to ordinary
+/// exchanges. An upgrade carries only what the handshake calls for.
+fn finish_plain(response: HttpResponse) -> Response<BoxBody<Bytes, StreamError>> {
+    let HttpResponse {
+        status,
+        headers,
+        body,
+    } = response;
+    let length = body.content_length();
+    let mut built = Response::new(body.into_boxed());
+    *built.status_mut() = status;
+    *built.headers_mut() = headers.into_map();
+
+    if status != StatusCode::SWITCHING_PROTOCOLS
+        && let Some(length) = length
+        && !built.headers().contains_key(http::header::CONTENT_LENGTH)
+    {
+        built
+            .headers_mut()
+            .insert(http::header::CONTENT_LENGTH, HeaderValue::from(length));
+    }
+    built
+}
+
+fn request_parts(
+    method: http::Method,
+    uri: http::Uri,
+    version: http::Version,
+    headers: http::HeaderMap,
+    scheme: Scheme,
+    addresses: ConnectionAddresses,
+) -> RequestParts {
+    RequestParts {
+        method,
+        uri,
+        version,
+        headers: Headers::from(headers),
+        scheme,
+        client: addresses.client,
+        server: addresses.server,
     }
 }
 
@@ -229,15 +352,14 @@ async fn exchange<D: Dispatch>(
     let started = Instant::now();
     let (parts, body) = request.into_parts();
 
-    let request_parts = RequestParts {
-        method: parts.method,
-        uri: parts.uri,
-        version: parts.version,
-        headers: Headers::from(parts.headers),
+    let request_parts = request_parts(
+        parts.method,
+        parts.uri,
+        parts.version,
+        parts.headers,
         scheme,
-        client: addresses.client,
-        server: addresses.server,
-    };
+        addresses,
+    );
 
     let logged = context
         .access_log
