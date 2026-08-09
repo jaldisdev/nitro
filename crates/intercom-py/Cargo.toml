@@ -21,3 +21,4 @@ pyo3-async-runtimes.workspace = true
 tokio.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
+bytes.workspace = true
