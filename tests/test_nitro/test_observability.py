@@ -1,4 +1,4 @@
-"""End-to-end tests for the metrics endpoint, against a real `nitro run`."""
+"""End-to-end tests for the metrics endpoint, against a real server process."""
 
 from __future__ import annotations
 

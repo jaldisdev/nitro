@@ -3,7 +3,13 @@ import pytest
 from click.testing import CliRunner
 
 from nitro import __version__
-from nitro.cli import cli, commands_in, load_project_commands, register_commands
+from nitro.cli import (
+    RootCommand,
+    cli,
+    commands_in,
+    load_project_commands,
+    register_commands,
+)
 from nitro.settings import settings
 
 
@@ -14,8 +20,8 @@ def runner():
 
 @pytest.fixture
 def full_cli():
-    """The command group with the built-in commands registered."""
-    group = click.Group(name="nitro")
+    """The root command with the built-in commands registered."""
+    group = RootCommand(name="nitro")
     register_commands(group, "nitro.cli.commands")
     return group
 
@@ -32,11 +38,28 @@ class TestGroup:
             assert result.exit_code == 0
             assert "Manage and run Nitro projects" in result.output
 
+    def test_the_help_shows_serving_and_the_commands_together(self, runner, full_cli):
+        result = runner.invoke(full_cli, ["--help"])
+
+        assert result.exit_code == 0
+        assert "[OPTIONS] [APPLICATION]" in result.output
+        assert "--workers" in result.output, "the serving options are the root's own"
+        assert "check" in result.output
+
 
 class TestDiscovery:
     def test_the_built_in_commands_are_found(self):
         found = {command.name for command in commands_in("nitro.cli.commands")}
-        assert {"run", "version", "shell", "check"} <= found
+        assert {"version", "shell", "check"} <= found
+
+    def test_serving_is_not_a_command_of_its_own(self, runner, full_cli):
+        found = {command.name for command in commands_in("nitro.cli.commands")}
+
+        assert "run" not in found
+        assert "serve" not in found
+        assert "run" not in full_cli.commands
+        assert "serve" not in full_cli.commands
+        assert "\n  run" not in runner.invoke(full_cli, ["--help"]).output
 
     def test_an_unknown_package_is_reported(self):
         with pytest.raises(ImportError, match="no.such.package"):
@@ -132,14 +155,14 @@ class TestCheck:
         assert "redis" in result.output
 
 
-class TestRun:
+class TestServing:
     def test_a_malformed_specifier_is_rejected(self, runner, full_cli):
-        result = runner.invoke(full_cli, ["run", "not-a-specifier"])
+        result = runner.invoke(full_cli, ["-p", "0", "not-a-specifier"])
         assert result.exit_code != 0
         assert "module:attribute" in result.output
 
     def test_an_unimportable_module_is_reported(self, runner, full_cli):
-        result = runner.invoke(full_cli, ["run", "no_such_module:app"])
+        result = runner.invoke(full_cli, ["no_such_module:app"])
         assert result.exit_code != 0
         assert "no_such_module" in result.output
 
@@ -148,10 +171,48 @@ class TestRun:
         monkeypatch.syspath_prepend(str(tmp_path))
         monkeypatch.chdir(tmp_path)
 
-        result = runner.invoke(full_cli, ["run", "empty_app:app"])
+        result = runner.invoke(full_cli, ["empty_app:app"])
 
         assert result.exit_code != 0
         assert "app" in result.output
+
+    def test_the_old_command_word_is_gone_and_says_so(self, runner, full_cli):
+        result = runner.invoke(full_cli, ["run", "app:app"])
+
+        assert result.exit_code != 0
+        assert "'run' is not a command" in result.output
+        assert "module:attribute" in result.output
+        assert "check" in result.output, "the real commands are listed"
+
+    def test_a_mistyped_command_is_not_taken_for_an_application(self, runner, full_cli):
+        result = runner.invoke(full_cli, ["chekc"])
+
+        assert result.exit_code != 0
+        assert "'chekc' is not a command" in result.output
+
+    def test_serving_options_come_before_the_application(self, runner, full_cli, tmp_path, monkeypatch):
+        (tmp_path / "empty_app.py").write_text("")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+
+        result = runner.invoke(full_cli, ["-w", "2", "empty_app:app"])
+
+        # It gets as far as loading the application, which is as far as it can
+        # get without a real one.
+        assert "no such option" not in result.output.lower()
+        assert "empty_app" in result.output
+
+    def test_a_named_command_still_wins(self, runner, full_cli):
+        result = runner.invoke(full_cli, ["version"])
+
+        assert result.exit_code == 0
+        assert "Nitro" in result.output
+
+    def test_usage_names_the_root_not_the_command_behind_it(self, runner, full_cli):
+        result = runner.invoke(full_cli, ["no_such_module:app"])
+
+        assert "Usage: nitro" in result.output or "nitro" in result.output
+        assert "nitro serve" not in result.output
 
 
 class TestShell:

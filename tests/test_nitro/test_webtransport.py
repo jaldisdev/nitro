@@ -1,6 +1,6 @@
 """End-to-end WebTransport tests through the Python bindings.
 
-A real `nitro run` process serving HTTP/3, driven by a real WebTransport
+A real server process serving HTTP/3, driven by a real WebTransport
 client, so `WtSession`, `WtStream` and the `WebTransportSession` wrapper are
 exercised over the wire.
 """

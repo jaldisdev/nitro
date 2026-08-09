@@ -105,7 +105,7 @@ def _wait_for_address(process: subprocess.Popen[str], log: list[str]) -> int:
 
 @pytest.fixture
 def server_factory(tmp_path):
-    """Start `nitro run` on a kernel-chosen port and yield a handle to it."""
+    """Start the server on a kernel-chosen port and yield a handle to it."""
     running: list[RunningServer] = []
 
     def start(source: str, *arguments: str, module: str = "app") -> RunningServer:
@@ -117,7 +117,6 @@ def server_factory(tmp_path):
                 sys.executable,
                 "-m",
                 "nitro.cli",
-                "run",
                 f"{module}:app",
                 "-p",
                 "0",

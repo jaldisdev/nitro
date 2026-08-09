@@ -6,17 +6,20 @@ nitro --help
 
 | Command | Does |
 |---|---|
-| `nitro run` | Serves an application. |
+| `nitro APPLICATION` | Serves an application. |
 | `nitro check` | Reports configuration problems; exits non-zero when it finds any. |
 | `nitro shell` | An interactive shell with the project loaded. |
 | `nitro version` | The installed version. |
 
-## `nitro run`
+## Serving
 
 ```sh
-nitro run app:app
-nitro run myproject.wsgi:application --workers 4 --host 0.0.0.0 --port 8000
+nitro app:app
+nitro myproject.entry:application --workers 4 --host 0.0.0.0 --port 8000
 ```
+
+Serving is what the root command does; there is no word in front of it. Anything
+that is not one of the commands above is taken as an application.
 
 The argument is `module:attribute`, defaulting to `app:app`. The working
 directory is put on the import path, so a project's own modules are importable
