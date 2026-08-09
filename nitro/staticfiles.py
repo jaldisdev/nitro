@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from nitro.protocols.exceptions import Http404, HttpForbidden
-from nitro.protocols.http import FileResponse, Request, Response
+from nitro.protocols.http import FileResponse, HttpRequest, HttpResponse
 
 
 class StaticFiles:
@@ -42,12 +42,12 @@ class StaticFiles:
 
         return None
 
-    def _get_response(self, path: str, scope: dict) -> Response:
+    def _get_response(self, path: str, scope: dict) -> HttpResponse:
         if scope["method"] not in (
             "GET",
             "HEAD",
         ):
-            return Response(status_code=405)
+            return HttpResponse(status_code=405)
 
         try:
             full_path = self._get_full_path(path)
@@ -77,7 +77,7 @@ class StaticFiles:
             headers = self._get_headers(stat_result)
 
             if self._not_modified(scope, stat_result):
-                return Response(
+                return HttpResponse(
                     status_code=304,
                     headers=headers,
                 )
@@ -88,7 +88,7 @@ class StaticFiles:
             )
 
         except PermissionError:
-            return Response(status_code=401)
+            return HttpResponse(status_code=401)
 
     def _get_headers(self, stat_result: os.stat_result) -> dict[str, str]:
         headers = {}

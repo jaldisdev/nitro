@@ -3,7 +3,7 @@ import time
 
 from nitro.middleware.base import Middleware
 from nitro.protocols.exceptions import HttpException
-from nitro.protocols.http import Request, Response
+from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket
 
 logger = logging.getLogger("nitro.middleware")
@@ -56,7 +56,7 @@ class CORSMiddleware(Middleware):
         self.allow_methods = getattr(settings, "CORS_ALLOW_METHODS", ["*"])
         self.allow_headers = getattr(settings, "CORS_ALLOW_HEADERS", ["*"])
 
-    async def __http__(self, request: Request, call_next):
+    async def __http__(self, request: HttpRequest, call_next):
         """Add CORS headers to HTTP responses."""
         # Handle preflight requests
         if request.method == "OPTIONS":
@@ -81,7 +81,7 @@ class CORSMiddleware(Middleware):
             return True
         return origin in self.allow_origins
 
-    def _build_preflight_response(self, request: Request) -> Response:
+    def _build_preflight_response(self, request: HttpRequest) -> HttpResponse:
         """Build response for OPTIONS preflight request."""
         headers = {}
 
@@ -96,7 +96,7 @@ class CORSMiddleware(Middleware):
             headers["Access-Control-Allow-Headers"] = ", ".join(self.allow_headers)
             headers["Access-Control-Max-Age"] = "600"
 
-        return Response(status_code=200, headers=headers)
+        return HttpResponse(status_code=200, headers=headers)
 
 
 class RateLimitMiddleware(Middleware):
@@ -156,12 +156,12 @@ class RateLimitMiddleware(Middleware):
         self.requests[ip].append(now)
         return True
 
-    async def __http__(self, request: Request, call_next):
+    async def __http__(self, request: HttpRequest, call_next):
         """Rate limit HTTP requests."""
         client_ip = request.client.host if request.client else "unknown"
 
         if not self._check_rate_limit(client_ip):
-            return Response(
+            return HttpResponse(
                 content={"error": "Rate limit exceeded"},
                 status_code=429,
                 headers={"Retry-After": str(self.window)},
@@ -187,7 +187,7 @@ class ExceptionMiddleware(Middleware):
     Catches exceptions and returns appropriate error responses.
     """
 
-    async def __http__(self, request: Request, call_next):
+    async def __http__(self, request: HttpRequest, call_next):
         """Handle HTTP exceptions."""
         try:
             return await call_next(request)
@@ -211,7 +211,7 @@ class ExceptionMiddleware(Middleware):
             else:
                 content = {"error": "Internal server error"}
 
-            return Response(content=content, status_code=500)
+            return HttpResponse(content=content, status_code=500)
 
     async def __websocket__(self, websocket: WebSocket, call_next):
         """Handle WebSocket exceptions."""
@@ -247,7 +247,7 @@ class SecurityHeadersMiddleware(Middleware):
         )
         self.frame_deny = getattr(settings, "SECURE_FRAME_DENY", True)
 
-    async def __http__(self, request: Request, call_next):
+    async def __http__(self, request: HttpRequest, call_next):
         """Add security headers to response."""
         response = await call_next(request)
 

@@ -1,8 +1,8 @@
 """Requests, responses and the exceptions that become responses."""
 
 from nitro.protocols.exceptions import (
-    HttpException,
     Http404,
+    HttpException,
     HttpForbidden,
 )
 from nitro.protocols.http import (
@@ -10,12 +10,12 @@ from nitro.protocols.http import (
     Address,
     FileResponse,
     HTMLResponse,
+    HttpRequest,
+    HttpResponse,
     JSONResponse,
     PlainTextResponse,
     QueryParams,
     RedirectResponse,
-    Request,
-    Response,
     State,
     StreamingResponse,
     TemplateResponse,
@@ -29,12 +29,12 @@ __all__ = [
     "Http404",
     "HttpException",
     "HttpForbidden",
+    "HttpRequest",
+    "HttpResponse",
     "JSONResponse",
     "PlainTextResponse",
     "QueryParams",
     "RedirectResponse",
-    "Request",
-    "Response",
     "State",
     "StreamingResponse",
     "TemplateResponse",

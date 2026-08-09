@@ -2,7 +2,7 @@ import pytest
 
 from nitro.middleware.base import Middleware
 from nitro.middleware.stack import MiddlewareStack
-from nitro.protocols.http import Request, Response
+from nitro.protocols.http import HttpRequest, HttpResponse
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ class FakeProtocol:
 
 
 def make_request(method="GET", path="/", headers=None):
-    return Request(FakeScope(method=method, path=path, headers=headers), FakeProtocol())
+    return HttpRequest(FakeScope(method=method, path=path, headers=headers), FakeProtocol())
 
 
 # ── Base middleware ───────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ class TestMiddlewareStack:
         req = make_request()
 
         async def handler(request):
-            return Response(content="direct", status_code=200)
+            return HttpResponse(content="direct", status_code=200)
 
         response = await stack.execute_http(req, handler)
         assert response.status_code == 200
@@ -150,7 +150,7 @@ class TestMiddlewareStack:
 
         async def handler(request):
             order.append("handler")
-            return Response(content="ok")
+            return HttpResponse(content="ok")
 
         await stack.execute_http(make_request(), handler)
         assert order == [
@@ -188,11 +188,11 @@ class TestMiddlewareStack:
 
 
 async def async_ok_handler(r):
-    return Response(content="ok")
+    return HttpResponse(content="ok")
 
 
 async def async_empty_handler(r):
-    return Response()
+    return HttpResponse()
 
 
 class TestCORSMiddleware:

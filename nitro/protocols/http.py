@@ -1,8 +1,8 @@
 """HTTP requests and responses.
 
 A handler receives the scope and protocol objects the server built, and this
-layer puts a comfortable surface on them: :class:`Request` reads the request,
-and a :class:`Response` describes what to send back.
+layer puts a comfortable surface on them: :class:`HttpRequest` reads the request,
+and a :class:`HttpResponse` describes what to send back.
 
 There is no dictionary of connection state and no send callable. The scope is
 an object with attributes and the protocol is the thing a response is written
@@ -22,19 +22,19 @@ from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode
 
 __all__ = [
+    "URL",
     "Address",
     "FileResponse",
     "HTMLResponse",
+    "HttpRequest",
+    "HttpResponse",
     "JSONResponse",
     "PlainTextResponse",
     "QueryParams",
     "RedirectResponse",
-    "Request",
-    "Response",
     "State",
     "StreamingResponse",
     "TemplateResponse",
-    "URL",
 ]
 
 
@@ -174,7 +174,7 @@ class State:
         return f"State({self.__dict__!r})"
 
 
-class Request:
+class HttpRequest:
     """An HTTP request."""
 
     __slots__ = (
@@ -315,10 +315,10 @@ class Request:
                 yield chunk
 
     def __repr__(self) -> str:
-        return f"Request(method={self.method!r}, path={self.path!r})"
+        return f"HttpRequest(method={self.method!r}, path={self.path!r})"
 
 
-class Response:
+class HttpResponse:
     """What to send back.
 
     A response is described here and written when the framework hands it to the
@@ -419,22 +419,22 @@ class Response:
         return f"{type(self).__name__}(status_code={self.status_code})"
 
 
-class JSONResponse(Response):
+class JSONResponse(HttpResponse):
     media_type = "application/json"
 
     def render(self, content: Any) -> bytes:
         return json_module.dumps(content).encode("utf-8")
 
 
-class PlainTextResponse(Response):
+class PlainTextResponse(HttpResponse):
     media_type = "text/plain; charset=utf-8"
 
 
-class HTMLResponse(Response):
+class HTMLResponse(HttpResponse):
     media_type = "text/html; charset=utf-8"
 
 
-class RedirectResponse(Response):
+class RedirectResponse(HttpResponse):
     def __init__(
         self,
         url: str,
@@ -445,7 +445,7 @@ class RedirectResponse(Response):
         self._headers["location"] = quote(str(url), safe=":/%#?=@[]!$&'()*+,;")
 
 
-class FileResponse(Response):
+class FileResponse(HttpResponse):
     """A file, read as it is sent rather than loaded first.
 
     The transport handles the reading, so the size of the file does not decide
@@ -488,7 +488,7 @@ class FileResponse(Response):
         )
 
 
-class StreamingResponse(Response):
+class StreamingResponse(HttpResponse):
     """A response produced as it is sent.
 
     Sending waits when the client is behind, so a producer faster than its
@@ -525,7 +525,7 @@ class StreamingResponse(Response):
             await transport.send_bytes(chunk)
 
 
-class TemplateResponse(Response):
+class TemplateResponse(HttpResponse):
     """A rendered template.
 
     Rendering is deferred until the response is written, so middleware can

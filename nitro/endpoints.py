@@ -1,7 +1,7 @@
 from typing import Any, Literal
 
 from nitro.protocols.exceptions import HttpMethodNotAllowed
-from nitro.protocols.http import Request, Response
+from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket, WebSocketDisconnect
 from nitro.protocols.webtransport import WebTransportDisconnect, WebTransportSession
 
@@ -11,11 +11,11 @@ class HTTPEndpoint:
     Base class for HTTP endpoints with method-based dispatch.
     """
 
-    async def __call__(self, request: Request) -> Response:
+    async def __call__(self, request: HttpRequest) -> HttpResponse:
         """Dispatch to method handler."""
         return await self.dispatch(request)
 
-    async def dispatch(self, request: Request, **params) -> Response:
+    async def dispatch(self, request: HttpRequest, **params) -> HttpResponse:
         """Dispatch request to appropriate method handler."""
         handler = getattr(self, request.method.lower(), None)
 
@@ -35,7 +35,7 @@ class HTTPEndpoint:
 
         return response
 
-    async def method_not_allowed(self, request: Request) -> Response:
+    async def method_not_allowed(self, request: HttpRequest) -> HttpResponse:
         """Called when HTTP method is not implemented."""
         allowed = [
             m.upper()

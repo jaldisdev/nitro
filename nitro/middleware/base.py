@@ -1,7 +1,7 @@
 from abc import ABC
 from typing import Any, Awaitable, Callable
 
-from nitro.protocols.http import Request, Response
+from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket
 from nitro.protocols.webtransport import WebTransportSession
 
@@ -16,11 +16,11 @@ class Middleware(ABC):
 
     Example:
         class LoggingMiddleware(Middleware):
-            async def __http__(self, request: Request, call_next):
+            async def __http__(self, request: HttpRequest, call_next):
                 start_time = time.time()
                 response = await call_next(request)
                 duration = time.time() - start_time
-                logger.info(f'Request to {request.url.path} took {duration}s')
+                logger.info(f'HttpRequest to {request.url.path} took {duration}s')
                 return response
 
             async def __websocket__(self, websocket: WebSocket, call_next):
@@ -60,8 +60,8 @@ class Middleware(ABC):
         return None
 
     async def __http__(
-        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
+        self, request: HttpRequest, call_next: Callable[[HttpRequest], Awaitable[HttpResponse]]
+    ) -> HttpResponse:
         """
         Handle HTTP request/response cycle.
 
@@ -129,7 +129,7 @@ class Middleware(ABC):
         must handle it appropriately.
 
         Args:
-            connection: The connection object (Request, WebSocket, or WebTransportSession)
+            connection: The connection object (HttpRequest, WebSocket, or WebTransportSession)
             call_next: Callable to invoke the next middleware or route handler
 
         Returns:
