@@ -35,6 +35,7 @@ quinn = { version = "0.11.11", default-features = false, features = ["rustls-rin
 h3 = "0.0.8"
 h3-quinn = { version = "0.0.10", features = ["datagram"] }
 h3-webtransport = "0.1.2"
+h3-datagram = "0.0.2"
 
 # TLS
 rustls = { version = "0.23.43", default-features = false, features = ["tls12", "ring", "logging", "std"] }

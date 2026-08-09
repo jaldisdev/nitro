@@ -725,3 +725,148 @@ async fn upgrades_can_be_switched_off() {
     );
     server.shutdown().await;
 }
+
+// ── HTTP/3 ───────────────────────────────────────────────────────────────────
+
+/// A server certificate and the client configuration that trusts it.
+fn quic_material(directory: &tempfile::TempDir) -> (TlsSettings, Vec<u8>) {
+    let generated = rcgen::generate_simple_self_signed(["localhost".to_owned()]).unwrap();
+    let certificate_path = directory.path().join("cert.pem");
+    let key_path = directory.path().join("key.pem");
+    std::fs::write(&certificate_path, generated.cert.pem()).unwrap();
+    std::fs::write(&key_path, generated.signing_key.serialize_pem()).unwrap();
+
+    let mut settings = TlsSettings::new(&certificate_path, &key_path);
+    settings.reload_interval = Duration::ZERO;
+    (settings, generated.cert.der().to_vec())
+}
+
+fn quic_client(certificate: Vec<u8>) -> quinn::Endpoint {
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(certificate))
+        .unwrap();
+
+    let mut tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+
+    let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls).unwrap();
+    let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+    endpoint.set_default_client_config(quinn::ClientConfig::new(std::sync::Arc::new(crypto)));
+    endpoint
+}
+
+#[tokio::test]
+async fn an_http3_request_is_served() {
+    let directory = tempfile::tempdir().unwrap();
+    let (settings, certificate) = quic_material(&directory);
+    let material = TlsMaterial::load(&settings).unwrap();
+
+    let config = ServerConfig {
+        bind: BindAddress::tcp("127.0.0.1", 0),
+        http: HttpVersion::Http3,
+        tls: Some(settings),
+        drain_timeout: Duration::from_secs(5),
+        ..Default::default()
+    };
+    let server = TestServer::start(config, EchoDispatch::default(), Some(material));
+    let address = server.address.unwrap();
+
+    let endpoint = quic_client(certificate);
+    let connection = endpoint
+        .connect(address, "localhost")
+        .expect("connecting must be configurable")
+        .await
+        .expect("the QUIC handshake must succeed");
+
+    let (mut driver, mut sender) = h3::client::new(h3_quinn::Connection::new(connection))
+        .await
+        .expect("the HTTP/3 layer must come up");
+
+    let driving =
+        tokio::spawn(
+            async move { std::future::poll_fn(|context| driver.poll_close(context)).await },
+        );
+
+    let request = http::Request::builder()
+        .method("GET")
+        .uri(format!("https://localhost:{}/over-quic", address.port()))
+        .body(())
+        .unwrap();
+
+    let mut stream = sender
+        .send_request(request)
+        .await
+        .expect("sending must work");
+    stream.finish().await.expect("finishing the request body");
+
+    let response = stream
+        .recv_response()
+        .await
+        .expect("a response must arrive");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut body = Vec::new();
+    while let Some(mut chunk) = stream.recv_data().await.expect("reading the body") {
+        use bytes::Buf;
+        let length = chunk.remaining();
+        body.extend_from_slice(&chunk.copy_to_bytes(length));
+    }
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        "GET /over-quic HTTP/3 https body="
+    );
+
+    drop(sender);
+    let _closed = tokio::time::timeout(Duration::from_secs(2), driving).await;
+    endpoint.close(0u32.into(), b"done");
+    let _ = tokio::time::timeout(Duration::from_secs(10), server.shutdown()).await;
+}
+
+#[tokio::test]
+async fn http3_and_tcp_share_a_port_and_an_application() {
+    let directory = tempfile::tempdir().unwrap();
+    let (settings, certificate) = quic_material(&directory);
+    let material = TlsMaterial::load(&settings).unwrap();
+
+    let config = ServerConfig {
+        bind: BindAddress::tcp("127.0.0.1", 0),
+        http: HttpVersion::Http3,
+        tls: Some(settings),
+        drain_timeout: Duration::from_secs(5),
+        ..Default::default()
+    };
+    let dispatch = EchoDispatch::default();
+    let seen = Arc::clone(&dispatch.seen);
+    let server = TestServer::start(config, dispatch, Some(material));
+    let port = server.address.unwrap().port();
+
+    // The same port answers over TCP with TLS, and advertises HTTP/3 while
+    // doing so.
+    let tcp = reqwest::Client::builder()
+        .add_root_certificate(reqwest::Certificate::from_der(&certificate).unwrap())
+        .resolve("localhost", format!("127.0.0.1:{port}").parse().unwrap())
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    let response = tcp
+        .get(format!("https://localhost:{port}/over-tcp"))
+        .send()
+        .await
+        .expect("the TCP request must succeed");
+    assert_eq!(response.headers()["alt-svc"], format!("h3=\":{port}\""));
+    assert_eq!(
+        response.text().await.unwrap(),
+        "GET /over-tcp HTTP/2 https body="
+    );
+    assert_eq!(seen.load(Ordering::Acquire), 1);
+
+    let _ = tokio::time::timeout(Duration::from_secs(10), server.shutdown()).await;
+}

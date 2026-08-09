@@ -8,6 +8,7 @@
 
 pub mod accept;
 pub mod connection;
+pub mod quic;
 pub mod tls;
 
 use std::future::Future;
@@ -22,6 +23,7 @@ use crate::files::FileBody;
 use crate::headers::Headers;
 use crate::streaming::{StreamBody, StreamError};
 use crate::websocket::WebSocketHandshake;
+use crate::webtransport::WebTransportRequest;
 
 /// The URI scheme a request arrived under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,33 +87,66 @@ impl RequestParts {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("reading the request body failed: {0}")]
+pub struct BodyError(String);
+
+impl BodyError {
+    pub fn new(reason: impl std::fmt::Display) -> Self {
+        Self(reason.to_string())
+    }
+}
+
 /// Request body, read on demand rather than buffered up front.
+///
+/// The two forms exist because the two transports deliver a body differently:
+/// over TCP it arrives as an HTTP body, and over QUIC it is read off a stream
+/// by the task that owns the connection and handed across a channel. Handlers
+/// see no difference.
 #[derive(Debug)]
-pub struct RequestBody {
-    inner: hyper::body::Incoming,
+pub enum RequestBody {
+    Http(hyper::body::Incoming),
+    Chunks(tokio::sync::mpsc::Receiver<Result<Bytes, BodyError>>),
+    Empty,
 }
 
 impl RequestBody {
     pub fn new(inner: hyper::body::Incoming) -> Self {
-        Self { inner }
+        Self::Http(inner)
     }
 
     /// Read the next chunk of data, skipping trailer frames.
-    pub async fn next_chunk(&mut self) -> Option<Result<Bytes, hyper::Error>> {
-        loop {
-            match self.inner.frame().await? {
-                Ok(frame) => match frame.into_data() {
-                    Ok(chunk) => return Some(Ok(chunk)),
-                    Err(_trailers) => continue,
-                },
-                Err(error) => return Some(Err(error)),
-            }
+    pub async fn next_chunk(&mut self) -> Option<Result<Bytes, BodyError>> {
+        match self {
+            Self::Http(incoming) => loop {
+                match incoming.frame().await? {
+                    Ok(frame) => match frame.into_data() {
+                        Ok(chunk) => return Some(Ok(chunk)),
+                        Err(_trailers) => continue,
+                    },
+                    Err(error) => return Some(Err(BodyError::new(error))),
+                }
+            },
+            Self::Chunks(receiver) => receiver.recv().await,
+            Self::Empty => None,
         }
     }
 
     /// Read the body to completion.
-    pub async fn collect(self) -> Result<Bytes, hyper::Error> {
-        Ok(self.inner.collect().await?.to_bytes())
+    pub async fn collect(mut self) -> Result<Bytes, BodyError> {
+        if let Self::Http(incoming) = self {
+            return incoming
+                .collect()
+                .await
+                .map(|collected| collected.to_bytes())
+                .map_err(BodyError::new);
+        }
+
+        let mut collected = bytes::BytesMut::new();
+        while let Some(chunk) = self.next_chunk().await {
+            collected.extend_from_slice(&chunk?);
+        }
+        Ok(collected.freeze())
     }
 }
 
@@ -224,6 +259,16 @@ pub trait Dispatch: Clone + Send + Sync + 'static {
                 "WebSocket is not supported here",
             ) {
                 tracing::debug!(%error, "could not refuse a WebSocket upgrade");
+            }
+        }
+    }
+
+    /// Answer a WebTransport session request. The default refuses every one.
+    fn handle_webtransport(&self, request: WebTransportRequest) -> impl Future<Output = ()> + Send {
+        async move {
+            let mut request = request;
+            if let Err(error) = request.session.reject(StatusCode::NOT_IMPLEMENTED).await {
+                tracing::debug!(%error, "could not refuse a WebTransport session");
             }
         }
     }

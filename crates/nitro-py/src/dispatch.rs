@@ -7,12 +7,15 @@ use nitro_core::files::{OpenFile, ResolvedRange, resolve_range};
 use nitro_core::headers::Headers;
 use nitro_core::router::RouteTable;
 use nitro_core::transport::{Dispatch, HttpRequest, HttpResponse, ResponseBody, WebSocketRequest};
+use nitro_core::webtransport::WebTransportRequest;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
 use tokio::sync::oneshot;
 
-use crate::protocol::{FileRequest, HttpProtocol, PreparedBody, PreparedResponse, WsTransport};
-use crate::scope::{HttpScope, WsScope};
+use crate::protocol::{
+    FileRequest, HttpProtocol, PreparedBody, PreparedResponse, WsTransport, WtSession,
+};
+use crate::scope::{HttpScope, WsScope, WtScope};
 
 /// The name a Nitro application exposes to answer HTTP requests.
 pub const HTTP_ENTRY_POINT: &str = "__handle_http__";
@@ -20,9 +23,13 @@ pub const HTTP_ENTRY_POINT: &str = "__handle_http__";
 /// The name a Nitro application exposes to answer WebSocket upgrades.
 pub const WEBSOCKET_ENTRY_POINT: &str = "__handle_ws__";
 
-/// The pseudo-method WebSocket routes are registered under, so one route table
-/// covers both protocols.
+/// The name a Nitro application exposes to answer WebTransport sessions.
+pub const WEBTRANSPORT_ENTRY_POINT: &str = "__handle_wt__";
+
+/// The pseudo-methods WebSocket and WebTransport routes are registered under,
+/// so one route table covers every protocol.
 pub const WEBSOCKET_METHOD: &str = "WEBSOCKET";
+pub const WEBTRANSPORT_METHOD: &str = "WEBTRANSPORT";
 
 /// Calls into a Python application object.
 ///
@@ -254,6 +261,58 @@ impl Dispatch for PythonDispatch {
                     Err(_) => internal_error("the handler ended without sending a response"),
                 }
             }
+        }
+    }
+
+    async fn handle_webtransport(&self, request: WebTransportRequest) {
+        let mut request = request;
+
+        let has_handler = Python::attach(|python| {
+            self.application
+                .bind(python)
+                .hasattr(WEBTRANSPORT_ENTRY_POINT)
+                .unwrap_or(false)
+        });
+        if !has_handler {
+            if let Err(error) = request.session.reject(StatusCode::NOT_IMPLEMENTED).await {
+                tracing::debug!(%error, "could not refuse a WebTransport session");
+            }
+            return;
+        }
+
+        let matched = self.routes.find(WEBTRANSPORT_METHOD, request.parts.path());
+
+        let started = Python::attach(|python| -> PyResult<_> {
+            let scope = Py::new(
+                python,
+                WtScope::from_parts(python, &request.parts, &matched)?,
+            )?;
+            let session = Py::new(python, WtSession::new(request.session))?;
+
+            let application = self.application.bind(python);
+            let awaitable = application
+                .getattr(WEBTRANSPORT_ENTRY_POINT)?
+                .call1((scope, session))?;
+            pyo3_async_runtimes::into_future_with_locals(&self.locals, awaitable)
+        });
+
+        match started {
+            Ok(coroutine) => {
+                if let Err(error) = coroutine.await {
+                    Python::attach(|python| {
+                        tracing::error!(
+                            error = %error.value(python),
+                            "the WebTransport handler raised"
+                        );
+                    });
+                }
+            }
+            Err(error) => Python::attach(|python| {
+                tracing::error!(
+                    error = %error.value(python),
+                    "could not start the WebTransport handler"
+                );
+            }),
         }
     }
 

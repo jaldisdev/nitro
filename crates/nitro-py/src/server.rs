@@ -446,6 +446,11 @@ fn duplicate(sockets: &BoundSockets) -> PyResult<BoundSockets> {
             Some(listener) => Some(listener.try_clone().map_err(describe)?),
             None => None,
         },
+        quic: sockets
+            .quic
+            .iter()
+            .map(|socket| socket.try_clone().map_err(describe))
+            .collect::<PyResult<Vec<_>>>()?,
     })
 }
 

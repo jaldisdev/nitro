@@ -53,10 +53,15 @@ impl<D: Dispatch> Clone for ConnectionContext<D> {
 }
 
 impl<D: Dispatch> ConnectionContext<D> {
-    pub fn new(dispatch: D, config: Arc<ServerConfig>, server_drain: DisconnectSignal) -> Self {
+    pub fn new(
+        dispatch: D,
+        config: Arc<ServerConfig>,
+        server_drain: DisconnectSignal,
+        served_port: Option<u16>,
+    ) -> Self {
         let alt_svc = config
             .alt_svc
-            .header_value(config.http, &config.bind)
+            .header_value(config.http, served_port.or_else(|| config.bind.port()))
             .and_then(|value| header_value(&value, "alt-svc"));
         let server_header = config
             .server_header
@@ -86,6 +91,10 @@ impl<D: Dispatch> ConnectionContext<D> {
 
     pub fn config(&self) -> &Arc<ServerConfig> {
         &self.config
+    }
+
+    pub fn dispatch(&self) -> &D {
+        &self.dispatch
     }
 }
 
@@ -484,7 +493,13 @@ mod tests {
     }
 
     fn context(config: ServerConfig) -> ConnectionContext<NoopDispatch> {
-        ConnectionContext::new(NoopDispatch, Arc::new(config), DisconnectSignal::new())
+        let port = config.bind.port();
+        ConnectionContext::new(
+            NoopDispatch,
+            Arc::new(config),
+            DisconnectSignal::new(),
+            port,
+        )
     }
 
     #[test]

@@ -26,6 +26,7 @@ quinn.workspace = true
 h3.workspace = true
 h3-quinn.workspace = true
 h3-webtransport.workspace = true
+h3-datagram.workspace = true
 
 rustls.workspace = true
 rustls-pemfile.workspace = true
