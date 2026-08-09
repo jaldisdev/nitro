@@ -25,6 +25,11 @@ LANGUAGES: list[tuple[str, str]] = [("en-us", "English (US)")]
 # Import paths searched for additional CLI commands.
 COMMAND_MODULES: list[str] = []
 
+# Middleware, outermost first. Each entry is the import path of a Middleware
+# subclass; a request passes through them in order on the way in and in reverse
+# on the way out.
+MIDDLEWARE: list[str] = []
+
 # Import path of the module holding the route table, or the routes themselves.
 ROUTES: str | list[Any] = []
 

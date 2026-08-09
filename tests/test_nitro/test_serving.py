@@ -679,25 +679,23 @@ class TestStreamingResponses:
 
         @app.route("/stream")
         async def stream(request):
-            scope, protocol = request.scope, request.protocol
-            transport = protocol.response_stream(200, [("content-type", "text/plain")])
+            transport = request.protocol.response_stream(
+                200, [("content-type", "text/plain")]
+            )
             for index in range(5):
                 await transport.send_str(f"chunk-{index}\\n")
             transport.close()
 
         @app.route("/backpressure")
         async def backpressure(request):
-            scope, protocol = request.scope, request.protocol
-            transport = protocol.response_stream(200, [])
-            capacity = transport.capacity
+            transport = request.protocol.response_stream(200, [])
             for index in range(200):
                 await transport.send_bytes(b"x" * 1024)
             transport.close()
 
         @app.route("/closed-transport")
         async def closed_transport(request):
-            scope, protocol = request.scope, request.protocol
-            transport = protocol.response_stream(200, [])
+            transport = request.protocol.response_stream(200, [])
             await transport.send_str("first")
             transport.close()
             try:
@@ -707,11 +705,20 @@ class TestStreamingResponses:
 
         @app.route("/mixed")
         async def mixed(request):
-            scope, protocol = request.scope, request.protocol
-            transport = protocol.response_stream(200, [])
+            transport = request.protocol.response_stream(200, [])
             await transport.send_bytes(b"bytes ")
             await transport.send_str("and text")
             transport.close()
+
+        @app.route("/response-class")
+        async def response_class(request):
+            from nitro.protocols import StreamingResponse
+
+            async def produce():
+                for index in range(3):
+                    yield f"piece-{index}"
+
+            return StreamingResponse(produce(), content_type="text/plain")
     """
 
     def test_chunks_arrive_in_order(self, server_factory):
@@ -741,6 +748,11 @@ class TestStreamingResponses:
         assert server.request("/closed-transport").text == "first"
         server.stop()
 
+    def test_a_streaming_response_object_is_written(self, server_factory):
+        server = server_factory(self.STREAM_APP)
+        assert server.request("/response-class").text == "piece-0piece-1piece-2"
+        server.stop()
+
 
 class TestWebSockets:
     SOCKET_APP = """
@@ -749,33 +761,33 @@ class TestWebSockets:
         app = Nitro(http="1", log_level="warning")
 
         @app.websocket("/echo")
-        async def echo(scope, transport):
-            await transport.accept()
-            async for message in transport:
+        async def echo(socket):
+            await socket.accept()
+            async for message in socket:
                 if isinstance(message, str):
-                    await transport.send_str(f"echo:{message}")
+                    await socket.send_text(f"echo:{message}")
                 else:
-                    await transport.send_bytes(message)
+                    await socket.send_bytes(message)
 
         @app.websocket("/rooms/<slug:room>")
-        async def show_room(scope, transport, room):
-            await transport.accept()
-            await transport.send_str(f"room={room} path={scope.path} scheme={scope.scheme}")
-            await transport.close()
+        async def show_room(socket, room):
+            await socket.accept()
+            await socket.send_text(f"room={room} path={socket.path} scheme={socket.scheme}")
+            await socket.close()
 
         @app.websocket("/pick")
-        async def pick(scope, transport):
-            offered = list(scope.subprotocols)
-            await transport.accept(offered[0] if offered else None)
-            await transport.send_str(f"offered={offered}")
-            await transport.close()
+        async def pick(socket):
+            offered = list(socket.subprotocols)
+            await socket.accept(offered[0] if offered else None)
+            await socket.send_text(f"offered={offered}")
+            await socket.close()
 
         @app.websocket("/refuse")
-        async def refuse(scope, transport):
-            await transport.reject(403, "no entry")
+        async def refuse(socket):
+            await socket.reject(403, "no entry")
 
         @app.websocket("/boom")
-        async def boom(scope, transport):
+        async def boom(socket):
             raise RuntimeError("handler exploded")
 
         @app.route("/plain")
@@ -895,20 +907,20 @@ class TestWebSockets:
             app = Nitro(http="1", log_level="warning")
 
             @app.websocket("/duplex")
-            async def duplex(scope, transport):
-                await transport.accept()
+            async def duplex(socket):
+                await socket.accept()
 
                 async def heartbeat():
                     for index in range(100):
-                        await transport.send_str(f"tick-{index}")
+                        await socket.send_text(f"tick-{index}")
                         await asyncio.sleep(0.01)
 
                 pump = asyncio.create_task(heartbeat())
                 try:
                     # This waits for a message that will not come until the
                     # client has seen several ticks.
-                    async for incoming in transport:
-                        await transport.send_str(f"echo:{incoming}")
+                    async for incoming in socket:
+                        await socket.send_text(f"echo:{incoming}")
                         break
                 finally:
                     pump.cancel()
@@ -957,22 +969,22 @@ class TestIntercomOverWebSocket:
         app = Nitro(http="1", log_level="warning")
 
         @app.websocket("/rooms/<slug:room>")
-        async def relay(scope, transport, room):
-            await transport.accept()
+        async def relay(socket, room):
+            await socket.accept()
             channel = new_channel("socket")
 
             async with intercom.listen(channel, groups=[room]) as messages:
                 # Let the subscription settle before anyone publishes to it.
                 await asyncio.sleep(0.2)
-                await transport.send_str("ready")
+                await socket.send_text("ready")
 
                 async def outbound():
                     async for message in messages:
-                        await transport.send_str(message["text"])
+                        await socket.send_text(message["text"])
 
                 pump = asyncio.create_task(outbound())
                 try:
-                    async for incoming in transport:
+                    async for incoming in socket:
                         await intercom.group_publish(room, {{"text": incoming}})
                 finally:
                     pump.cancel()
