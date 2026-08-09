@@ -78,12 +78,12 @@ constructor argument.
 
 | Setting | Purpose |
 |---|---|
-| `DEBUG` | Detail in error responses. Never on in production. |
+| `DEBUG` | Detail in error responses, including the 404 and 500 pages. Never on in production. |
 | `SECRET_KEY` | Signing. Required outside debug. |
 | `ALLOWED_HOSTS` | Host names this site answers for. `"*"` matches anything; a leading dot matches subdomains. |
 | `MIDDLEWARE` | Import paths, outermost first. See [middleware](middleware.md). |
 | `COMMAND_MODULES` | Packages searched for extra CLI commands. |
-| `ROUTES` | Where the route table lives. |
+| `ROUTES` | The module holding the route table, which defines `patterns`. See [routing](routing.md). |
 | `TEMPLATES`, `TEMPLATE_CACHE` | See [templates](templates.md). |
 | `CACHES` | See [caching](cache.md). |
 | `STORAGES` | See [storage](storage.md). |

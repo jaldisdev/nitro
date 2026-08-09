@@ -3,20 +3,34 @@
 An async-first Python web framework with its server compiled in.
 
 ```python
-from nitro import Nitro
+# routes.py
+from nitro.routing import HTTPRoute
 from nitro.protocols import HttpRequest, HttpResponse, JSONResponse
 
-app = Nitro()
 
-
-@app.route("/users/<int:user_id>")
 async def show_user(request: HttpRequest, user_id: int) -> HttpResponse:
     return JSONResponse({"id": user_id, "name": "Ada"})
+
+
+patterns = [
+    HTTPRoute("/users/<int:user_id>", show_user, name="user"),
+]
+```
+
+```python
+# app.py
+from nitro import Nitro
+
+app = Nitro(routes="routes")
 ```
 
 ```sh
 nitro app:app
 ```
+
+A project usually points the `ROUTES` setting at its route module rather than
+naming it here. Handlers can also be registered on the application directly with
+`@app.route(...)`.
 
 ## Not an ASGI framework
 

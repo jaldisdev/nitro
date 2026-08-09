@@ -12,6 +12,12 @@ from nitro.routing.converters import (
     register_converter,
 )
 from nitro.routing.mount import Mount
+from nitro.routing.patterns import (
+    HTTPRoute,
+    WebSocketRoute,
+    WebTransportRoute,
+    load_patterns,
+)
 from nitro.routing.parameters import (
     Body,
     Cookie,
@@ -30,9 +36,13 @@ __all__ = [
     "Cookie",
     "File",
     "Header",
+    "HTTPRoute",
     "Path",
     "Query",
     "ValidationError",
+    "WebSocketRoute",
+    "WebTransportRoute",
+    "load_patterns",
     "reverse",
     "IntConverter",
     "Mount",

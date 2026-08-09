@@ -1,20 +1,55 @@
+import asyncio
+import sys
+import types
 import uuid
 
 import pytest
 
+from nitro.endpoints import HTTPEndpoint
+from nitro.protocols import JSONResponse
 from nitro.routing import (
     Converter,
+    HTTPRoute,
     Mount,
     Router,
+    WebSocketRoute,
+    WebTransportRoute,
     converter_for,
     get_converters,
+    load_patterns,
     register_converter,
 )
 from nitro.routing.router import parse_parameters
+from nitro.settings import ImproperlyConfigured
 
 
 async def handler(request):
     return None
+
+
+class GetRequest:
+    """The part of a request an endpoint reads to dispatch."""
+
+    method = "GET"
+
+
+@pytest.fixture
+def patterns_module():
+    """Build an importable routes module and yield its name."""
+    created: list[str] = []
+
+    def build(source: str, name: str = "test_patterns_module") -> str:
+        module = types.ModuleType(name)
+        module.__dict__.update(HTTPRoute=HTTPRoute, handler=handler)
+        exec(compile(source, name, "exec"), module.__dict__)
+        sys.modules[name] = module
+        created.append(name)
+        return name
+
+    yield build
+
+    for name in created:
+        sys.modules.pop(name, None)
 
 
 class TestConverters:
@@ -257,3 +292,121 @@ class TestMount:
         Mount("/api", middle).attach(outer)
 
         assert outer.routes[0].path == "/api/v1/things"
+
+
+class TestDeclarations:
+    def test_a_route_declaration_registers_itself(self):
+        router = Router()
+        HTTPRoute("/things", handler, name="things").attach(router)
+
+        route = router.by_name("things")
+        assert route.path == "/things"
+        assert route.methods == ("GET", "HEAD")
+
+    def test_declared_methods_are_kept(self):
+        router = Router()
+        HTTPRoute("/things", handler, methods=["POST"]).attach(router)
+        assert router.routes[0].methods == ("POST",)
+
+    def test_an_endpoint_class_answers_the_verbs_it_defines(self):
+        class Things(HTTPEndpoint):
+            async def get(self, request):
+                return None
+
+            async def post(self, request):
+                return None
+
+        router = Router()
+        HTTPRoute("/things", Things).attach(router)
+        assert set(router.routes[0].methods) == {"GET", "POST", "HEAD"}
+
+    def test_an_endpoint_class_is_instantiated_per_request(self):
+        seen = []
+
+        class Things(HTTPEndpoint):
+            def __init__(self):
+                seen.append(self)
+
+            async def get(self, request):
+                return JSONResponse({})
+
+        router = Router()
+        HTTPRoute("/things", Things).attach(router)
+        registered = router.routes[0].handler
+
+        asyncio.run(registered(GetRequest()))
+        asyncio.run(registered(GetRequest()))
+        assert len(seen) == 2 and seen[0] is not seen[1]
+
+    def test_path_parameters_reach_an_endpoint(self):
+        class Things(HTTPEndpoint):
+            async def get(self, request, identifier):
+                return JSONResponse({"identifier": identifier})
+
+        router = Router()
+        HTTPRoute("/things/<int:identifier>", Things).attach(router)
+        response = asyncio.run(router.routes[0].handler(GetRequest(), identifier=7))
+        assert response.body == b'{"identifier": 7}'
+
+    def test_a_class_that_is_not_an_endpoint_is_refused(self):
+        class NotAnEndpoint:
+            pass
+
+        with pytest.raises(TypeError, match="not an endpoint class"):
+            HTTPRoute("/things", NotAnEndpoint).attach(Router())
+
+    def test_socket_declarations_use_their_own_methods(self):
+        router = Router()
+        WebSocketRoute("/socket", handler).attach(router)
+        WebTransportRoute("/session", handler).attach(router)
+
+        assert [route.methods for route in router] == [("WEBSOCKET",), ("WEBTRANSPORT",)]
+
+    def test_declarations_can_be_mounted(self):
+        router = Router()
+        Mount(
+            "/api",
+            [HTTPRoute("/things", handler, name="things")],
+            name="api",
+        ).attach(router)
+
+        assert router.url_for("api:things") == "/api/things"
+
+    def test_mounted_declarations_nest(self):
+        router = Router()
+        Mount(
+            "/api",
+            [Mount("/v1", [HTTPRoute("/things", handler, name="things")], name="v1")],
+            name="api",
+        ).attach(router)
+
+        assert router.url_for("api:v1:things") == "/api/v1/things"
+
+    def test_a_router_includes_declarations(self):
+        router = Router()
+        router.include([HTTPRoute("/things", handler, name="things")])
+        assert router.by_name("things").path == "/things"
+
+    def test_something_that_is_not_a_route_is_reported(self):
+        with pytest.raises(TypeError, match="not a route"):
+            Router().include(["/things"])
+
+
+class TestLoadingPatterns:
+    def test_declarations_are_read_from_a_module(self, patterns_module):
+        module = patterns_module("patterns = [HTTPRoute('/things', handler, name='things')]")
+        loaded = load_patterns(module)
+        assert [declaration.name for declaration in loaded] == ["things"]
+
+    def test_a_list_is_taken_as_given(self):
+        declarations = [HTTPRoute("/things", handler)]
+        assert load_patterns(declarations) == declarations
+
+    def test_a_module_that_cannot_be_imported_is_reported(self):
+        with pytest.raises(ImproperlyConfigured, match="could not be imported"):
+            load_patterns("no.such.module")
+
+    def test_a_module_without_patterns_is_reported(self, patterns_module):
+        module = patterns_module("routes = []")
+        with pytest.raises(ImproperlyConfigured, match="does not define `patterns`"):
+            load_patterns(module)

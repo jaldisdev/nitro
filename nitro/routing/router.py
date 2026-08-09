@@ -67,6 +67,21 @@ class Route:
             converted[name] = converter.to_python(value) if converter else value
         return converted
 
+    def attach(self, router: Router, prefix: str = "", namespace: str | None = None) -> None:
+        """Register this route on `router` again, under `prefix`.
+
+        A registered route describes itself the same way a declaration does,
+        which is what lets one router's table be included in another's.
+        """
+        from nitro.routing.patterns import qualified
+
+        router.add(
+            f"{prefix}{self.path}",
+            self.handler,
+            methods=self.methods,
+            name=qualified(self.name, namespace),
+        )
+
     def build_path(self, values: dict[str, Any]) -> str:
         """The concrete path for this route with `values` substituted in."""
 
@@ -186,16 +201,22 @@ class Router:
 
         return register
 
-    def include(self, routes: Iterable[Route] | Router, prefix: str = "") -> None:
-        """Absorb another router's routes, optionally under a further prefix."""
+    def include(self, routes: Iterable[Any] | Router, prefix: str = "") -> None:
+        """Absorb route declarations, or another router's routes.
+
+        Accepts anything a ``patterns`` list may hold, as well as a `Router` or
+        the routes it has already registered, since every one of them knows how
+        to attach itself.
+        """
         source = routes.routes if isinstance(routes, Router) else list(routes)
-        for route in source:
-            self.add(
-                f"{prefix.rstrip('/')}{route.path}" if prefix else route.path,
-                route.handler,
-                methods=route.methods,
-                name=route.name,
-            )
+        for entry in source:
+            attach = getattr(entry, "attach", None)
+            if attach is None:
+                raise TypeError(
+                    f"{entry!r} is not a route; expected an HTTPRoute, WebSocketRoute, "
+                    "WebTransportRoute or Mount"
+                )
+            attach(self, prefix.rstrip("/") if prefix else "")
 
     def get(self, route_id: int) -> Route | None:
         return self._by_id.get(route_id)
