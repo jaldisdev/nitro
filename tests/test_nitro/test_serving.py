@@ -500,3 +500,213 @@ class TestRouting:
 
         assert finished.returncode != 0
         assert "bad" in (finished.stdout + finished.stderr)
+
+
+class TestFileResponses:
+    @staticmethod
+    def file_app(directory) -> str:
+        return f"""
+            from nitro import Nitro
+
+            app = Nitro(http="1", log_level="warning")
+            root = {str(directory)!r}
+
+            @app.route("/whole")
+            async def whole(scope, protocol):
+                protocol.response_file(200, [], f"{{root}}/data.txt")
+
+            @app.route("/typed")
+            async def typed(scope, protocol):
+                protocol.response_file(200, [], f"{{root}}/page.html")
+
+            @app.route("/overridden")
+            async def overridden(scope, protocol):
+                protocol.response_file(
+                    200, [("content-type", "text/plain")], f"{{root}}/page.html"
+                )
+
+            @app.route("/missing")
+            async def missing(scope, protocol):
+                protocol.response_file(200, [], f"{{root}}/not-there.txt")
+
+            @app.route("/directory")
+            async def directory(scope, protocol):
+                protocol.response_file(200, [], root)
+
+            @app.route("/range/<int:start>/<int:end>")
+            async def ranged(scope, protocol, start, end):
+                protocol.response_file_range(200, [], f"{{root}}/data.txt", start, end)
+
+            @app.route("/tail/<int:start>")
+            async def tail(scope, protocol, start):
+                protocol.response_file_range(200, [], f"{{root}}/data.txt", start)
+
+            @app.route("/large")
+            async def large(scope, protocol):
+                protocol.response_file(200, [], f"{{root}}/large.bin")
+        """
+
+    @pytest.fixture
+    def files(self, tmp_path):
+        (tmp_path / "data.txt").write_bytes(b"0123456789")
+        (tmp_path / "page.html").write_bytes(b"<h1>hi</h1>")
+        (tmp_path / "large.bin").write_bytes(bytes(index % 251 for index in range(300_000)))
+        return tmp_path
+
+    def test_a_whole_file_is_sent(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        response = server.request("/whole")
+
+        assert response.status == 200
+        assert response.body == b"0123456789"
+        assert response.headers["content-length"] == "10"
+        assert response.headers["accept-ranges"] == "bytes"
+        assert "last-modified" in response.headers
+        server.stop()
+
+    def test_the_content_type_comes_from_the_file(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        assert server.request("/typed").headers["content-type"] == "text/html"
+        server.stop()
+
+    def test_a_handler_can_override_the_content_type(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        assert server.request("/overridden").headers["content-type"] == "text/plain"
+        server.stop()
+
+    def test_a_missing_file_is_a_404(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        assert server.request("/missing").status == 404
+        server.stop()
+
+    def test_a_directory_is_not_served(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        assert server.request("/directory").status == 500
+        server.stop()
+
+    def test_a_range_is_answered_with_206_and_a_content_range(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        response = server.request("/range/2/5")
+
+        assert response.status == 206
+        assert response.body == b"2345"
+        assert response.headers["content-range"] == "bytes 2-5/10"
+        assert response.headers["content-length"] == "4"
+        server.stop()
+
+    def test_an_open_ended_range_runs_to_the_last_byte(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        response = server.request("/tail/7")
+
+        assert response.status == 206
+        assert response.body == b"789"
+        assert response.headers["content-range"] == "bytes 7-9/10"
+        server.stop()
+
+    def test_the_last_byte_is_reachable(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        response = server.request("/range/9/9")
+
+        assert response.status == 206
+        assert response.body == b"9"
+        server.stop()
+
+    def test_an_end_past_the_file_is_clamped(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        response = server.request("/range/8/100")
+
+        assert response.status == 206
+        assert response.body == b"89"
+        assert response.headers["content-range"] == "bytes 8-9/10"
+        server.stop()
+
+    def test_a_start_past_the_file_is_a_416(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        response = server.request("/tail/50")
+
+        assert response.status == 416, "a range past the end must not look satisfied"
+        assert response.headers["content-range"] == "bytes */10"
+        assert response.body == b""
+        server.stop()
+
+    def test_an_inverted_range_is_a_416(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        assert server.request("/range/8/2").status == 416
+        server.stop()
+
+    def test_a_large_file_arrives_intact(self, server_factory, files):
+        server = server_factory(self.file_app(files))
+        response = server.request("/large")
+
+        assert response.status == 200
+        assert len(response.body) == 300_000
+        assert response.body == (files / "large.bin").read_bytes()
+        server.stop()
+
+
+class TestStreamingResponses:
+    STREAM_APP = """
+        import asyncio
+        from nitro import Nitro
+
+        app = Nitro(http="1", log_level="warning", stream_queue_capacity=2)
+
+        @app.route("/stream")
+        async def stream(scope, protocol):
+            transport = protocol.response_stream(200, [("content-type", "text/plain")])
+            for index in range(5):
+                await transport.send_str(f"chunk-{index}\\n")
+            transport.close()
+
+        @app.route("/backpressure")
+        async def backpressure(scope, protocol):
+            transport = protocol.response_stream(200, [])
+            capacity = transport.capacity
+            for index in range(200):
+                await transport.send_bytes(b"x" * 1024)
+            transport.close()
+
+        @app.route("/closed-transport")
+        async def closed_transport(scope, protocol):
+            transport = protocol.response_stream(200, [])
+            await transport.send_str("first")
+            transport.close()
+            try:
+                await transport.send_str("second")
+            except RuntimeError as error:
+                app.last_error = str(error)
+
+        @app.route("/mixed")
+        async def mixed(scope, protocol):
+            transport = protocol.response_stream(200, [])
+            await transport.send_bytes(b"bytes ")
+            await transport.send_str("and text")
+            transport.close()
+    """
+
+    def test_chunks_arrive_in_order(self, server_factory):
+        server = server_factory(self.STREAM_APP)
+        response = server.request("/stream")
+
+        assert response.status == 200
+        assert response.text == "".join(f"chunk-{index}\n" for index in range(5))
+        assert "content-length" not in response.headers
+        server.stop()
+
+    def test_bytes_and_text_can_be_mixed(self, server_factory):
+        server = server_factory(self.STREAM_APP)
+        assert server.request("/mixed").text == "bytes and text"
+        server.stop()
+
+    def test_a_producer_faster_than_the_client_still_delivers_everything(self, server_factory):
+        server = server_factory(self.STREAM_APP)
+        response = server.request("/backpressure")
+
+        assert response.status == 200
+        assert len(response.body) == 200 * 1024
+        server.stop()
+
+    def test_sending_after_close_is_refused(self, server_factory):
+        server = server_factory(self.STREAM_APP)
+        assert server.request("/closed-transport").text == "first"
+        server.stop()
