@@ -273,7 +273,7 @@ pub async fn serve<D: Dispatch>(
     };
 
     if let Some(material) = &tls
-        && let Some(reloader) = material.spawn_reloader()
+        && let Some(reloader) = material.spawn_reloader(shutdown.clone())
     {
         drain.tracker().spawn(async move {
             if let Err(error) = reloader.await

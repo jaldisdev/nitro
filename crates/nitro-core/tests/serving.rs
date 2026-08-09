@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http::StatusCode;
@@ -388,6 +388,45 @@ async fn tls_and_http2_are_negotiated_over_alpn() {
     assert_eq!(body, "GET /secure HTTP/2 https body=");
 
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn certificate_reloading_does_not_hold_shutdown_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let generated = rcgen::generate_simple_self_signed(["localhost".to_owned()]).unwrap();
+    let certificate_path = directory.path().join("cert.pem");
+    let key_path = directory.path().join("key.pem");
+    std::fs::write(&certificate_path, generated.cert.pem()).unwrap();
+    std::fs::write(&key_path, generated.signing_key.serialize_pem()).unwrap();
+
+    let mut settings = TlsSettings::new(&certificate_path, &key_path);
+    // Left on, unlike the ALPN test above, and longer than this test waits: the
+    // reloader is a background task the drain chain awaits, so one that ignored
+    // the shutdown request would keep the server up for the whole timeout.
+    settings.reload_interval = Duration::from_secs(300);
+    let material = TlsMaterial::load(&settings).expect("the test certificate must load");
+
+    let config = ServerConfig {
+        bind: BindAddress::tcp("127.0.0.1", 0),
+        http: HttpVersion::Http2,
+        tls: Some(settings),
+        drain_timeout: Duration::from_secs(8),
+        ..Default::default()
+    };
+    let server = TestServer::start(config, EchoDispatch::default(), Some(material));
+
+    let started = Instant::now();
+    let outcome = server.shutdown().await;
+
+    assert!(
+        outcome.is_complete(),
+        "a server with nothing in flight must drain cleanly"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "shutdown took {:?}, which means something waited out the drain timeout",
+        started.elapsed()
+    );
 }
 
 #[cfg(unix)]

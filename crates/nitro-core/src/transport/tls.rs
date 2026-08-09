@@ -18,6 +18,7 @@ use rustls::{RootCertStore, ServerConfig as RustlsConfig, version};
 use tokio_rustls::TlsAcceptor;
 
 use crate::config::{ClientAuth, HttpVersion, TlsSettings};
+use crate::lifecycle::ShutdownSignal;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TlsError {
@@ -147,21 +148,30 @@ impl TlsMaterial {
     /// Polling beats watching the filesystem here because certificate renewal
     /// often replaces the file by rename or recreates it, which invalidates a
     /// watch on the original inode.
-    pub fn spawn_reloader(&self) -> Option<tokio::task::JoinHandle<()>> {
+    pub fn spawn_reloader(&self, shutdown: ShutdownSignal) -> Option<tokio::task::JoinHandle<()>> {
         if self.settings.reload_interval.is_zero() {
             return None;
         }
         let material = self.clone();
-        Some(tokio::spawn(async move { material.reload_loop().await }))
+        Some(tokio::spawn(
+            async move { material.reload_loop(shutdown).await },
+        ))
     }
 
-    async fn reload_loop(self) {
+    async fn reload_loop(self, shutdown: ShutdownSignal) {
         let mut last_modified = modified_at(&self.settings.certificate);
         let mut ticker = tokio::time::interval(self.settings.reload_interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
-            ticker.tick().await;
+            tokio::select! {
+                _ = ticker.tick() => {}
+                // A loop with no exit is awaited by the drain chain like any
+                // other background task, so one that never returns holds
+                // shutdown open for the whole drain timeout. There is nothing
+                // to reload for once the server is stopping anyway.
+                () = shutdown.wait() => return,
+            }
 
             let modified = modified_at(&self.settings.certificate);
             if modified <= last_modified {
@@ -300,6 +310,7 @@ mod tests {
 
     use super::test_support::write_self_signed;
     use super::*;
+    use crate::lifecycle::ShutdownController;
 
     fn settings(directory: &Path, hostname: &str) -> TlsSettings {
         let (certificate, key) = write_self_signed(directory, hostname);
@@ -385,7 +396,9 @@ mod tests {
 
         let material = TlsMaterial::load(&settings).unwrap();
         let before = material.resolver.current();
-        let reloader = material.spawn_reloader().expect("reloading is enabled");
+        let reloader = material
+            .spawn_reloader(ShutdownSignal::never())
+            .expect("reloading is enabled");
 
         // The poller compares modification times, which on some filesystems have
         // a resolution coarse enough to miss an immediate rewrite.
@@ -414,6 +427,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_reloader_stops_when_shutdown_is_requested() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut settings = settings(directory.path(), "first.test");
+        // Far longer than the assertion below waits, so a reloader that only
+        // noticed the request on its next tick would fail this.
+        settings.reload_interval = Duration::from_secs(300);
+
+        let material = TlsMaterial::load(&settings).unwrap();
+        let controller = ShutdownController::new();
+        let reloader = material
+            .spawn_reloader(controller.subscribe())
+            .expect("reloading is enabled");
+
+        controller.trigger();
+
+        tokio::time::timeout(Duration::from_secs(1), reloader)
+            .await
+            .expect("the reloader must return rather than hold the drain open")
+            .expect("the reloader task panicked");
+    }
+
+    #[tokio::test]
     async fn an_unreadable_replacement_keeps_the_previous_certificate() {
         let directory = tempfile::tempdir().unwrap();
         let mut settings = settings(directory.path(), "first.test");
@@ -421,7 +456,9 @@ mod tests {
 
         let material = TlsMaterial::load(&settings).unwrap();
         let before = material.resolver.current();
-        let reloader = material.spawn_reloader().expect("reloading is enabled");
+        let reloader = material
+            .spawn_reloader(ShutdownSignal::never())
+            .expect("reloading is enabled");
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         std::fs::write(
@@ -446,6 +483,6 @@ mod tests {
         settings.reload_interval = Duration::ZERO;
 
         let material = TlsMaterial::load(&settings).unwrap();
-        assert!(material.spawn_reloader().is_none());
+        assert!(material.spawn_reloader(ShutdownSignal::never()).is_none());
     }
 }
