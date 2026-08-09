@@ -1,0 +1,23 @@
+[package]
+name = "intercom-py"
+description = "Python bindings for intercom-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "intercom_py"
+path = "src/intercom_py.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+intercom-core.workspace = true
+
+pyo3.workspace = true
+pyo3-async-runtimes.workspace = true
+
+tokio.workspace = true
+futures-util.workspace = true
+tracing.workspace = true

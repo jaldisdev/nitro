@@ -1,0 +1,27 @@
+[package]
+name = "nitro-py"
+description = "Python bindings for the Nitro server core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "nitro_py"
+path = "src/nitro_py.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nitro-core.workspace = true
+intercom-core.workspace = true
+
+pyo3.workspace = true
+pyo3-async-runtimes.workspace = true
+libc.workspace = true
+
+tokio.workspace = true
+bytes.workspace = true
+http.workspace = true
+tracing.workspace = true
+futures-util.workspace = true

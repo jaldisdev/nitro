@@ -1,0 +1,50 @@
+name: Test
+
+on:
+  push:
+    branches: [canary, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  python:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pip install maturin
+      - name: Build and install nitro
+        run: |
+          maturin build --release -o dist
+          pip install "$(ls dist/nitro-*.whl)[dev,all]"
+      - name: Build and install nitro-intercom
+        working-directory: nitro-intercom
+        run: |
+          maturin build --release -o dist
+          pip install "$(ls dist/nitro_intercom-*.whl)[dev]"
+      - run: pytest

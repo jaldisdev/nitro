@@ -1,0 +1,33 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "nitro-intercom"
+version = "0.1.0"
+description = "Publish/subscribe channels for Python services"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "Mario Ritzerfeld", email = "m.ritzerfeld@jaldis.com" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9", "pytest-asyncio>=1.0"]
+
+[tool.maturin]
+module-name = "nitro_intercom._intercom"
+manifest-path = "../crates/intercom-py/Cargo.toml"
+python-source = "."
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
