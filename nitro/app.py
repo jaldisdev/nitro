@@ -23,6 +23,7 @@ from nitro.routing.mount import Mount
 from nitro.routing.router import (
     DEFAULT_METHODS,
     WEBSOCKET_METHOD,
+    WEBTRANSPORT_METHOD,
     Route,
     Router,
     RouteTable,
@@ -106,6 +107,28 @@ class Nitro:
         if not inspect.iscoroutinefunction(handler):
             raise TypeError(f"WebSocket handler for {path!r} must be an async function")
         return self.router.add(path, handler, methods=[WEBSOCKET_METHOD], name=name)
+
+    def webtransport(
+        self, path: str, *, name: str | None = None
+    ) -> Callable[[Handler], Handler]:
+        """Register a WebTransport handler for `path`.
+
+        The handler is called with the session scope and a session it must
+        either accept or reject before any traffic can pass.
+        """
+
+        def register(handler: Handler) -> Handler:
+            self.add_webtransport_route(path, handler, name=name)
+            return handler
+
+        return register
+
+    def add_webtransport_route(
+        self, path: str, handler: Handler, *, name: str | None = None
+    ) -> Route:
+        if not inspect.iscoroutinefunction(handler):
+            raise TypeError(f"WebTransport handler for {path!r} must be an async function")
+        return self.router.add(path, handler, methods=[WEBTRANSPORT_METHOD], name=name)
 
     def mount(self, mount: Mount) -> None:
         """Attach a sub-router's routes under its prefix."""
@@ -208,6 +231,32 @@ class Nitro:
                     await transport.reject(500, "Internal Server Error")
             except RuntimeError:
                 logger.debug("the WebSocket was already finished", exc_info=True)
+
+    async def __handle_wt__(self, scope: Any, session: Any) -> None:
+        route = self.router.get(scope.route_id) if scope.route_id is not None else None
+
+        if route is None:
+            await session.reject(404)
+            return
+
+        try:
+            parameters = route.convert(dict(scope.path_params))
+        except (ValueError, TypeError):
+            logger.debug("path parameters for %s could not be converted", scope.path, exc_info=True)
+            await session.reject(404)
+            return
+
+        try:
+            await route.handler(scope, session, **parameters)
+        except Exception:
+            logger.exception("WebTransport handler for %s failed", scope.path)
+            try:
+                if session.connected:
+                    await session.close()
+                else:
+                    await session.reject(500)
+            except RuntimeError:
+                logger.debug("the WebTransport session was already finished", exc_info=True)
 
     def __startup__(self, loop: asyncio.AbstractEventLoop) -> None:
         """Run startup callbacks before the worker accepts anything.

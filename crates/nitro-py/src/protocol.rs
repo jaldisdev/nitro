@@ -9,9 +9,12 @@ use http::StatusCode;
 use nitro_core::disconnect::DisconnectWatcher;
 use nitro_core::headers::Headers as CoreHeaders;
 use nitro_core::streaming::{self, StreamSender};
-use nitro_core::transport::{RequestBody, ResponseBody};
+use nitro_core::transport::{BodyError, RequestBody, ResponseBody};
 use nitro_core::websocket::{
     WebSocketConnection, WebSocketError, WebSocketHandshake, WebSocketMessage,
+};
+use nitro_core::webtransport::{
+    IncomingStream, ReceiveHalf, SendHalf, SessionHandle, WebTransportError, WebTransportSession,
 };
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
@@ -51,14 +54,14 @@ enum BodyReader {
 }
 
 impl BodyReader {
-    async fn read_all(&mut self) -> Result<Bytes, hyper::Error> {
+    async fn read_all(&mut self) -> Result<Bytes, BodyError> {
         match std::mem::replace(self, Self::Finished) {
             Self::Streaming(body) => body.collect().await,
             Self::Finished => Ok(Bytes::new()),
         }
     }
 
-    async fn next_chunk(&mut self) -> Result<Option<Bytes>, hyper::Error> {
+    async fn next_chunk(&mut self) -> Result<Option<Bytes>, BodyError> {
         let Self::Streaming(body) = self else {
             return Ok(None);
         };
@@ -126,8 +129,8 @@ fn build_headers(pairs: Vec<(String, String)>) -> PyResult<CoreHeaders> {
     Ok(headers)
 }
 
-fn body_error(error: hyper::Error) -> PyErr {
-    PyRuntimeError::new_err(format!("reading the request body failed: {error}"))
+fn body_error(error: BodyError) -> PyErr {
+    PyRuntimeError::new_err(error.to_string())
 }
 
 #[pymethods]
@@ -602,5 +605,278 @@ impl WsTransport {
             };
             connection.send(message).await.map_err(socket_error)
         })
+    }
+}
+
+// ── WebTransport ─────────────────────────────────────────────────────────────
+
+/// A WebTransport session, from the `CONNECT` through to close.
+///
+/// Once accepted, datagrams and streams are reached through a handle that
+/// carries its own synchronisation, so a handler can work on several at once
+/// without one waiting on another.
+#[pyclass(name = "WtSession", module = "nitro._nitro")]
+pub struct WtSession {
+    pending: Arc<tokio::sync::Mutex<WebTransportSession>>,
+    handle: Arc<Mutex<Option<SessionHandle>>>,
+    phase: Arc<AtomicU8>,
+}
+
+impl WtSession {
+    pub fn new(session: WebTransportSession) -> Self {
+        Self {
+            pending: Arc::new(tokio::sync::Mutex::new(session)),
+            handle: Arc::new(Mutex::new(None)),
+            phase: Arc::new(AtomicU8::new(PHASE_PENDING)),
+        }
+    }
+
+    fn opened(&self) -> PyResult<SessionHandle> {
+        let guard = match self.handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard
+            .clone()
+            .ok_or_else(|| PyRuntimeError::new_err("this WebTransport session is not open"))
+    }
+}
+
+fn session_error(error: WebTransportError) -> PyErr {
+    PyRuntimeError::new_err(error.to_string())
+}
+
+#[pymethods]
+impl WtSession {
+    /// `await session.accept()` — establish the session.
+    fn accept<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let pending = Arc::clone(&self.pending);
+        let opened = Arc::clone(&self.handle);
+        let phase = Arc::clone(&self.phase);
+
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            let mut session = pending.lock().await;
+            session.accept().await.map_err(session_error)?;
+            let handle = session.handle().map_err(session_error)?;
+
+            match opened.lock() {
+                Ok(mut slot) => *slot = Some(handle),
+                Err(poisoned) => *poisoned.into_inner() = Some(handle),
+            }
+            phase.store(PHASE_OPEN, Ordering::Release);
+            Ok(())
+        })
+    }
+
+    /// `await session.reject(...)` — refuse it with an ordinary HTTP status.
+    #[pyo3(signature = (status=403))]
+    fn reject<'py>(&self, python: Python<'py>, status: u16) -> PyResult<Bound<'py, PyAny>> {
+        let status = StatusCode::from_u16(status)
+            .map_err(|_| PyValueError::new_err(format!("{status} is not an HTTP status code")))?;
+        let pending = Arc::clone(&self.pending);
+        let phase = Arc::clone(&self.phase);
+
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            pending
+                .lock()
+                .await
+                .reject(status)
+                .await
+                .map_err(session_error)?;
+            phase.store(PHASE_CLOSED, Ordering::Release);
+            Ok(())
+        })
+    }
+
+    #[getter]
+    fn connected(&self) -> bool {
+        self.phase.load(Ordering::Acquire) == PHASE_OPEN
+    }
+
+    /// Send a datagram. Delivery is not guaranteed and order is not preserved.
+    fn send_datagram(&self, payload: Vec<u8>) -> PyResult<()> {
+        self.opened()?
+            .send_datagram(Bytes::from(payload))
+            .map_err(session_error)
+    }
+
+    /// `await session.receive_datagram()` — the next datagram, or `None` once
+    /// the session has ended.
+    fn receive_datagram<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.opened()?;
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            match handle.receive_datagram().await.map_err(session_error)? {
+                Some(payload) => {
+                    Python::attach(|python| Ok(PyBytes::new(python, &payload).into_any().unbind()))
+                }
+                None => Python::attach(|python| Ok(python.None())),
+            }
+        })
+    }
+
+    /// `await session.accept_stream()` — a bidirectional stream the client
+    /// opened, or `None` once the session has ended.
+    fn accept_stream<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.opened()?;
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            match handle.accept_stream().await.map_err(session_error)? {
+                Some(IncomingStream::Bidirectional { send, receive }) => Python::attach(|python| {
+                    Ok(Py::new(python, WtStream::duplex(*send, *receive))?.into_any())
+                }),
+                Some(IncomingStream::Unidirectional(receive)) => Python::attach(|python| {
+                    Ok(Py::new(python, WtStream::receive_only(*receive))?.into_any())
+                }),
+                None => Python::attach(|python| Ok(python.None())),
+            }
+        })
+    }
+
+    /// `await session.accept_incoming()` — a unidirectional stream the client
+    /// opened, which can only be read.
+    fn accept_incoming<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.opened()?;
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            match handle.accept_incoming().await.map_err(session_error)? {
+                Some(receive) => Python::attach(|python| {
+                    Ok(Py::new(python, WtStream::receive_only(receive))?.into_any())
+                }),
+                None => Python::attach(|python| Ok(python.None())),
+            }
+        })
+    }
+
+    /// `await session.open_stream()` — a bidirectional stream to the client.
+    fn open_stream<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.opened()?;
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            let (send, receive) = handle.open_stream().await.map_err(session_error)?;
+            Python::attach(
+                |python| Ok(Py::new(python, WtStream::duplex(send, receive))?.into_any()),
+            )
+        })
+    }
+
+    /// `await session.open_outgoing()` — a unidirectional stream to the client,
+    /// which can only be written.
+    fn open_outgoing<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.opened()?;
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            let send = handle.open_outgoing().await.map_err(session_error)?;
+            Python::attach(|python| Ok(Py::new(python, WtStream::send_only(send))?.into_any()))
+        })
+    }
+
+    /// End the session.
+    fn close<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let pending = Arc::clone(&self.pending);
+        let opened = Arc::clone(&self.handle);
+        let phase = Arc::clone(&self.phase);
+
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            pending.lock().await.close();
+            match opened.lock() {
+                Ok(mut slot) => *slot = None,
+                Err(poisoned) => *poisoned.into_inner() = None,
+            }
+            phase.store(PHASE_CLOSED, Ordering::Release);
+            Ok(())
+        })
+    }
+}
+
+/// One WebTransport stream. A unidirectional stream carries only the half its
+/// direction allows, and using the other half is an error rather than a silent
+/// no-op.
+#[pyclass(name = "WtStream", module = "nitro._nitro")]
+pub struct WtStream {
+    send: Arc<tokio::sync::Mutex<Option<SendHalf>>>,
+    receive: Arc<tokio::sync::Mutex<Option<ReceiveHalf>>>,
+}
+
+impl WtStream {
+    fn duplex(send: SendHalf, receive: ReceiveHalf) -> Self {
+        Self {
+            send: Arc::new(tokio::sync::Mutex::new(Some(send))),
+            receive: Arc::new(tokio::sync::Mutex::new(Some(receive))),
+        }
+    }
+
+    fn send_only(send: SendHalf) -> Self {
+        Self {
+            send: Arc::new(tokio::sync::Mutex::new(Some(send))),
+            receive: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    fn receive_only(receive: ReceiveHalf) -> Self {
+        Self {
+            send: Arc::new(tokio::sync::Mutex::new(None)),
+            receive: Arc::new(tokio::sync::Mutex::new(Some(receive))),
+        }
+    }
+}
+
+#[pymethods]
+impl WtStream {
+    /// `await stream.write(data)`.
+    fn write<'py>(&self, python: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let half = Arc::clone(&self.send);
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            let mut guard = half.lock().await;
+            let Some(send) = guard.as_mut() else {
+                return Err(PyRuntimeError::new_err("this stream cannot be written to"));
+            };
+            send.write(&data).await.map_err(session_error)
+        })
+    }
+
+    /// `await stream.read(limit)` — up to `limit` bytes. An empty result means
+    /// the stream has ended.
+    #[pyo3(signature = (limit=65536))]
+    fn read<'py>(&self, python: Python<'py>, limit: usize) -> PyResult<Bound<'py, PyAny>> {
+        let half = Arc::clone(&self.receive);
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            let mut guard = half.lock().await;
+            let Some(receive) = guard.as_mut() else {
+                return Err(PyRuntimeError::new_err("this stream cannot be read from"));
+            };
+            let data = receive.read(limit).await.map_err(session_error)?;
+            Python::attach(|python| Ok(PyBytes::new(python, &data).unbind()))
+        })
+    }
+
+    /// `await stream.read_all()` — everything up to the end of the stream.
+    fn read_all<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let half = Arc::clone(&self.receive);
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            let mut guard = half.lock().await;
+            let Some(receive) = guard.as_mut() else {
+                return Err(PyRuntimeError::new_err("this stream cannot be read from"));
+            };
+            let data = receive.read_to_end().await.map_err(session_error)?;
+            Python::attach(|python| Ok(PyBytes::new(python, &data).unbind()))
+        })
+    }
+
+    /// `await stream.finish()` — no more will be written.
+    fn finish<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let half = Arc::clone(&self.send);
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            let mut guard = half.lock().await;
+            match guard.as_mut() {
+                Some(send) => send.finish().await.map_err(session_error),
+                None => Ok(()),
+            }
+        })
+    }
+
+    #[getter]
+    fn writable(&self) -> bool {
+        self.send.try_lock().is_ok_and(|half| half.is_some())
+    }
+
+    #[getter]
+    fn readable(&self) -> bool {
+        self.receive.try_lock().is_ok_and(|half| half.is_some())
     }
 }

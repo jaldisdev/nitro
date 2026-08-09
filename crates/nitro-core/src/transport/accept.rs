@@ -19,6 +19,7 @@ use crate::config::{BindAddress, ServerConfig};
 use crate::lifecycle::drain::{DrainCoordinator, DrainOutcome};
 use crate::lifecycle::signals::ShutdownSignal;
 use crate::transport::connection::{self, ConnectionContext};
+use crate::transport::quic;
 use crate::transport::tls::{TlsError, TlsMaterial};
 use crate::transport::{Dispatch, Scheme};
 
@@ -58,17 +59,19 @@ pub struct BoundSockets {
     pub tcp: Vec<std::net::TcpListener>,
     #[cfg(unix)]
     pub unix: Option<std::os::unix::net::UnixListener>,
+    /// UDP sockets for QUIC, bound only when HTTP/3 is enabled.
+    pub quic: Vec<std::net::UdpSocket>,
 }
 
 impl BoundSockets {
     pub fn is_empty(&self) -> bool {
         #[cfg(unix)]
         {
-            self.tcp.is_empty() && self.unix.is_none()
+            self.tcp.is_empty() && self.unix.is_none() && self.quic.is_empty()
         }
         #[cfg(not(unix))]
         {
-            self.tcp.is_empty()
+            self.tcp.is_empty() && self.quic.is_empty()
         }
     }
 
@@ -90,15 +93,38 @@ impl BoundSockets {
 /// quietly starting a second server alongside the first.
 pub fn bind(config: &ServerConfig) -> Result<BoundSockets, BindError> {
     match &config.bind {
-        BindAddress::Tcp { host, port } => Ok(BoundSockets {
-            tcp: bind_tcp(host, *port, config.backlog)?,
-            #[cfg(unix)]
-            unix: None,
-        }),
+        BindAddress::Tcp { host, port } => {
+            let tcp = bind_tcp(host, *port, config.backlog)?;
+
+            // Asking for port zero means "any free port", and the kernel picks
+            // one per socket. HTTP/3 is only useful on the same port as the TCP
+            // listener it is advertised from, so the UDP socket follows the
+            // port TCP was actually given.
+            let quic_port = match port {
+                0 => tcp
+                    .first()
+                    .and_then(|listener| listener.local_addr().ok())
+                    .map(|address| address.port())
+                    .unwrap_or(0),
+                explicit => *explicit,
+            };
+
+            Ok(BoundSockets {
+                #[cfg(unix)]
+                unix: None,
+                quic: if config.http.h3_enabled() {
+                    quic::bind_udp(host, quic_port)?
+                } else {
+                    Vec::new()
+                },
+                tcp,
+            })
+        }
         #[cfg(unix)]
         BindAddress::Unix { path } => Ok(BoundSockets {
             tcp: Vec::new(),
             unix: Some(bind_unix(path, config.backlog)?),
+            quic: Vec::new(),
         }),
         #[cfg(not(unix))]
         BindAddress::Unix { path } => Err(BindError::Socket {
@@ -222,7 +248,12 @@ pub async fn serve<D: Dispatch>(
         });
     }
 
-    let context = ConnectionContext::new(dispatch, Arc::clone(&config), drain.signal());
+    let served_port = sockets
+        .local_addresses()
+        .first()
+        .map(|address| address.port());
+    let context =
+        ConnectionContext::new(dispatch, Arc::clone(&config), drain.signal(), served_port);
     let limit = config
         .max_concurrent_connections
         .map(|maximum| Arc::new(Semaphore::new(maximum)));
@@ -253,6 +284,23 @@ pub async fn serve<D: Dispatch>(
             shutdown.clone(),
             limit.clone(),
         )));
+    }
+
+    if !sockets.quic.is_empty() {
+        let Some(material) = &tls else {
+            return Err(ServeError::Tls(TlsError::Quic(
+                "HTTP/3 needs a certificate".to_owned(),
+            )));
+        };
+        for endpoint in quic::endpoints(sockets.quic, material)? {
+            loops.push(Box::pin(quic::accept(
+                endpoint,
+                context.dispatch().clone(),
+                Arc::clone(&config),
+                drain.clone(),
+                shutdown.clone(),
+            )));
+        }
     }
 
     if loops.is_empty() {
@@ -460,6 +508,27 @@ mod tests {
         let mut config = ephemeral_config();
         config.bind = BindAddress::tcp("host.invalid.", 8000);
         assert!(bind(&config).is_err());
+    }
+
+    #[test]
+    fn quic_follows_the_port_tcp_was_given() {
+        let mut config = ephemeral_config();
+        config.http = crate::config::HttpVersion::Http3;
+
+        let sockets = bind(&config).expect("binding must work");
+        let tcp_port = sockets.local_addresses()[0].port();
+        let quic_port = sockets.quic[0].local_addr().unwrap().port();
+
+        assert_eq!(
+            tcp_port, quic_port,
+            "HTTP/3 must be reachable on the port it is advertised from"
+        );
+    }
+
+    #[test]
+    fn no_udp_socket_is_bound_without_http3() {
+        let sockets = bind(&ephemeral_config()).expect("binding must work");
+        assert!(sockets.quic.is_empty());
     }
 
     #[cfg(unix)]

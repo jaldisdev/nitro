@@ -188,3 +188,67 @@ impl WsScope {
         format!("WsScope(path={:?}, scheme={:?})", self.path, self.scheme)
     }
 }
+
+/// Request metadata for a WebTransport session.
+#[pyclass(name = "WtScope", module = "nitro._nitro", frozen)]
+pub struct WtScope {
+    #[pyo3(get)]
+    pub proto: &'static str,
+    #[pyo3(get)]
+    pub path: String,
+    #[pyo3(get)]
+    pub query_string: String,
+    #[pyo3(get)]
+    pub authority: Option<String>,
+    #[pyo3(get)]
+    pub server: Option<(String, u16)>,
+    #[pyo3(get)]
+    pub client: Option<(String, u16)>,
+    #[pyo3(get)]
+    pub headers: Py<Headers>,
+    #[pyo3(get)]
+    pub route_id: Option<u64>,
+    #[pyo3(get)]
+    pub path_params: Py<PyDict>,
+}
+
+impl WtScope {
+    pub fn from_parts(
+        python: Python<'_>,
+        parts: &RequestParts,
+        matched: &RouteMatch,
+    ) -> PyResult<Self> {
+        let path_params = PyDict::new(python);
+        let mut route_id = None;
+
+        if let RouteMatch::Found {
+            route_id: identifier,
+            parameters,
+        } = matched
+        {
+            route_id = Some(*identifier);
+            for (name, value) in parameters {
+                path_params.set_item(name, value)?;
+            }
+        }
+
+        Ok(Self {
+            proto: "webtransport",
+            path: parts.path().to_owned(),
+            query_string: parts.query().to_owned(),
+            authority: parts.authority().map(str::to_owned),
+            server: address_pair(parts.server),
+            client: address_pair(parts.client),
+            headers: Py::new(python, Headers::new(parts.headers.clone()))?,
+            route_id,
+            path_params: path_params.unbind(),
+        })
+    }
+}
+
+#[pymethods]
+impl WtScope {
+    fn __repr__(&self) -> String {
+        format!("WtScope(path={:?})", self.path)
+    }
+}

@@ -138,11 +138,15 @@ pub enum AltSvc {
 
 impl AltSvc {
     /// The header value to send, if any.
-    pub fn header_value(&self, http: HttpVersion, bind: &BindAddress) -> Option<String> {
+    ///
+    /// `port` is the port actually being served, which is not always the one
+    /// configured: a request to bind port zero is answered by the kernel with a
+    /// real port, and advertising the zero would send clients nowhere.
+    pub fn header_value(&self, http: HttpVersion, port: Option<u16>) -> Option<String> {
         match self {
             Self::Custom(value) => Some(value.clone()),
             Self::Off => None,
-            Self::Auto if http.h3_enabled() => bind.port().map(|port| format!("h3=\":{port}\"")),
+            Self::Auto if http.h3_enabled() => port.map(|port| format!("h3=\":{port}\"")),
             Self::Auto => None,
         }
     }
@@ -396,26 +400,28 @@ mod tests {
     }
 
     #[test]
-    fn alt_svc_auto_follows_the_bind_port() {
-        let bind = BindAddress::tcp("0.0.0.0", 4433);
+    fn alt_svc_auto_follows_the_served_port() {
         assert_eq!(
-            AltSvc::Auto.header_value(HttpVersion::Http3, &bind),
+            AltSvc::Auto.header_value(HttpVersion::Http3, Some(4433)),
             Some("h3=\":4433\"".to_owned())
         );
-        assert_eq!(AltSvc::Auto.header_value(HttpVersion::Http2, &bind), None);
-        assert_eq!(AltSvc::Off.header_value(HttpVersion::Http3, &bind), None);
         assert_eq!(
-            AltSvc::Custom("h3=\":443\"".to_owned()).header_value(HttpVersion::Http1, &bind),
+            AltSvc::Auto.header_value(HttpVersion::Http2, Some(4433)),
+            None
+        );
+        assert_eq!(
+            AltSvc::Off.header_value(HttpVersion::Http3, Some(4433)),
+            None
+        );
+        assert_eq!(
+            AltSvc::Custom("h3=\":443\"".to_owned()).header_value(HttpVersion::Http1, Some(4433)),
             Some("h3=\":443\"".to_owned())
         );
     }
 
     #[test]
-    fn alt_svc_auto_is_silent_on_a_unix_socket() {
-        let bind = BindAddress::Unix {
-            path: "/tmp/nitro.sock".into(),
-        };
-        assert_eq!(AltSvc::Auto.header_value(HttpVersion::Http3, &bind), None);
+    fn alt_svc_auto_is_silent_without_a_port() {
+        assert_eq!(AltSvc::Auto.header_value(HttpVersion::Http3, None), None);
     }
 
     #[test]

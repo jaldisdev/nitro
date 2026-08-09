@@ -234,3 +234,124 @@ class TestServerOptions:
 
     def test_an_absent_override_leaves_the_constructor_argument(self):
         assert Nitro(port=9100).server_options(port=None).port == 9100
+
+
+class TestProtocolRoutes:
+    async def accepting(self, scope, transport):
+        await transport.accept()
+
+    def test_a_websocket_route_uses_its_own_method(self):
+        app = Nitro()
+        route = app.add_websocket_route("/socket", self.accepting)
+        assert route.methods == ("WEBSOCKET",)
+
+    def test_a_webtransport_route_uses_its_own_method(self):
+        app = Nitro()
+        route = app.add_webtransport_route("/session", self.accepting)
+        assert route.methods == ("WEBTRANSPORT",)
+
+    def test_the_three_protocols_can_share_a_path(self):
+        app = Nitro()
+        app.add_route("/thing", ok)
+        app.add_websocket_route("/thing", self.accepting)
+        app.add_webtransport_route("/thing", self.accepting)
+
+        assert {route.methods for route in app.routes} == {
+            ("GET", "HEAD"),
+            ("WEBSOCKET",),
+            ("WEBTRANSPORT",),
+        }
+
+    def test_a_protocol_handler_must_be_async(self):
+        app = Nitro()
+        with pytest.raises(TypeError, match="async function"):
+            app.add_websocket_route("/socket", lambda scope, transport: None)
+        with pytest.raises(TypeError, match="async function"):
+            app.add_webtransport_route("/session", lambda scope, session: None)
+
+
+class RecordingSocket:
+    """Stands in for the compiled WebSocket transport."""
+
+    def __init__(self, connected=False):
+        self.connected = connected
+        self.rejected: tuple[int, str] | None = None
+        self.closed: tuple[int, str] | None = None
+
+    async def reject(self, status=403, reason=""):
+        self.rejected = (status, reason)
+
+    async def close(self, code=1000, reason=""):
+        self.closed = (code, reason)
+
+    async def accept(self, subprotocol=None):
+        self.connected = True
+
+
+class WsScope:
+    def __init__(self, path="/socket", route_id=None, path_params=None):
+        self.path = path
+        self.route_id = route_id
+        self.path_params = path_params or {}
+
+
+class TestProtocolDispatch:
+    async def test_an_unknown_websocket_path_is_refused(self):
+        transport = RecordingSocket()
+        await Nitro().__handle_ws__(WsScope(), transport)
+        assert transport.rejected == (404, "Not Found")
+
+    async def test_a_websocket_handler_receives_path_parameters(self):
+        app = Nitro()
+        seen = {}
+
+        @app.websocket("/rooms/<int:room_id>")
+        async def room(scope, transport, room_id):
+            seen["room_id"] = room_id
+            await transport.accept()
+
+        route = app.routes[0]
+        transport = RecordingSocket()
+        await app.__handle_ws__(
+            WsScope(path=route.path, route_id=route.id, path_params={"room_id": "7"}),
+            transport,
+        )
+
+        assert seen == {"room_id": 7}
+        assert transport.connected is True
+
+    async def test_a_failing_websocket_handler_closes_an_open_connection(self):
+        app = Nitro()
+
+        @app.websocket("/boom")
+        async def boom(scope, transport):
+            await transport.accept()
+            raise RuntimeError("handler exploded")
+
+        route = app.routes[0]
+        transport = RecordingSocket()
+        await app.__handle_ws__(WsScope(path=route.path, route_id=route.id), transport)
+
+        assert transport.closed == (1011, "handler failed")
+
+    async def test_a_failing_websocket_handler_refuses_before_accepting(self):
+        app = Nitro()
+
+        @app.websocket("/boom")
+        async def boom(scope, transport):
+            raise RuntimeError("handler exploded")
+
+        route = app.routes[0]
+        transport = RecordingSocket()
+        await app.__handle_ws__(WsScope(path=route.path, route_id=route.id), transport)
+
+        assert transport.rejected == (500, "Internal Server Error")
+
+    async def test_an_unknown_webtransport_path_is_refused(self):
+        class Session(RecordingSocket):
+            async def reject(self, status=403):
+                self.rejected = status
+
+        session = Session()
+        await Nitro().__handle_wt__(WsScope(), session)
+        assert session.rejected == 404
