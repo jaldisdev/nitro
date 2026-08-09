@@ -13,8 +13,8 @@ from nitro.routing import (
 from nitro.routing.router import parse_parameters
 
 
-async def handler(scope, protocol):
-    protocol.response_empty(204)
+async def handler(request):
+    return None
 
 
 class TestConverters:

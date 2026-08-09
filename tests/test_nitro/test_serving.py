@@ -40,7 +40,8 @@ class TestRequestHandling:
             app = Nitro(http="1", log_level="warning")
 
             @app.route("/echo", methods=["POST"])
-            async def echo(scope, protocol):
+            async def echo(request):
+                scope, protocol = request.scope, request.protocol
                 body = await protocol()
                 protocol.response_str(
                     200,
@@ -73,7 +74,8 @@ class TestRequestHandling:
             app = Nitro(http="1", log_level="warning")
 
             @app.route("/cookies")
-            async def cookies(scope, protocol):
+            async def cookies(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_empty(
                     204,
                     [("set-cookie", "a=1"), ("set-cookie", "b=2"), ("x-custom", "value")],
@@ -95,7 +97,8 @@ class TestRequestHandling:
             app = Nitro(http="1", log_level="error")
 
             @app.route("/boom")
-            async def boom(scope, protocol):
+            async def boom(request):
+                scope, protocol = request.scope, request.protocol
                 raise RuntimeError("deliberate failure")
             """
         )
@@ -111,7 +114,8 @@ class TestRequestHandling:
             app = Nitro(http="1", log_level="error")
 
             @app.route("/silent")
-            async def silent(scope, protocol):
+            async def silent(request):
+                scope, protocol = request.scope, request.protocol
                 return None
             """
         )
@@ -127,7 +131,8 @@ class TestRequestHandling:
             app = Nitro(http="1", log_level="warning")
 
             @app.route("/headers")
-            async def report(scope, protocol):
+            async def report(request):
+                scope, protocol = request.scope, request.protocol
                 headers = scope.headers
                 lines = [
                     f"getitem={headers['x-probe']}",
@@ -175,7 +180,8 @@ class TestLifecycle:
                     handle.write("stopped\\n")
 
             @app.route("/")
-            async def index(scope, protocol):
+            async def index(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_str(200, [], "ok")
             """
         )
@@ -197,7 +203,8 @@ class TestLifecycle:
             app = Nitro(http="1", log_level="warning")
 
             @app.route("/slow")
-            async def slow(scope, protocol):
+            async def slow(request):
+                scope, protocol = request.scope, request.protocol
                 await asyncio.sleep(1.0)
                 protocol.response_str(200, [], "finished")
             """
@@ -245,7 +252,8 @@ class TestWorkers:
             app = Nitro(http="1", log_level="warning")
 
             @app.route("/pid")
-            async def pid(scope, protocol):
+            async def pid(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_str(200, [], str(os.getpid()))
             """,
             "-w",
@@ -293,7 +301,8 @@ class TestWorkers:
             app = Nitro(http="1", log_level="warning")
 
             @app.route("/pid")
-            async def pid(scope, protocol):
+            async def pid(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_str(200, [], str(os.getpid()))
             """,
             "-w",
@@ -387,37 +396,45 @@ class TestRouting:
         app = Nitro(http="1", log_level="warning")
 
         @app.route("/users/<int:user_id>")
-        async def user(scope, protocol, user_id):
+        async def user(request, user_id):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], f"user {user_id!r} {type(user_id).__name__}")
 
         @app.route("/users/new")
-        async def new_user(scope, protocol):
+        async def new_user(request):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], "new user form")
 
         @app.route("/posts/<slug:title>")
-        async def post(scope, protocol, title):
+        async def post(request, title):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], f"post {title}")
 
         @app.route("/files/<path:rest>")
-        async def file(scope, protocol, rest):
+        async def file(request, rest):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], f"file {rest}")
 
         @app.route("/items/<uuid:identifier>")
-        async def item(scope, protocol, identifier):
+        async def item(request, identifier):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], f"item {identifier}")
 
         @app.route("/things", methods=["POST"])
-        async def create(scope, protocol):
+        async def create(request):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(201, [], "created")
 
         @app.route("/named/<int:number>", name="named")
-        async def named(scope, protocol, number):
+        async def named(request, number):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], app.url_for("named", number=number + 1))
 
         api = Router()
 
         @api.route("/status")
-        async def status(scope, protocol):
+        async def status(request):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], "api ok")
 
         app.mount(Mount("/api", api))
@@ -488,8 +505,8 @@ class TestRouting:
             "from nitro import Nitro\n"
             "app = Nitro(http='1')\n"
             "@app.route('/broken/<bad:value>')\n"
-            "async def broken(scope, protocol, value):\n"
-            "    protocol.response_empty(204)\n"
+            "async def broken(request, value):\n"
+            "    return None\n"
         )
         finished = subprocess.run(
             [sys.executable, "-m", "nitro.cli", "run", "app:app", "-p", "0"],
@@ -513,37 +530,45 @@ class TestFileResponses:
             root = {str(directory)!r}
 
             @app.route("/whole")
-            async def whole(scope, protocol):
+            async def whole(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file(200, [], f"{{root}}/data.txt")
 
             @app.route("/typed")
-            async def typed(scope, protocol):
+            async def typed(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file(200, [], f"{{root}}/page.html")
 
             @app.route("/overridden")
-            async def overridden(scope, protocol):
+            async def overridden(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file(
                     200, [("content-type", "text/plain")], f"{{root}}/page.html"
                 )
 
             @app.route("/missing")
-            async def missing(scope, protocol):
+            async def missing(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file(200, [], f"{{root}}/not-there.txt")
 
             @app.route("/directory")
-            async def directory(scope, protocol):
+            async def directory(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file(200, [], root)
 
             @app.route("/range/<int:start>/<int:end>")
-            async def ranged(scope, protocol, start, end):
+            async def ranged(request, start, end):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file_range(200, [], f"{{root}}/data.txt", start, end)
 
             @app.route("/tail/<int:start>")
-            async def tail(scope, protocol, start):
+            async def tail(request, start):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file_range(200, [], f"{{root}}/data.txt", start)
 
             @app.route("/large")
-            async def large(scope, protocol):
+            async def large(request):
+                scope, protocol = request.scope, request.protocol
                 protocol.response_file(200, [], f"{{root}}/large.bin")
         """
 
@@ -653,14 +678,16 @@ class TestStreamingResponses:
         app = Nitro(http="1", log_level="warning", stream_queue_capacity=2)
 
         @app.route("/stream")
-        async def stream(scope, protocol):
+        async def stream(request):
+            scope, protocol = request.scope, request.protocol
             transport = protocol.response_stream(200, [("content-type", "text/plain")])
             for index in range(5):
                 await transport.send_str(f"chunk-{index}\\n")
             transport.close()
 
         @app.route("/backpressure")
-        async def backpressure(scope, protocol):
+        async def backpressure(request):
+            scope, protocol = request.scope, request.protocol
             transport = protocol.response_stream(200, [])
             capacity = transport.capacity
             for index in range(200):
@@ -668,7 +695,8 @@ class TestStreamingResponses:
             transport.close()
 
         @app.route("/closed-transport")
-        async def closed_transport(scope, protocol):
+        async def closed_transport(request):
+            scope, protocol = request.scope, request.protocol
             transport = protocol.response_stream(200, [])
             await transport.send_str("first")
             transport.close()
@@ -678,7 +706,8 @@ class TestStreamingResponses:
                 app.last_error = str(error)
 
         @app.route("/mixed")
-        async def mixed(scope, protocol):
+        async def mixed(request):
+            scope, protocol = request.scope, request.protocol
             transport = protocol.response_stream(200, [])
             await transport.send_bytes(b"bytes ")
             await transport.send_str("and text")
@@ -750,7 +779,8 @@ class TestWebSockets:
             raise RuntimeError("handler exploded")
 
         @app.route("/plain")
-        async def plain(scope, protocol):
+        async def plain(request):
+            scope, protocol = request.scope, request.protocol
             protocol.response_str(200, [], "plain")
     """
 
