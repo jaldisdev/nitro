@@ -80,6 +80,7 @@ impl DrainCoordinator {
 
     /// Run steps 2 through 4. Call this once every accept loop has returned.
     pub async fn drain(self) -> DrainOutcome {
+        nitro_observability::metrics::worker_draining();
         self.handlers.trigger();
 
         let deadline = tokio::time::Instant::from_std(Instant::now() + self.timeout);

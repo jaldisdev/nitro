@@ -48,6 +48,7 @@ Start with [the overview](docs/overview.md).
 | [Dependency injection](docs/di.md) | `Depends`, and why its cache is per request |
 | [Middleware](docs/middleware.md) | Wrapping handlers |
 | [Caching](docs/cache.md) · [Storage](docs/storage.md) · [Templates](docs/templates.md) · [Mail](docs/mail.md) | Batteries |
+| [Observability](docs/observability.md) | Prometheus metrics |
 | [Command line](docs/cli.md) | `nitro run`, `check`, `shell` |
 | [Deployment](docs/deployment.md) | Workers, TLS, HTTP/3, draining |
 
@@ -58,6 +59,7 @@ Start with [the overview](docs/overview.md).
 | `nitro/` | The framework |
 | `nitro-intercom/` | Standalone publish/subscribe client for non-Nitro services |
 | `crates/nitro-core/` | Transport, lifecycle and routing — pure Rust, no interpreter |
+| `crates/nitro-observability/` | Prometheus metrics and the exporter — pure Rust, no interpreter |
 | `crates/nitro-py/` | Python bindings for the server (`nitro._nitro`) |
 | `crates/intercom-core/` | Publish/subscribe channels — pure Rust, no interpreter |
 | `crates/intercom-py/` | Python bindings for Intercom (`nitro_intercom._intercom`) |

@@ -392,7 +392,7 @@ fn fork_worker(
 ) -> PyResult<libc::pid_t> {
     // Duplicated before the fork so the child owns descriptors of its own
     // rather than sharing the parent's, which it must not close.
-    let inherited = duplicate(sockets)?;
+    let inherited = duplicate(sockets, index)?;
 
     let pid: i32 = python
         .import("os")?
@@ -431,7 +431,7 @@ fn fork_worker(
     unsafe { libc::_exit(code) }
 }
 
-fn duplicate(sockets: &BoundSockets) -> PyResult<BoundSockets> {
+fn duplicate(sockets: &BoundSockets, worker: usize) -> PyResult<BoundSockets> {
     let describe =
         |error: std::io::Error| PyRuntimeError::new_err(format!("duplicating a socket: {error}"));
 
@@ -451,6 +451,12 @@ fn duplicate(sockets: &BoundSockets) -> PyResult<BoundSockets> {
             .iter()
             .map(|socket| socket.try_clone().map_err(describe))
             .collect::<PyResult<Vec<_>>>()?,
+        // A worker serves the endpoint bound for its own index, so scrapes of
+        // one worker are not answered by another.
+        metrics: match sockets.metrics.get(worker) {
+            Some(endpoint) => vec![endpoint.duplicate().map_err(describe)?],
+            None => Vec::new(),
+        },
     })
 }
 

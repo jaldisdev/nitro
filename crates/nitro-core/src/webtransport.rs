@@ -23,6 +23,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::disconnect::DisconnectWatcher;
 use crate::transport::RequestParts;
+use nitro_observability::metrics;
 
 type Quic = h3_quinn::Connection;
 type Session = InnerSession<Quic, Bytes>;
@@ -95,6 +96,17 @@ pub struct WebTransportSession {
     datagrams: VecDeque<Bytes>,
     datagram_capacity: usize,
     dropped_datagrams: u64,
+    /// Whether this session was counted as open, so the gauge falls exactly
+    /// once however the session ends.
+    counted_open: bool,
+}
+
+impl Drop for WebTransportSession {
+    fn drop(&mut self) {
+        if self.counted_open {
+            metrics::socket_closed(metrics::SocketProtocol::WebTransport);
+        }
+    }
 }
 
 impl std::fmt::Debug for WebTransportSession {
@@ -128,6 +140,7 @@ impl WebTransportSession {
             datagrams: VecDeque::new(),
             datagram_capacity: datagram_capacity.max(1),
             dropped_datagrams: 0,
+            counted_open: false,
         }
     }
 
@@ -167,6 +180,8 @@ impl WebTransportSession {
             .await
             .map_err(|error| WebTransportError::Establish(error.to_string()))?;
         self.state = SessionState::Open(Arc::new(session));
+        metrics::socket_handshake(metrics::SocketProtocol::WebTransport, true);
+        self.counted_open = true;
         Ok(())
     }
 
@@ -354,11 +369,16 @@ mod tests {
     /// A session that has not been given a connection, for testing the parts
     /// that do not need one.
     fn closed_session() -> WebTransportSession {
+        session_holding(4)
+    }
+
+    fn session_holding(datagram_capacity: usize) -> WebTransportSession {
         WebTransportSession {
             state: SessionState::Closed,
             datagrams: VecDeque::new(),
-            datagram_capacity: 4,
+            datagram_capacity,
             dropped_datagrams: 0,
+            counted_open: false,
         }
     }
 
@@ -414,11 +434,7 @@ mod tests {
 
     #[test]
     fn a_capacity_of_zero_still_holds_one_datagram() {
-        let mut session = WebTransportSession {
-            datagram_capacity: 0,
-            ..closed_session()
-        };
-        session.datagram_capacity = 1;
+        let mut session = session_holding(1);
         session.buffer_datagram(Bytes::from_static(b"only"));
         assert_eq!(session.datagrams.len(), 1);
     }

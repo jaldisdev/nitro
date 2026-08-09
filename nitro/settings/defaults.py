@@ -75,6 +75,21 @@ SERVER: dict[str, Any] = {
     "ACCESS_LOG_FORMAT": "combined",
 }
 
+# Prometheus metrics. Flat rather than nested because there is exactly one
+# exporter to configure; a mapping would suggest several named ones.
+#
+# The exporter listens on a port of its own, separate from the application's,
+# so it can be firewalled and scraped independently and stays out of the route
+# table. The host is loopback on purpose: a metrics endpoint is meant to be read
+# by a scraper running alongside the server, not published to the network.
+# Setting it to "0.0.0.0" exposes internal counters to anyone who can reach the
+# port.
+# Each worker takes the next port up from this one, because separate processes
+# keep separate counters and cannot share an endpoint.
+OBSERVABILITY_ENABLED: bool = False
+OBSERVABILITY_HOST: str = "localhost"
+OBSERVABILITY_PORT: int = 9464
+
 # Template engines. Each entry configures one engine; DIRS lists the
 # directories searched, and APP_DIRS additionally searches a "templates"
 # directory inside each installed package.

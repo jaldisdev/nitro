@@ -125,6 +125,20 @@ SERVER = {
 `RUST_LOG` overrides `LOG_LEVEL` when it is set, which is useful for turning up
 detail on a running deployment without changing configuration.
 
+## Metrics
+
+```python
+OBSERVABILITY_ENABLED = True
+OBSERVABILITY_PORT = 9464
+```
+
+The exporter binds on loopback, before the workers are forked, on a port of its
+own — one per worker, counting up from `OBSERVABILITY_PORT`, since separate
+processes keep separate counters. Point a scraper at every worker's
+`/metrics` and reach them over the network the same way you would reach any
+other internal endpoint: through the host, not by binding the exporter to every
+interface. See [observability](observability.md).
+
 ## Checking a deployment
 
 ```sh

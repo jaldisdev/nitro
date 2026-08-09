@@ -98,6 +98,15 @@ class LazySettings:
 settings = LazySettings()
 
 
+# Configured as flat top-level settings rather than under SERVER, so they are
+# named here to keep the two from being confused for one another.
+OBSERVABILITY_OPTIONS: tuple[str, ...] = (
+    "observability_enabled",
+    "observability_host",
+    "observability_port",
+)
+
+
 @dataclass(slots=True)
 class ServerOptions:
     """The bundled server's configuration, in the shape the server reads.
@@ -141,6 +150,10 @@ class ServerOptions:
     access_log_destination: str = "stdout"
     access_log_format: str = "combined"
 
+    observability_enabled: bool = False
+    observability_host: str = "localhost"
+    observability_port: int = 9464
+
     @classmethod
     def resolve(cls, source: Any = None, **overrides: Any) -> ServerOptions:
         """Build options from a settings object, then apply `overrides`.
@@ -157,8 +170,19 @@ class ServerOptions:
             configured = {}
 
         values: dict[str, Any] = {}
+        for name in OBSERVABILITY_OPTIONS:
+            try:
+                value = getattr(settings_source, name.upper())
+            except (AttributeError, ImproperlyConfigured):
+                continue
+            values[name] = value
+
         for key, value in configured.items():
             name = key.lower()
+            if name in OBSERVABILITY_OPTIONS:
+                raise ImproperlyConfigured(
+                    f"{key} is a top-level setting, not a SERVER key"
+                )
             if name not in known:
                 raise ImproperlyConfigured(
                     f"SERVER setting {key!r} is not a known server option"

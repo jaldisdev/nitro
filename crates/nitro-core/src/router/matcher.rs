@@ -10,7 +10,7 @@
 //! different parameter types coexist: the tree sees one entry, and the
 //! expressions tell them apart.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::router::route::{CompiledRoute, RouteDefinition, RouteError, compile};
 
@@ -46,6 +46,10 @@ pub struct RouteTable {
     /// template, and treating it as one would file the static route behind the
     /// parameterised one where it could never win.
     templates: BTreeSet<String>,
+    /// The declared path of every route, by identifier. Metric labels need the
+    /// pattern rather than the requested path, and a match only reports the
+    /// identifier.
+    declared: HashMap<u64, String>,
     count: usize,
 }
 
@@ -81,11 +85,15 @@ impl RouteTable {
                     path: definition.path.clone(),
                     reason: error.to_string(),
                 })?;
+            self.declared
+                .insert(compilation.route.id, definition.path.clone());
             found.value.push(compilation.route);
             self.count += 1;
             return Ok(());
         }
 
+        self.declared
+            .insert(compilation.route.id, definition.path.clone());
         self.tree
             .insert(&template, vec![compilation.route])
             .map_err(|error| RouterError::Conflict {
@@ -129,6 +137,11 @@ impl RouteTable {
                 allowed: allowed.into_iter().collect(),
             }
         }
+    }
+
+    /// The path a route was declared with, such as `/users/<int:id>`.
+    pub fn declared_path(&self, route_id: u64) -> Option<&str> {
+        self.declared.get(&route_id).map(String::as_str)
     }
 
     /// The number of routes registered.

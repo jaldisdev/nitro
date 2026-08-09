@@ -190,7 +190,10 @@ impl WebSocketHandshake {
 
         let stream =
             WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await;
-        Ok(WebSocketConnection { stream })
+        Ok(WebSocketConnection {
+            stream,
+            open: OpenSocket,
+        })
     }
 
     /// Refuse the upgrade and answer with an ordinary HTTP response instead.
@@ -235,10 +238,24 @@ impl Drop for WebSocketHandshake {
 
 type Stream = WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>;
 
+/// Marks a socket as open for as long as it exists, so the active-connection
+/// gauge falls however the connection ends — cleanly, by error, or by panic.
+#[derive(Debug)]
+struct OpenSocket;
+
+impl Drop for OpenSocket {
+    fn drop(&mut self) {
+        nitro_observability::metrics::socket_closed(
+            nitro_observability::metrics::SocketProtocol::WebSocket,
+        );
+    }
+}
+
 /// An established WebSocket connection.
 #[derive(Debug)]
 pub struct WebSocketConnection {
     stream: Stream,
+    open: OpenSocket,
 }
 
 impl WebSocketConnection {
@@ -250,7 +267,15 @@ impl WebSocketConnection {
     /// independently.
     pub fn split(self) -> (WebSocketSender, WebSocketReceiver) {
         let (sink, stream) = self.stream.split();
-        (WebSocketSender { sink }, WebSocketReceiver { stream })
+        // The marker moves to the writing half, so the gauge falls when the
+        // last half is dropped rather than when the pair is separated.
+        (
+            WebSocketSender {
+                sink,
+                _open: self.open,
+            },
+            WebSocketReceiver { stream },
+        )
     }
 
     /// The next message, or `None` once the connection has ended.
@@ -291,6 +316,7 @@ impl WebSocketConnection {
 #[derive(Debug)]
 pub struct WebSocketSender {
     sink: futures_util::stream::SplitSink<Stream, Message>,
+    _open: OpenSocket,
 }
 
 impl WebSocketSender {

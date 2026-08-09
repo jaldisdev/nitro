@@ -10,6 +10,10 @@ pub mod disconnect;
 pub mod files;
 pub mod headers;
 pub mod lifecycle;
+/// The metrics crate, re-exported so binding code has one path to every type
+/// the server is configured with.
+pub use nitro_observability as observability;
+
 pub mod router;
 pub mod streaming;
 pub mod transport;

@@ -12,6 +12,7 @@ use nitro_core::config::{
     AccessLogConfig, AccessLogFormat, AltSvc, BindAddress, ClientAuth, HttpVersion, LogDestination,
     LogFormat, LogLevel, LoggingConfig, ServerConfig, TlsSettings,
 };
+use nitro_core::observability::ExporterConfig;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
@@ -186,6 +187,30 @@ fn alt_svc_from(source: &Bound<'_, PyAny>) -> PyResult<AltSvc> {
     })
 }
 
+/// Read the flat `observability_*` options.
+///
+/// Flat rather than nested because there is exactly one exporter; a mapping
+/// would suggest several named ones can be configured.
+fn observability_from(
+    source: &Bound<'_, PyAny>,
+    defaults: &ExporterConfig,
+) -> PyResult<ExporterConfig> {
+    let host: String = extract(source, "observability_host", defaults.host.clone())?;
+    let port: u16 = extract(source, "observability_port", defaults.port)?;
+
+    if host.trim().is_empty() {
+        return Err(PyValueError::new_err(
+            "observability_host must not be empty",
+        ));
+    }
+
+    Ok(ExporterConfig {
+        enabled: extract(source, "observability_enabled", defaults.enabled)?,
+        host,
+        port,
+    })
+}
+
 /// Build a validated [`ServerConfig`] from a Python settings object.
 pub fn server_config(source: &Bound<'_, PyAny>) -> PyResult<ServerConfig> {
     let defaults = ServerConfig::default();
@@ -196,6 +221,7 @@ pub fn server_config(source: &Bound<'_, PyAny>) -> PyResult<ServerConfig> {
 
     let mut config = ServerConfig {
         bind: bind_from(source)?,
+        observability: observability_from(source, &defaults.observability)?,
         tls: tls_from(source)?,
         http: parse_http_version(&extract(source, "http", "auto".to_owned())?)?,
         websockets: extract(source, "websockets", defaults.websockets)?,

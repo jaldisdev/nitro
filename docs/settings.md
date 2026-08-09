@@ -89,7 +89,27 @@ constructor argument.
 | `STORAGES` | See [storage](storage.md). |
 | `INTERCOMS` | See [Intercom](intercom.md). |
 | `EMAIL_*`, `DEFAULT_FROM_EMAIL` | See [mail](mail.md). |
+| `OBSERVABILITY_*` | See [observability](observability.md). |
 | `TIME_ZONE`, `USE_TZ`, `LANGUAGE_CODE`, `LANGUAGES` | Localisation. |
+
+## Observability
+
+Flat rather than nested, because there is exactly one exporter. They are read
+from the top level; putting them inside `SERVER` is an error.
+
+```python
+OBSERVABILITY_ENABLED = True
+OBSERVABILITY_HOST = "localhost"
+OBSERVABILITY_PORT = 9464
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `OBSERVABILITY_ENABLED` | `False` | Whether anything listens. Metrics are collected either way. |
+| `OBSERVABILITY_HOST` | `"localhost"` | Loopback on purpose. `"0.0.0.0"` publishes internal counters. |
+| `OBSERVABILITY_PORT` | `9464` | A port of its own, never the application's. Each worker takes the next one up. |
+
+See [observability](observability.md) for what is measured.
 
 ## Reading them yourself
 
