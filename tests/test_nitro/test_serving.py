@@ -32,6 +32,36 @@ class TestRequestHandling:
         assert server.request("/missing").status == 404
         server.stop()
 
+    def test_static_files_are_served(self, server_factory, tmp_path):
+        (tmp_path / "assets").mkdir()
+        (tmp_path / "assets" / "app.css").write_text("body { color: red }")
+        (tmp_path / "private.txt").write_text("not yours")
+
+        server = server_factory(
+            """
+            from nitro import Nitro
+            from nitro.staticfiles import StaticFiles
+
+            app = Nitro(http="1", log_level="warning")
+            app.add_route("/static/<path:path>", StaticFiles(directory="assets"), name="static")
+            """
+        )
+
+        response = server.request("/static/app.css")
+        assert response.status == 200
+        assert response.text == "body { color: red }"
+        assert response.headers["content-type"] == "text/css"
+        assert "etag" in response.headers
+
+        unchanged = server.request(
+            "/static/app.css", headers={"if-none-match": response.headers["etag"]}
+        )
+        assert unchanged.status == 304
+
+        assert server.request("/static/absent.css").status == 404
+        assert server.request("/static/../private.txt").status == 404
+        assert server.stop() == 0
+
     def test_a_configured_route_table_is_served(self, server_factory, tmp_path):
         (tmp_path / "routes.py").write_text(
             "from nitro.endpoints import HTTPEndpoint\n"
