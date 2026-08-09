@@ -267,9 +267,11 @@ class Nitro:
         # A worker is forked from a process that may have opened connections of
         # its own. Sharing one across a fork means two processes reading the
         # same socket, so each worker starts with none.
+        from nitro.cache import reset_caches
         from nitro.intercom import reset_connections
 
         reset_connections()
+        reset_caches()
         self._run_callbacks(loop, self._startup_callbacks, "startup")
 
     def __shutdown__(self, loop: asyncio.AbstractEventLoop) -> None:
