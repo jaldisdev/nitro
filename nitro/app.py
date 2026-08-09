@@ -19,6 +19,8 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
+from nitro.protocols.exceptions import HttpException
+from nitro.protocols.http import Request
 from nitro.routing.mount import Mount
 from nitro.routing.router import (
     DEFAULT_METHODS,
@@ -197,11 +199,28 @@ class Nitro:
             protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
             return
 
+        request = Request(scope, protocol, parameters)
         try:
-            await route.handler(scope, protocol, **parameters)
+            result = await route.handler(request, **parameters)
+        except HttpException as exception:
+            await exception.as_response().__http__(protocol)
         except Exception:
             logger.exception("handler for %s %s failed", scope.method, scope.path)
             protocol.response_str(500, [_PLAIN_TEXT], "Internal Server Error")
+        else:
+            # A handler may answer through the protocol itself and return
+            # nothing; only a returned response has to be written here.
+            if result is not None:
+                await self._write(result, protocol)
+
+    async def _write(self, result: Any, protocol: Any) -> None:
+        writer = getattr(result, "__http__", None)
+        if writer is None:
+            raise TypeError(
+                f"a handler returned {type(result).__name__}, which is not a response; "
+                "return a Response, or answer through request.protocol and return None"
+            )
+        await writer(protocol)
 
     async def __handle_ws__(self, scope: Any, transport: Any) -> None:
         route = self.router.get(scope.route_id) if scope.route_id is not None else None

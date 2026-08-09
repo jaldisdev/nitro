@@ -153,10 +153,11 @@ def server_factory(tmp_path):
 def hello_app() -> str:
     return """
         from nitro import Nitro
+        from nitro.protocols import PlainTextResponse
 
         app = Nitro(http="1", log_level="warning")
 
         @app.route("/")
-        async def index(scope, protocol):
-            protocol.response_str(200, [("content-type", "text/plain")], "hello")
+        async def index(request):
+            return PlainTextResponse("hello")
     """

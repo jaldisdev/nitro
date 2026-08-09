@@ -65,7 +65,8 @@ def scope_for(app, method, path, **path_params):
     return Scope(method, path, allowed=allowed)
 
 
-async def ok(scope, protocol):
+async def ok(request):
+    scope, protocol = request.scope, request.protocol
     protocol.response_str(200, [("content-type", "text/plain")], f"handled {scope.path}")
 
 
@@ -113,7 +114,8 @@ class TestDispatch:
         seen = {}
 
         @app.route("/users/<int:user_id>/<slug:tab>")
-        async def show(scope, protocol, user_id, tab):
+        async def show(request, user_id, tab):
+            scope, protocol = request.scope, request.protocol
             seen["user_id"] = user_id
             seen["tab"] = tab
             protocol.response_empty(204)
@@ -128,7 +130,8 @@ class TestDispatch:
         app = Nitro()
 
         @app.route("/items/<uuid:identifier>")
-        async def show(scope, protocol, identifier):
+        async def show(request, identifier):
+            scope, protocol = request.scope, request.protocol
             protocol.response_empty(204)
 
         scope = scope_for(app, "GET", "/items/<uuid:identifier>", identifier="not-a-uuid")
@@ -157,7 +160,8 @@ class TestDispatch:
         app = Nitro()
 
         @app.route("/boom")
-        async def boom(scope, protocol):
+        async def boom(request):
+            scope, protocol = request.scope, request.protocol
             raise RuntimeError("handler exploded")
 
         protocol = RecordingProtocol()
@@ -170,7 +174,8 @@ class TestDispatch:
         app = Nitro()
 
         @app.route("/echo", methods=["POST"])
-        async def echo(scope, protocol):
+        async def echo(request):
+            scope, protocol = request.scope, request.protocol
             protocol.response_bytes(200, [], await protocol())
 
         protocol = RecordingProtocol(body=b"payload")
