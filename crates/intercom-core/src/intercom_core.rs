@@ -6,3 +6,7 @@
 pub mod channel;
 pub mod codec;
 pub mod redis;
+
+pub use channel::{ChannelConfig, unique_channel};
+pub use codec::{CodecError, Value};
+pub use redis::{ChannelReader, Intercom, IntercomError, Subscription};
