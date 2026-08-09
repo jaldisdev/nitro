@@ -1,8 +1,24 @@
 import asyncio
+import sys
+import types
 
 import pytest
 
 from nitro import Nitro
+from nitro.endpoints import HTTPEndpoint
+from nitro.routing import HTTPRoute
+from nitro.settings import settings
+
+
+@pytest.fixture
+def routes_module():
+    """An importable module defining `patterns`, as a project would write it."""
+    name = "test_app_routes"
+    module = types.ModuleType(name)
+    module.patterns = [HTTPRoute("/things", ok, name="things")]
+    sys.modules[name] = module
+    yield name
+    sys.modules.pop(name, None)
 
 
 class RecordingProtocol:
@@ -96,6 +112,47 @@ class TestRouteRegistration:
         app.add_route("/", ok)
         with pytest.raises(ValueError, match="already registered"):
             app.add_route("/", ok)
+
+    def test_an_endpoint_instance_is_accepted(self):
+        class Things(HTTPEndpoint):
+            async def get(self, request):
+                return None
+
+        app = Nitro()
+        app.add_route("/things", Things())
+        assert len(app.routes) == 1
+
+
+class TestRouteTableFromSettings:
+    def test_declarations_are_registered(self):
+        app = Nitro(routes=[HTTPRoute("/things", ok, name="things")])
+        assert app.url_for("things") == "/things"
+
+    def test_the_routes_module_is_read_from_settings(self, routes_module, monkeypatch):
+        monkeypatch.setattr(settings, "ROUTES", routes_module, raising=False)
+        assert Nitro().url_for("things") == "/things"
+
+    def test_the_argument_wins_over_the_setting(self, routes_module, monkeypatch):
+        monkeypatch.setattr(settings, "ROUTES", routes_module, raising=False)
+        app = Nitro(routes=[HTTPRoute("/others", ok, name="others")])
+
+        assert app.url_for("others") == "/others"
+        with pytest.raises(LookupError):
+            app.url_for("things")
+
+    def test_an_unconfigured_project_still_serves_its_decorators(self, monkeypatch):
+        monkeypatch.setattr(settings, "ROUTES", [], raising=False)
+        app = Nitro()
+        app.route("/", name="index")(ok)
+
+        assert app.url_for("index") == "/"
+
+    def test_decorators_add_to_the_configured_table(self, routes_module, monkeypatch):
+        monkeypatch.setattr(settings, "ROUTES", routes_module, raising=False)
+        app = Nitro()
+        app.route("/extra", name="extra")(ok)
+
+        assert [route.path for route in app.routes] == ["/things", "/extra"]
 
 
 class TestDispatch:
@@ -360,3 +417,4 @@ class TestProtocolDispatch:
         session = Session()
         await Nitro().__handle_wt__(WsScope(), session)
         assert session.rejected == 404
+

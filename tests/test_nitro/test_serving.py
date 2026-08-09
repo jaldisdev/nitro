@@ -32,6 +32,42 @@ class TestRequestHandling:
         assert server.request("/missing").status == 404
         server.stop()
 
+    def test_a_configured_route_table_is_served(self, server_factory, tmp_path):
+        (tmp_path / "routes.py").write_text(
+            "from nitro.endpoints import HTTPEndpoint\n"
+            "from nitro.protocols import JSONResponse\n"
+            "from nitro.routing import HTTPRoute, Mount\n"
+            "\n"
+            "class Users(HTTPEndpoint):\n"
+            "    async def get(self, request, user_id):\n"
+            "        return JSONResponse({'id': user_id})\n"
+            "    async def post(self, request, user_id):\n"
+            "        return JSONResponse({'created': user_id})\n"
+            "\n"
+            "async def status(request):\n"
+            "    return JSONResponse({'ok': True})\n"
+            "\n"
+            "patterns = [\n"
+            "    HTTPRoute('/users/<int:user_id>', Users, name='user'),\n"
+            "    Mount('/api', [HTTPRoute('/status', status, name='status')], name='api'),\n"
+            "]\n"
+        )
+        server = server_factory(
+            """
+            from nitro import Nitro
+
+            app = Nitro(routes="routes", http="1", log_level="warning")
+            """
+        )
+
+        assert server.request("/users/42").text == '{"id": 42}'
+        # The endpoint declares POST, so the matcher must let it through rather
+        # than answering 405 from the route's default methods.
+        assert server.request("/users/42", method="POST").text == '{"created": 42}'
+        assert server.request("/api/status").text == '{"ok": true}'
+        assert server.request("/users/not-a-number").status == 404
+        assert server.stop() == 0
+
     def test_the_request_reaches_the_handler_intact(self, server_factory):
         server = server_factory(
             """

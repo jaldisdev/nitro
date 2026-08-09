@@ -23,29 +23,52 @@ is the wrong choice.
 ## An application
 
 ```python
-from nitro import Nitro
+# myproject/views.py
 from nitro.protocols import HttpRequest, HttpResponse, JSONResponse, PlainTextResponse
 
-app = Nitro()
 
-
-@app.route("/")
 async def index(request: HttpRequest) -> HttpResponse:
     return PlainTextResponse("hello")
 
 
-@app.route("/users/<int:user_id>")
 async def show_user(request: HttpRequest, user_id: int) -> HttpResponse:
     return JSONResponse({"id": user_id, "name": "Ada"})
 ```
 
+```python
+# myproject/routes.py
+from nitro.routing import HTTPRoute
+
+from myproject.views import index, show_user
+
+patterns = [
+    HTTPRoute("/", index, name="index"),
+    HTTPRoute("/users/<int:user_id>", show_user, name="user"),
+]
+```
+
+```python
+# myproject/settings.py
+ROUTES = "myproject.routes"
+```
+
+```python
+# myproject/main.py
+from nitro import Nitro
+
+app = Nitro()
+```
+
 ```sh
-nitro app:app
+NITRO_SETTINGS_MODULE=myproject.settings nitro myproject.main:app
 ```
 
 A handler receives a [`HttpRequest`](protocols.md) and returns a `HttpResponse`. Path
 parameters arrive as keyword arguments, already converted — `user_id` above is
 an `int`, not the string `"42"`.
+
+Routes can also be registered on the application with `@app.route(...)`, which
+adds to the configured table. See [routing](routing.md) for both.
 
 ## How a request is served
 

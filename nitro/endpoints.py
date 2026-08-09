@@ -6,14 +6,27 @@ from nitro.protocols.websocket import WebSocket, WebSocketDisconnect
 from nitro.protocols.webtransport import WebTransportDisconnect, WebTransportSession
 
 
+#: The verbs an endpoint may implement, lower case as they are written on the
+#: class. Routing reads this to work out what an endpoint class answers.
+HTTP_METHODS: tuple[str, ...] = (
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "head",
+    "options",
+)
+
+
 class HTTPEndpoint:
     """
     Base class for HTTP endpoints with method-based dispatch.
     """
 
-    async def __call__(self, request: HttpRequest) -> HttpResponse:
+    async def __call__(self, request: HttpRequest, **params) -> HttpResponse:
         """Dispatch to method handler."""
-        return await self.dispatch(request)
+        return await self.dispatch(request, **params)
 
     async def dispatch(self, request: HttpRequest, **params) -> HttpResponse:
         """Dispatch request to appropriate method handler."""
@@ -37,11 +50,7 @@ class HTTPEndpoint:
 
     async def method_not_allowed(self, request: HttpRequest) -> HttpResponse:
         """Called when HTTP method is not implemented."""
-        allowed = [
-            m.upper()
-            for m in ("get", "post", "put", "patch", "delete", "head", "options")
-            if hasattr(self, m)
-        ]
+        allowed = [method.upper() for method in HTTP_METHODS if hasattr(self, method)]
         if "GET" in allowed and "HEAD" not in allowed:
             allowed.insert(allowed.index("GET") + 1, "HEAD")
         raise HttpMethodNotAllowed(
@@ -57,9 +66,9 @@ class WebSocketEndpoint:
 
     encoding: Literal["text", "bytes", "json"] = "text"
 
-    async def __call__(self, websocket: WebSocket):
+    async def __call__(self, websocket: WebSocket, **params):
         """Handle WebSocket lifecycle."""
-        return await self.dispatch(websocket)
+        return await self.dispatch(websocket, **params)
 
     async def dispatch(self, websocket: WebSocket, **params) -> None:
         """Dispatch WebSocket events to lifecycle hooks."""
@@ -97,9 +106,9 @@ class WebTransportEndpoint:
     encoding: Literal["bytes", "text", "json"] = "bytes"
     use_streams: bool = False
 
-    async def __call__(self, session: WebTransportSession):
+    async def __call__(self, session: WebTransportSession, **params):
         """Handle WebTransport lifecycle."""
-        return await self.dispatch(session)
+        return await self.dispatch(session, **params)
 
     async def dispatch(self, session: WebTransportSession, **params) -> None:
         """Dispatch WebTransport events to lifecycle hooks."""

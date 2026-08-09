@@ -4,7 +4,69 @@ Routes are declared in Python and matched in compiled code. What crosses
 between them at startup is a description of each route: its path, the methods it
 answers, and for every parameter the expression that recognises it.
 
-## Declaring routes
+## The route table
+
+A project's routes live in a module of their own, in a list called `patterns`.
+`ROUTES` says where that module is.
+
+```python
+ROUTES = "myproject.routes"
+```
+
+```python
+# myproject/routes.py
+from nitro.routing import HTTPRoute, Mount, WebSocketRoute, WebTransportRoute
+
+from myproject.views import UserEndpoint, about, room
+
+patterns = [
+    HTTPRoute("/about", about, name="about"),
+    HTTPRoute("/users/<int:user_id>", UserEndpoint, name="user"),
+    HTTPRoute("/things", things, methods=["GET", "POST"], name="things"),
+    WebSocketRoute("/rooms/<slug:room>", room, name="room"),
+    Mount("/api", api_patterns, name="api"),
+]
+```
+
+The application reads it as it is constructed:
+
+```python
+app = Nitro()                          # ROUTES
+app = Nitro(routes="myproject.routes") # or named directly
+app = Nitro(routes=patterns)           # or handed the declarations
+```
+
+A declaration is a description, not a registration. Writing the table in a
+module of its own is what lets it be imported and read on its own — by a test,
+by a command, by anything that wants to know what a project serves without
+starting it.
+
+A route may be named, which is what makes it reversible.
+
+### What a route answers
+
+`methods` defaults to what the handler can answer: `GET` and `HEAD` for a
+function, and for an endpoint class the verbs it defines.
+
+```python
+class UserEndpoint(HTTPEndpoint):
+    async def get(self, request: HttpRequest, user_id: int) -> HttpResponse: ...
+    async def post(self, request: HttpRequest, user_id: int) -> HttpResponse: ...
+```
+
+`HTTPRoute("/users/<int:user_id>", UserEndpoint)` therefore answers `GET`,
+`HEAD` and `POST`. This matters because methods are checked in the compiled
+matcher: a verb the route did not declare is a 405 that never reaches the
+endpoint. Give `methods` explicitly to narrow that.
+
+An endpoint class is instantiated once per request, so it may keep state on
+`self` for the duration of a call without it leaking into the next one.
+
+## Decorators
+
+Handlers can also be registered on the application directly. This adds to the
+configured table rather than replacing it, and is meant for a small application
+or a test rather than as the way a project declares its routes.
 
 ```python
 from nitro.protocols import HttpRequest, HttpResponse, PlainTextResponse
@@ -22,8 +84,6 @@ async def things(request: HttpRequest) -> HttpResponse:
 
 app.add_route("/other", handler, methods=["GET"], name="other")
 ```
-
-A route may be named, which is what makes it reversible.
 
 ## Path parameters
 
@@ -106,7 +166,29 @@ A path that exists but not for the method used is a 405 with an accurate
 
 ## Mounting
 
-A `Mount` re-registers another router's routes under a prefix:
+A `Mount` re-registers another table's routes under a prefix, which is how a
+project splits its routes across modules:
+
+```python
+# myproject/api/routes.py
+patterns = [
+    HTTPRoute("/status", status, name="status"),
+]
+```
+
+```python
+# myproject/routes.py
+from myproject.api.routes import patterns as api_patterns
+
+patterns = [
+    Mount("/api", api_patterns, name="api"),
+]
+```
+
+`/api/status` now serves it, and the route is reversible as `api:status` — the
+mount's name is a namespace for the names inside it.
+
+A `Router` built with decorators can be mounted the same way:
 
 ```python
 from nitro.routing import Mount, Router
@@ -121,8 +203,6 @@ async def status(request: HttpRequest) -> HttpResponse:
 
 app.mount(Mount("/api", api, name="api"))
 ```
-
-`/api/status` now serves it, and the route is reversible as `api:status`.
 
 A mount is a grouping device and nothing more. There is no notion of handing a
 request off to a separate application — everything a Nitro project serves is
@@ -152,6 +232,17 @@ parameter's converter, so a `uuid.UUID` reverses to the string it came from.
 ## WebSocket and WebTransport routes
 
 They live in the same table, registered under methods no HTTP request can carry:
+
+```python
+from nitro.routing import WebSocketRoute, WebTransportRoute
+
+patterns = [
+    WebSocketRoute("/rooms/<slug:room>", room, name="room"),
+    WebTransportRoute("/live", live, name="live"),
+]
+```
+
+or, on the application:
 
 ```python
 from nitro.protocols.websocket import WebSocket

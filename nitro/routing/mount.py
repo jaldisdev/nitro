@@ -1,42 +1,50 @@
-"""Mounting a sub-router under a path prefix.
+"""Mounting a sub-table under a path prefix.
 
-A mount is a grouping device, not a hosting one: it takes a router's routes and
-re-registers them under a prefix in the parent. There is no notion of handing a
-request off to a separate application — everything a Nitro project serves is
-served by the same application object.
+A mount is a grouping device, not a hosting one: it takes a list of route
+declarations and re-registers them under a prefix in the parent. There is no
+notion of handing a request off to a separate application — everything a Nitro
+project serves is served by the same application object.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
-from nitro.routing.router import Route, Router
+from nitro.routing.router import Router
 
 __all__ = ["Mount"]
 
 
 class Mount:
-    """A router's routes, to be attached under `prefix`."""
+    """Route declarations, to be attached under `prefix`.
 
-    def __init__(self, prefix: str, routes: Router | Iterable[Route], *, name: str | None = None):
+    `name` becomes a namespace: a route named ``status`` inside
+    ``Mount("/api", ..., name="api")`` reverses as ``api:status``.
+    """
+
+    def __init__(self, prefix: str, routes: Router | Iterable[Any], *, name: str | None = None):
         if not prefix.startswith("/"):
             raise ValueError(f"mount prefix must start with '/', got {prefix!r}")
         # A trailing slash would double up against the mounted paths, which
         # start with one of their own.
         self.prefix = prefix.rstrip("/")
         self.name = name
-        self.routes: list[Route] = list(routes.routes if isinstance(routes, Router) else routes)
+        self.routes: list[Any] = list(routes.routes if isinstance(routes, Router) else routes)
 
-    def attach(self, router: Router) -> None:
-        """Register every mounted route on `router` under this mount's prefix."""
-        for route in self.routes:
-            qualified = f"{self.name}:{route.name}" if self.name and route.name else route.name
-            router.add(
-                f"{self.prefix}{route.path}",
-                route.handler,
-                methods=route.methods,
-                name=qualified,
-            )
+    def attach(self, router: Router, prefix: str = "", namespace: str | None = None) -> None:
+        """Register everything this mount holds on `router`, under its prefix."""
+        from nitro.routing.patterns import qualified
+
+        inner = qualified(self.name, namespace) or self.name or namespace
+        for entry in self.routes:
+            attach = getattr(entry, "attach", None)
+            if attach is None:
+                raise TypeError(
+                    f"{entry!r} is not a route; expected an HTTPRoute, WebSocketRoute, "
+                    "WebTransportRoute or Mount"
+                )
+            attach(router, f"{prefix}{self.prefix}", inner)
 
     def __len__(self) -> int:
         return len(self.routes)

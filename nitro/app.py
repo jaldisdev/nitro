@@ -25,6 +25,7 @@ from nitro.protocols.http import HttpRequest
 from nitro.protocols.websocket import WebSocket
 from nitro.protocols.webtransport import WebTransportSession
 from nitro.routing.mount import Mount
+from nitro.routing.patterns import load_patterns
 from nitro.routing.reverse import set_active_router
 from nitro.routing.router import (
     DEFAULT_METHODS,
@@ -44,6 +45,19 @@ LifecycleCallback = Callable[[], Any]
 _PLAIN_TEXT = ("content-type", "text/plain; charset=utf-8")
 
 
+def _is_async_callable(handler: Any) -> bool:
+    """Whether `handler` can be awaited when called.
+
+    An endpoint instance is a callable object rather than a function, so asking
+    only about the object itself would reject the class-based handlers the route
+    table is free to hold.
+    """
+    if inspect.iscoroutinefunction(handler):
+        return True
+    call = getattr(handler, "__call__", None)
+    return call is not None and inspect.iscoroutinefunction(call)
+
+
 class Nitro:
     """A Nitro application.
 
@@ -51,7 +65,13 @@ class Nitro:
     ``SERVER`` setting.
     """
 
-    def __init__(self, *, middleware: list[str] | None = None, **options: Any) -> None:
+    def __init__(
+        self,
+        *,
+        routes: str | Iterable[Any] | None = None,
+        middleware: list[str] | None = None,
+        **options: Any,
+    ) -> None:
         self.router = Router()
         set_active_router(self.router)
         self._startup_callbacks: list[LifecycleCallback] = []
@@ -59,6 +79,23 @@ class Nitro:
         self._option_overrides = options
         self._middleware_paths = middleware
         self._middleware: MiddlewareStack | None = None
+        self._load_routes(routes)
+
+    def _load_routes(self, routes: str | Iterable[Any] | None) -> None:
+        """Register the project's route table.
+
+        `routes` names a module defining ``patterns``, or is the declarations
+        themselves; left out, it comes from the ``ROUTES`` setting. A project
+        that configures neither is not an error — its routes are the ones its
+        decorators register.
+        """
+        if routes is None:
+            from nitro.settings import settings
+
+            routes = settings.ROUTES
+        if not routes:
+            return
+        self.include(load_patterns(routes))
 
     @property
     def middleware(self) -> MiddlewareStack:
@@ -83,7 +120,7 @@ class Nitro:
         any captured path parameters as keyword arguments. Sending a response
         through the protocol is the handler's job.
         """
-        if not inspect.iscoroutinefunction(handler):
+        if not _is_async_callable(handler):
             raise TypeError(f"handler for {path!r} must be an async function")
         return self.router.add(path, handler, methods=methods, name=name)
 
@@ -120,7 +157,7 @@ class Nitro:
     def add_websocket_route(
         self, path: str, handler: Handler, *, name: str | None = None
     ) -> Route:
-        if not inspect.iscoroutinefunction(handler):
+        if not _is_async_callable(handler):
             raise TypeError(f"WebSocket handler for {path!r} must be an async function")
         return self.router.add(path, handler, methods=[WEBSOCKET_METHOD], name=name)
 
@@ -142,7 +179,7 @@ class Nitro:
     def add_webtransport_route(
         self, path: str, handler: Handler, *, name: str | None = None
     ) -> Route:
-        if not inspect.iscoroutinefunction(handler):
+        if not _is_async_callable(handler):
             raise TypeError(f"WebTransport handler for {path!r} must be an async function")
         return self.router.add(path, handler, methods=[WEBTRANSPORT_METHOD], name=name)
 
@@ -150,7 +187,8 @@ class Nitro:
         """Attach a sub-router's routes under its prefix."""
         mount.attach(self.router)
 
-    def include(self, routes: Iterable[Route] | Router) -> None:
+    def include(self, routes: Iterable[Any] | Router) -> None:
+        """Register route declarations, or another router's routes."""
         self.router.include(routes)
 
     @property
