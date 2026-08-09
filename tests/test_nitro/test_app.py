@@ -311,7 +311,7 @@ class TestProtocolDispatch:
         seen = {}
 
         @app.websocket("/rooms/<int:room_id>")
-        async def room(scope, transport, room_id):
+        async def room(socket, room_id):
             seen["room_id"] = room_id
             await transport.accept()
 
@@ -329,7 +329,7 @@ class TestProtocolDispatch:
         app = Nitro()
 
         @app.websocket("/boom")
-        async def boom(scope, transport):
+        async def boom(socket):
             await transport.accept()
             raise RuntimeError("handler exploded")
 
@@ -343,7 +343,7 @@ class TestProtocolDispatch:
         app = Nitro()
 
         @app.websocket("/boom")
-        async def boom(scope, transport):
+        async def boom(socket):
             raise RuntimeError("handler exploded")
 
         route = app.routes[0]

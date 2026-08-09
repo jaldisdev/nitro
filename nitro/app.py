@@ -19,9 +19,13 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
+from nitro.middleware.stack import MiddlewareStack
 from nitro.protocols.exceptions import HttpException
 from nitro.protocols.http import Request
+from nitro.protocols.websocket import WebSocket
+from nitro.protocols.webtransport import WebTransportSession
 from nitro.routing.mount import Mount
+from nitro.routing.reverse import set_active_router
 from nitro.routing.router import (
     DEFAULT_METHODS,
     WEBSOCKET_METHOD,
@@ -47,11 +51,21 @@ class Nitro:
     ``SERVER`` setting.
     """
 
-    def __init__(self, **options: Any) -> None:
+    def __init__(self, *, middleware: list[str] | None = None, **options: Any) -> None:
         self.router = Router()
+        set_active_router(self.router)
         self._startup_callbacks: list[LifecycleCallback] = []
         self._shutdown_callbacks: list[LifecycleCallback] = []
         self._option_overrides = options
+        self._middleware_paths = middleware
+        self._middleware: MiddlewareStack | None = None
+
+    @property
+    def middleware(self) -> MiddlewareStack:
+        """The middleware stack, built from settings on first use."""
+        if self._middleware is None:
+            self._middleware = MiddlewareStack(self, self._middleware_paths)
+        return self._middleware
 
     # ── route registration ───────────────────────────────────────────────────
 
@@ -200,8 +214,12 @@ class Nitro:
             return
 
         request = Request(scope, protocol, parameters)
+
+        async def call_handler(request: Request) -> Any:
+            return await route.handler(request, **parameters)
+
         try:
-            result = await route.handler(request, **parameters)
+            result = await self.middleware.execute_http(request, call_handler)
         except HttpException as exception:
             await exception.as_response().__http__(protocol)
         except Exception:
@@ -236,18 +254,23 @@ class Nitro:
             await transport.reject(404, "Not Found")
             return
 
+        socket = WebSocket(scope, transport, parameters)
+
+        async def call_handler(socket: WebSocket) -> None:
+            await route.handler(socket, **parameters)
+
         try:
-            await route.handler(scope, transport, **parameters)
+            await self.middleware.execute_websocket(socket, call_handler)
         except Exception:
             logger.exception("WebSocket handler for %s failed", scope.path)
             # Whether this refuses the upgrade or closes an open connection
             # depends on how far the handler got; both are the right answer at
             # their respective stage, and neither should raise here.
             try:
-                if transport.connected:
-                    await transport.close(1011, "handler failed")
+                if socket.connected:
+                    await socket.close(1011, "handler failed")
                 else:
-                    await transport.reject(500, "Internal Server Error")
+                    await socket.reject(500, "Internal Server Error")
             except RuntimeError:
                 logger.debug("the WebSocket was already finished", exc_info=True)
 
@@ -265,15 +288,20 @@ class Nitro:
             await session.reject(404)
             return
 
+        connection = WebTransportSession(scope, session, parameters)
+
+        async def call_handler(connection: WebTransportSession) -> None:
+            await route.handler(connection, **parameters)
+
         try:
-            await route.handler(scope, session, **parameters)
+            await self.middleware.execute_webtransport(connection, call_handler)
         except Exception:
             logger.exception("WebTransport handler for %s failed", scope.path)
             try:
-                if session.connected:
-                    await session.close()
+                if connection.connected:
+                    await connection.close()
                 else:
-                    await session.reject(500)
+                    await connection.reject(500)
             except RuntimeError:
                 logger.debug("the WebTransport session was already finished", exc_info=True)
 
