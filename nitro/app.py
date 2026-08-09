@@ -269,9 +269,11 @@ class Nitro:
         # same socket, so each worker starts with none.
         from nitro.cache import reset_caches
         from nitro.intercom import reset_connections
+        from nitro.storage import reset_storages
 
         reset_connections()
         reset_caches()
+        reset_storages()
         self._run_callbacks(loop, self._startup_callbacks, "startup")
 
     def __shutdown__(self, loop: asyncio.AbstractEventLoop) -> None:
