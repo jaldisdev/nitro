@@ -68,7 +68,7 @@ app = Nitro(port=9000, workers=2)
 ```
 
 ```sh
-nitro run app:app --port 9500      # 9500 wins
+nitro app:app --port 9500          # 9500 wins
 ```
 
 A flag that was not given is dropped rather than applied, so it cannot erase a

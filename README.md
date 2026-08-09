@@ -15,7 +15,7 @@ async def show_user(request: HttpRequest, user_id: int) -> HttpResponse:
 ```
 
 ```sh
-nitro run app:app
+nitro app:app
 ```
 
 ## Not an ASGI framework
@@ -49,7 +49,7 @@ Start with [the overview](docs/overview.md).
 | [Middleware](docs/middleware.md) | Wrapping handlers |
 | [Caching](docs/cache.md) · [Storage](docs/storage.md) · [Templates](docs/templates.md) · [Mail](docs/mail.md) | Batteries |
 | [Observability](docs/observability.md) | Prometheus metrics |
-| [Command line](docs/cli.md) | `nitro run`, `check`, `shell` |
+| [Command line](docs/cli.md) | Serving, `check`, `shell` |
 | [Deployment](docs/deployment.md) | Workers, TLS, HTTP/3, draining |
 
 ## Layout

@@ -40,7 +40,7 @@ async def show_user(request: HttpRequest, user_id: int) -> HttpResponse:
 ```
 
 ```sh
-nitro run app:app
+nitro app:app
 ```
 
 A handler receives a [`HttpRequest`](protocols.md) and returns a `HttpResponse`. Path

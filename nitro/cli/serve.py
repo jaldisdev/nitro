@@ -1,4 +1,9 @@
-"""``nitro run`` — start the bundled server."""
+"""``nitro APPLICATION`` — start the bundled server.
+
+This lives outside ``nitro.cli.commands`` on purpose. Serving is what the root
+command does, not a command of its own, and everything in that package is
+registered as a subcommand.
+"""
 
 from __future__ import annotations
 
@@ -14,12 +19,33 @@ from nitro.settings import ImproperlyConfigured, ServerOptions
 DEFAULT_APPLICATION = "app:app"
 
 
+class RootPathContext(click.Context):
+    """A context that answers with the path of the command above it.
+
+    Serving is reached without a command word, so its own name must not turn up
+    in usage lines or in the "try --help" hint on an error.
+    """
+
+    @property
+    def command_path(self) -> str:
+        if self.parent is not None:
+            return self.parent.command_path
+        return click.Context.command_path.fget(self)
+
+
+class ServeCommand(click.Command):
+    context_class = RootPathContext
+
+
 def load_application(specifier: str) -> Any:
     """Import an application from a ``module:attribute`` specifier."""
     module_name, separator, attribute = specifier.partition(":")
     if not separator or not module_name or not attribute:
+        # Anything that is not a known command reaches this, so a mistyped
+        # command word lands here too and the message has to make sense for it.
         raise click.BadParameter(
-            f"expected 'module:attribute', got {specifier!r}", param_hint="APPLICATION"
+            f"expected an application as 'module:attribute', got {specifier!r}",
+            param_hint="APPLICATION",
         )
 
     # The working directory is where a project's own modules live, and it is
@@ -51,7 +77,7 @@ def build_options(application: Any, **overrides: Any) -> ServerOptions:
     return ServerOptions.resolve(**overrides)
 
 
-@click.command("run")
+@click.command("serve", cls=ServeCommand)
 @click.argument("application", default=DEFAULT_APPLICATION)
 @click.option("-H", "--host", help="Interface to bind. [default: localhost]")
 @click.option("-p", "--port", type=int, help="Port to bind. [default: 8000]")
@@ -74,7 +100,7 @@ def build_options(application: Any, **overrides: Any) -> ServerOptions:
     type=click.Choice(["trace", "debug", "info", "warning", "error"]),
     help="Server log level. [default: info]",
 )
-def run(application: str, **overrides: Any) -> None:
+def serve(application: str, **overrides: Any) -> None:
     """Serve APPLICATION, given as 'module:attribute'."""
     from nitro._nitro import Server
 

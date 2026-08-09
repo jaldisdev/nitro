@@ -1,10 +1,10 @@
 # Running in production
 
-The server is part of the application, so deploying means running `nitro run`.
+The server is part of the application, so deploying means running `nitro`.
 There is no ASGI server to choose and no worker class to configure.
 
 ```sh
-nitro run app:app --workers 4 --host 0.0.0.0 --port 8000
+nitro app:app --workers 4 --host 0.0.0.0 --port 8000
 ```
 
 ## Workers

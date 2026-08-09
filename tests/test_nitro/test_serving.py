@@ -1,4 +1,4 @@
-"""End-to-end tests against a real `nitro run` process."""
+"""End-to-end tests against a real server process."""
 
 import asyncio
 import os
@@ -343,7 +343,7 @@ class TestConfiguration:
             "from nitro import Nitro\napp = Nitro(http='nonsense')\n"
         )
         finished = subprocess.run(
-            [sys.executable, "-m", "nitro.cli", "run", "app:app", "-p", "0"],
+            [sys.executable, "-m", "nitro.cli", "app:app", "-p", "0"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -371,7 +371,6 @@ class TestConfiguration:
                     sys.executable,
                     "-m",
                     "nitro.cli",
-                    "run",
                     "app:app",
                     "-H",
                     "127.0.0.1",
@@ -509,7 +508,7 @@ class TestRouting:
             "    return None\n"
         )
         finished = subprocess.run(
-            [sys.executable, "-m", "nitro.cli", "run", "app:app", "-p", "0"],
+            [sys.executable, "-m", "nitro.cli", "app:app", "-p", "0"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
