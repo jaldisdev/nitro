@@ -1,0 +1,64 @@
+version: 2
+
+updates:
+  # The `nitro` distribution.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # `nitro-intercom` is a separate distribution with a project root of its own,
+  # so it needs an entry of its own.
+  - package-ecosystem: pip
+    directory: /nitro-intercom
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # One entry covers the whole Cargo workspace.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      # The QUIC stack is pre-1.0 and its crates are version-locked to one
+      # another, so they have to move together or not at all.
+      quic:
+        patterns:
+          - quinn*
+          - h3
+          - h3-*
+      # PyO3 and its runtime bridge release in step; a mismatched pair does not
+      # build.
+      pyo3:
+        patterns:
+          - pyo3
+          - pyo3-async-runtimes
+      rust:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
