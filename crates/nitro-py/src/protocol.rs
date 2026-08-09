@@ -11,7 +11,7 @@ use nitro_core::headers::Headers as CoreHeaders;
 use nitro_core::streaming::{self, StreamSender};
 use nitro_core::transport::{BodyError, RequestBody, ResponseBody};
 use nitro_core::websocket::{
-    WebSocketConnection, WebSocketError, WebSocketHandshake, WebSocketMessage,
+    WebSocketError, WebSocketHandshake, WebSocketMessage, WebSocketReceiver, WebSocketSender,
 };
 use nitro_core::webtransport::{
     IncomingStream, ReceiveHalf, SendHalf, SessionHandle, WebTransportError, WebTransportSession,
@@ -362,28 +362,22 @@ impl StreamTransport {
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
-/// A WebSocket connection, from the handshake through to close.
-///
-/// The same object serves both stages so a handler has one thing to hold:
-/// before it accepts, only `accept` and `reject` are meaningful; afterwards it
-/// carries messages.
-enum SocketState {
-    Pending(WebSocketHandshake),
-    // Boxed because an open connection carries the framing buffers and is far
-    // larger than a pending handshake, which is what most of these are.
-    Open(Box<WebSocketConnection>),
-    Closed,
-}
-
-/// The stage a socket has reached, kept outside the lock so it can be read
+/// The stage a socket has reached, kept outside the locks so it can be read
 /// without waiting on whatever operation is in flight.
 const PHASE_PENDING: u8 = 0;
 const PHASE_OPEN: u8 = 1;
 const PHASE_CLOSED: u8 = 2;
 
+/// A WebSocket connection, from the handshake through to close.
+///
+/// The reading and writing halves are held separately. A handler that relays
+/// messages in one task while waiting for them in another — which is what most
+/// of them do — would otherwise have the two waiting on each other.
 #[pyclass(name = "WsTransport", module = "nitro._nitro")]
 pub struct WsTransport {
-    state: Arc<tokio::sync::Mutex<SocketState>>,
+    handshake: Arc<tokio::sync::Mutex<Option<WebSocketHandshake>>>,
+    sender: Arc<tokio::sync::Mutex<Option<WebSocketSender>>>,
+    receiver: Arc<tokio::sync::Mutex<Option<WebSocketReceiver>>>,
     phase: Arc<AtomicU8>,
     subprotocols: Vec<String>,
 }
@@ -392,7 +386,9 @@ impl WsTransport {
     pub fn new(handshake: WebSocketHandshake) -> Self {
         Self {
             subprotocols: handshake.subprotocols().to_vec(),
-            state: Arc::new(tokio::sync::Mutex::new(SocketState::Pending(handshake))),
+            handshake: Arc::new(tokio::sync::Mutex::new(Some(handshake))),
+            sender: Arc::new(tokio::sync::Mutex::new(None)),
+            receiver: Arc::new(tokio::sync::Mutex::new(None)),
             phase: Arc::new(AtomicU8::new(PHASE_PENDING)),
         }
     }
@@ -400,6 +396,50 @@ impl WsTransport {
 
 fn socket_error(error: WebSocketError) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+fn already_answered() -> PyErr {
+    PyRuntimeError::new_err("this handshake has already been answered")
+}
+
+/// Read one message, translating it for Python. `None` means the connection
+/// has ended.
+async fn next_message(
+    receiver: &Arc<tokio::sync::Mutex<Option<WebSocketReceiver>>>,
+    phase: &Arc<AtomicU8>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let mut guard = receiver.lock().await;
+    let Some(active) = guard.as_mut() else {
+        return Ok(None);
+    };
+
+    loop {
+        let Some(message) = active.receive().await else {
+            *guard = None;
+            phase.store(PHASE_CLOSED, Ordering::Release);
+            return Ok(None);
+        };
+
+        match message.map_err(socket_error)? {
+            WebSocketMessage::Text(text) => {
+                return Python::attach(|python| {
+                    Ok(Some(text.into_pyobject(python)?.into_any().unbind()))
+                });
+            }
+            WebSocketMessage::Binary(data) => {
+                return Python::attach(|python| {
+                    Ok(Some(PyBytes::new(python, &data).into_any().unbind()))
+                });
+            }
+            WebSocketMessage::Close { .. } => {
+                *guard = None;
+                phase.store(PHASE_CLOSED, Ordering::Release);
+                return Ok(None);
+            }
+            // Answered by the framing layer; a handler has no use for them.
+            WebSocketMessage::Ping(_) | WebSocketMessage::Pong(_) => continue,
+        }
+    }
 }
 
 #[pymethods]
@@ -419,17 +459,23 @@ impl WsTransport {
         python: Python<'py>,
         subprotocol: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let state = Arc::clone(&self.state);
+        let handshake = Arc::clone(&self.handshake);
+        let sender = Arc::clone(&self.sender);
+        let receiver = Arc::clone(&self.receiver);
         let phase = Arc::clone(&self.phase);
+
         pyo3_async_runtimes::tokio::future_into_py(python, async move {
-            let mut guard = state.lock().await;
-            let SocketState::Pending(handshake) = &mut *guard else {
-                return Err(PyRuntimeError::new_err(
-                    "this handshake has already been answered",
-                ));
+            let mut pending = handshake.lock().await;
+            let Some(open) = pending.as_mut() else {
+                return Err(already_answered());
             };
-            let connection = handshake.accept(subprotocol).await.map_err(socket_error)?;
-            *guard = SocketState::Open(Box::new(connection));
+
+            let connection = open.accept(subprotocol).await.map_err(socket_error)?;
+            *pending = None;
+
+            let (writing, reading) = connection.split();
+            *sender.lock().await = Some(writing);
+            *receiver.lock().await = Some(reading);
             phase.store(PHASE_OPEN, Ordering::Release);
             Ok(())
         })
@@ -446,20 +492,18 @@ impl WsTransport {
     ) -> PyResult<Bound<'py, PyAny>> {
         let status = StatusCode::from_u16(status)
             .map_err(|_| PyValueError::new_err(format!("{status} is not an HTTP status code")))?;
-        let state = Arc::clone(&self.state);
+        let handshake = Arc::clone(&self.handshake);
         let phase = Arc::clone(&self.phase);
 
         pyo3_async_runtimes::tokio::future_into_py(python, async move {
-            let mut guard = state.lock().await;
-            let SocketState::Pending(handshake) = &mut *guard else {
-                return Err(PyRuntimeError::new_err(
-                    "this handshake has already been answered",
-                ));
+            let mut pending = handshake.lock().await;
+            let Some(open) = pending.as_mut() else {
+                return Err(already_answered());
             };
-            handshake
-                .reject(status, Bytes::from(reason.into_bytes()))
+
+            open.reject(status, Bytes::from(reason.into_bytes()))
                 .map_err(socket_error)?;
-            *guard = SocketState::Closed;
+            *pending = None;
             phase.store(PHASE_CLOSED, Ordering::Release);
             Ok(())
         })
@@ -468,41 +512,15 @@ impl WsTransport {
     /// `await transport.receive()` — the next message.
     ///
     /// Text arrives as `str` and binary as `bytes`. `None` means the connection
-    /// has ended. Ping and pong frames are answered by the transport and are
-    /// not surfaced.
+    /// has ended.
     fn receive<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let state = Arc::clone(&self.state);
+        let receiver = Arc::clone(&self.receiver);
         let phase = Arc::clone(&self.phase);
-        pyo3_async_runtimes::tokio::future_into_py(python, async move {
-            let mut guard = state.lock().await;
-            let SocketState::Open(connection) = &mut *guard else {
-                return Python::attach(|python| Ok(python.None()));
-            };
 
-            loop {
-                let Some(message) = connection.receive().await else {
-                    *guard = SocketState::Closed;
-                    phase.store(PHASE_CLOSED, Ordering::Release);
-                    return Python::attach(|python| Ok(python.None()));
-                };
-                match message.map_err(socket_error)? {
-                    WebSocketMessage::Text(text) => {
-                        return Python::attach(|python| {
-                            Ok(text.into_pyobject(python)?.into_any().unbind())
-                        });
-                    }
-                    WebSocketMessage::Binary(data) => {
-                        return Python::attach(|python| {
-                            Ok(PyBytes::new(python, &data).into_any().unbind())
-                        });
-                    }
-                    WebSocketMessage::Close { .. } => {
-                        *guard = SocketState::Closed;
-                        phase.store(PHASE_CLOSED, Ordering::Release);
-                        return Python::attach(|python| Ok(python.None()));
-                    }
-                    WebSocketMessage::Ping(_) | WebSocketMessage::Pong(_) => continue,
-                }
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            match next_message(&receiver, &phase).await? {
+                Some(message) => Ok(message),
+                None => Python::attach(|python| Ok(python.None())),
             }
         })
     }
@@ -512,38 +530,13 @@ impl WsTransport {
     }
 
     fn __anext__<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let state = Arc::clone(&self.state);
+        let receiver = Arc::clone(&self.receiver);
         let phase = Arc::clone(&self.phase);
-        pyo3_async_runtimes::tokio::future_into_py(python, async move {
-            let mut guard = state.lock().await;
-            let SocketState::Open(connection) = &mut *guard else {
-                return Err(PyStopAsyncIteration::new_err(()));
-            };
 
-            loop {
-                let Some(message) = connection.receive().await else {
-                    *guard = SocketState::Closed;
-                    phase.store(PHASE_CLOSED, Ordering::Release);
-                    return Err(PyStopAsyncIteration::new_err(()));
-                };
-                match message.map_err(socket_error)? {
-                    WebSocketMessage::Text(text) => {
-                        return Python::attach(|python| {
-                            Ok(text.into_pyobject(python)?.into_any().unbind())
-                        });
-                    }
-                    WebSocketMessage::Binary(data) => {
-                        return Python::attach(|python| {
-                            Ok(PyBytes::new(python, &data).into_any().unbind())
-                        });
-                    }
-                    WebSocketMessage::Close { .. } => {
-                        *guard = SocketState::Closed;
-                        phase.store(PHASE_CLOSED, Ordering::Release);
-                        return Err(PyStopAsyncIteration::new_err(()));
-                    }
-                    WebSocketMessage::Ping(_) | WebSocketMessage::Pong(_) => continue,
-                }
+        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+            match next_message(&receiver, &phase).await? {
+                Some(message) => Ok(message),
+                None => Err(PyStopAsyncIteration::new_err(())),
             }
         })
     }
@@ -564,18 +557,21 @@ impl WsTransport {
         code: u16,
         reason: String,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let state = Arc::clone(&self.state);
+        let sender = Arc::clone(&self.sender);
+        let receiver = Arc::clone(&self.receiver);
         let phase = Arc::clone(&self.phase);
+
         pyo3_async_runtimes::tokio::future_into_py(python, async move {
-            let mut guard = state.lock().await;
-            if let SocketState::Open(connection) = &mut *guard {
-                // A peer that has already gone is not an error to report: the
-                // connection is closed either way, which is what was asked for.
-                if let Err(error) = connection.close(Some(code), reason).await {
+            if let Some(writing) = sender.lock().await.as_mut() {
+                // A peer that has already gone is not worth reporting: the
+                // connection ends up closed either way, which is what was asked
+                // for.
+                if let Err(error) = writing.close(Some(code), reason).await {
                     tracing::debug!(%error, "closing an already-closed WebSocket");
                 }
             }
-            *guard = SocketState::Closed;
+            *sender.lock().await = None;
+            *receiver.lock().await = None;
             phase.store(PHASE_CLOSED, Ordering::Release);
             Ok(())
         })
@@ -595,15 +591,15 @@ impl WsTransport {
         python: Python<'py>,
         message: WebSocketMessage,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let state = Arc::clone(&self.state);
+        let sender = Arc::clone(&self.sender);
         pyo3_async_runtimes::tokio::future_into_py(python, async move {
-            let mut guard = state.lock().await;
-            let SocketState::Open(connection) = &mut *guard else {
+            let mut guard = sender.lock().await;
+            let Some(writing) = guard.as_mut() else {
                 return Err(PyRuntimeError::new_err(
                     "this WebSocket is not open; accept the handshake first",
                 ));
             };
-            connection.send(message).await.map_err(socket_error)
+            writing.send(message).await.map_err(socket_error)
         })
     }
 }

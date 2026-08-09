@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 mod config;
 mod dispatch;
 mod headers;
+mod intercom_bridge;
 mod lifecycle;
 mod protocol;
 mod scope;
@@ -24,6 +25,10 @@ fn _nitro(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<scope::WtScope>()?;
     module.add_class::<protocol::WtSession>()?;
     module.add_class::<protocol::WtStream>()?;
+
+    module.add_class::<intercom_bridge::Intercom>()?;
+    module.add_class::<intercom_bridge::Listener>()?;
+    module.add_class::<intercom_bridge::Reader>()?;
 
     module.add("HTTP_ENTRY_POINT", dispatch::HTTP_ENTRY_POINT)?;
     module.add("WEBSOCKET_ENTRY_POINT", dispatch::WEBSOCKET_ENTRY_POINT)?;
