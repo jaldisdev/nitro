@@ -13,3 +13,4 @@ pub mod lifecycle;
 pub mod router;
 pub mod streaming;
 pub mod transport;
+pub mod websocket;

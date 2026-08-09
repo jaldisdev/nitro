@@ -710,3 +710,144 @@ class TestStreamingResponses:
         server = server_factory(self.STREAM_APP)
         assert server.request("/closed-transport").text == "first"
         server.stop()
+
+
+class TestWebSockets:
+    SOCKET_APP = """
+        from nitro import Nitro
+
+        app = Nitro(http="1", log_level="warning")
+
+        @app.websocket("/echo")
+        async def echo(scope, transport):
+            await transport.accept()
+            async for message in transport:
+                if isinstance(message, str):
+                    await transport.send_str(f"echo:{message}")
+                else:
+                    await transport.send_bytes(message)
+
+        @app.websocket("/rooms/<slug:room>")
+        async def show_room(scope, transport, room):
+            await transport.accept()
+            await transport.send_str(f"room={room} path={scope.path} scheme={scope.scheme}")
+            await transport.close()
+
+        @app.websocket("/pick")
+        async def pick(scope, transport):
+            offered = list(scope.subprotocols)
+            await transport.accept(offered[0] if offered else None)
+            await transport.send_str(f"offered={offered}")
+            await transport.close()
+
+        @app.websocket("/refuse")
+        async def refuse(scope, transport):
+            await transport.reject(403, "no entry")
+
+        @app.websocket("/boom")
+        async def boom(scope, transport):
+            raise RuntimeError("handler exploded")
+
+        @app.route("/plain")
+        async def plain(scope, protocol):
+            protocol.response_str(200, [], "plain")
+    """
+
+    @staticmethod
+    def run_client(coroutine):
+        import asyncio
+
+        return asyncio.run(asyncio.wait_for(coroutine, timeout=20))
+
+    def test_messages_round_trip(self, server_factory):
+        import websockets
+
+        server = server_factory(self.SOCKET_APP)
+
+        async def exchange():
+            async with websockets.connect(f"ws://127.0.0.1:{server.port}/echo") as socket:
+                await socket.send("hello")
+                text = await socket.recv()
+                await socket.send(b"\x01\x02")
+                binary = await socket.recv()
+                return text, binary
+
+        text, binary = self.run_client(exchange())
+        assert text == "echo:hello"
+        assert binary == b"\x01\x02"
+        server.stop()
+
+    def test_the_scope_carries_path_parameters(self, server_factory):
+        import websockets
+
+        server = server_factory(self.SOCKET_APP)
+
+        async def exchange():
+            async with websockets.connect(f"ws://127.0.0.1:{server.port}/rooms/lobby") as socket:
+                return await socket.recv()
+
+        assert self.run_client(exchange()) == "room=lobby path=/rooms/lobby scheme=ws"
+        server.stop()
+
+    def test_a_subprotocol_is_negotiated(self, server_factory):
+        import websockets
+
+        server = server_factory(self.SOCKET_APP)
+
+        async def exchange():
+            async with websockets.connect(
+                f"ws://127.0.0.1:{server.port}/pick", subprotocols=["chat", "superchat"]
+            ) as socket:
+                return socket.subprotocol, await socket.recv()
+
+        selected, greeting = self.run_client(exchange())
+        assert selected == "chat"
+        assert greeting == "offered=['chat', 'superchat']"
+        server.stop()
+
+    def test_a_refused_upgrade_reports_its_status(self, server_factory):
+        import websockets
+
+        server = server_factory(self.SOCKET_APP)
+
+        async def exchange():
+            async with websockets.connect(f"ws://127.0.0.1:{server.port}/refuse"):
+                pass
+
+        with pytest.raises(websockets.exceptions.InvalidStatus) as failure:
+            self.run_client(exchange())
+        assert failure.value.response.status_code == 403
+        server.stop()
+
+    def test_an_unknown_path_is_refused(self, server_factory):
+        import websockets
+
+        server = server_factory(self.SOCKET_APP)
+
+        async def exchange():
+            async with websockets.connect(f"ws://127.0.0.1:{server.port}/nowhere"):
+                pass
+
+        with pytest.raises(websockets.exceptions.InvalidStatus) as failure:
+            self.run_client(exchange())
+        assert failure.value.response.status_code == 404
+        server.stop()
+
+    def test_a_failing_handler_does_not_leave_the_client_waiting(self, server_factory):
+        import websockets
+
+        server = server_factory(self.SOCKET_APP)
+
+        async def exchange():
+            async with websockets.connect(f"ws://127.0.0.1:{server.port}/boom"):
+                pass
+
+        with pytest.raises(websockets.exceptions.InvalidStatus) as failure:
+            self.run_client(exchange())
+        assert failure.value.response.status_code == 500
+        server.stop()
+
+    def test_ordinary_requests_still_work(self, server_factory):
+        server = server_factory(self.SOCKET_APP)
+        assert server.request("/plain").text == "plain"
+        server.stop()

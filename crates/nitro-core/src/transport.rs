@@ -21,6 +21,7 @@ use crate::disconnect::DisconnectWatcher;
 use crate::files::FileBody;
 use crate::headers::Headers;
 use crate::streaming::{StreamBody, StreamError};
+use crate::websocket::WebSocketHandshake;
 
 /// The URI scheme a request arrived under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,11 +197,36 @@ impl HttpResponse {
     }
 }
 
+/// A request asking to become a WebSocket connection.
+///
+/// The handshake is still open: answering it is the handler's job, and until it
+/// does the client has had no response at all.
+#[derive(Debug)]
+pub struct WebSocketRequest {
+    pub parts: RequestParts,
+    pub handshake: WebSocketHandshake,
+    pub disconnect: DisconnectWatcher,
+}
+
 /// The bridge between the transport and whatever answers requests.
 ///
 /// Implementations are cloned per connection, so cloning must be cheap.
 pub trait Dispatch: Clone + Send + Sync + 'static {
     fn handle_http(&self, request: HttpRequest) -> impl Future<Output = HttpResponse> + Send;
+
+    /// Answer a WebSocket upgrade. The default refuses every upgrade, which is
+    /// the right behaviour for an application that does not speak WebSocket.
+    fn handle_websocket(&self, request: WebSocketRequest) -> impl Future<Output = ()> + Send {
+        async move {
+            let mut request = request;
+            if let Err(error) = request.handshake.reject(
+                StatusCode::NOT_IMPLEMENTED,
+                "WebSocket is not supported here",
+            ) {
+                tracing::debug!(%error, "could not refuse a WebSocket upgrade");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -6,16 +6,23 @@ use http::StatusCode;
 use nitro_core::files::{OpenFile, ResolvedRange, resolve_range};
 use nitro_core::headers::Headers;
 use nitro_core::router::RouteTable;
-use nitro_core::transport::{Dispatch, HttpRequest, HttpResponse, ResponseBody};
+use nitro_core::transport::{Dispatch, HttpRequest, HttpResponse, ResponseBody, WebSocketRequest};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
 use tokio::sync::oneshot;
 
-use crate::protocol::{FileRequest, HttpProtocol, PreparedBody, PreparedResponse};
-use crate::scope::HttpScope;
+use crate::protocol::{FileRequest, HttpProtocol, PreparedBody, PreparedResponse, WsTransport};
+use crate::scope::{HttpScope, WsScope};
 
 /// The name a Nitro application exposes to answer HTTP requests.
 pub const HTTP_ENTRY_POINT: &str = "__handle_http__";
+
+/// The name a Nitro application exposes to answer WebSocket upgrades.
+pub const WEBSOCKET_ENTRY_POINT: &str = "__handle_ws__";
+
+/// The pseudo-method WebSocket routes are registered under, so one route table
+/// covers both protocols.
+pub const WEBSOCKET_METHOD: &str = "WEBSOCKET";
 
 /// Calls into a Python application object.
 ///
@@ -182,6 +189,38 @@ fn internal_error(reason: &'static str) -> HttpResponse {
     HttpResponse::text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
 }
 
+impl PythonDispatch {
+    /// Start the WebSocket handler coroutine.
+    fn start_socket_handler(
+        &self,
+        request: WebSocketRequest,
+    ) -> PyResult<impl Future<Output = ()> + Send + use<>> {
+        let matched = self.routes.find(WEBSOCKET_METHOD, request.parts.path());
+        let subprotocols = request.handshake.subprotocols().to_vec();
+
+        let coroutine = Python::attach(|python| -> PyResult<_> {
+            let scope = Py::new(
+                python,
+                WsScope::from_parts(python, &request.parts, &matched, &subprotocols)?,
+            )?;
+            let transport = Py::new(python, WsTransport::new(request.handshake))?;
+
+            let application = self.application.bind(python);
+            let entry_point = application.getattr(WEBSOCKET_ENTRY_POINT)?;
+            let awaitable = entry_point.call1((scope, transport))?;
+            pyo3_async_runtimes::into_future_with_locals(&self.locals, awaitable)
+        })?;
+
+        Ok(async move {
+            if let Err(error) = coroutine.await {
+                Python::attach(|python| {
+                    tracing::error!(error = %error.value(python), "the WebSocket handler raised");
+                });
+            }
+        })
+    }
+}
+
 impl Dispatch for PythonDispatch {
     async fn handle_http(&self, request: HttpRequest) -> HttpResponse {
         let (mut receiver, handler) = match self.start_handler(request) {
@@ -216,5 +255,42 @@ impl Dispatch for PythonDispatch {
                 }
             }
         }
+    }
+
+    async fn handle_websocket(&self, request: WebSocketRequest) {
+        let mut request = request;
+
+        // An application without the entry point cannot answer, so the refusal
+        // is made here rather than leaving the client waiting.
+        let has_handler = Python::attach(|python| {
+            self.application
+                .bind(python)
+                .hasattr(WEBSOCKET_ENTRY_POINT)
+                .unwrap_or(false)
+        });
+        if !has_handler {
+            reject(
+                &mut request,
+                StatusCode::NOT_IMPLEMENTED,
+                "WebSocket is not supported here",
+            );
+            return;
+        }
+
+        match self.start_socket_handler(request) {
+            Ok(handler) => handler.await,
+            Err(error) => Python::attach(|python| {
+                tracing::error!(
+                    error = %error.value(python),
+                    "could not start the WebSocket handler"
+                );
+            }),
+        }
+    }
+}
+
+fn reject(request: &mut WebSocketRequest, status: StatusCode, reason: &'static str) {
+    if let Err(error) = request.handshake.reject(status, reason) {
+        tracing::debug!(%error, "could not refuse a WebSocket upgrade");
     }
 }

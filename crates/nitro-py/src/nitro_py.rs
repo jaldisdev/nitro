@@ -19,8 +19,12 @@ fn _nitro(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<headers::Headers>()?;
     module.add_class::<protocol::HttpProtocol>()?;
     module.add_class::<protocol::StreamTransport>()?;
+    module.add_class::<scope::WsScope>()?;
+    module.add_class::<protocol::WsTransport>()?;
 
     module.add("HTTP_ENTRY_POINT", dispatch::HTTP_ENTRY_POINT)?;
+    module.add("WEBSOCKET_ENTRY_POINT", dispatch::WEBSOCKET_ENTRY_POINT)?;
+    module.add("WEBSOCKET_METHOD", dispatch::WEBSOCKET_METHOD)?;
     module.add("STARTUP_HOOK", lifecycle::STARTUP_HOOK)?;
     module.add("SHUTDOWN_HOOK", lifecycle::SHUTDOWN_HOOK)?;
 

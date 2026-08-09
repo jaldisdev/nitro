@@ -107,3 +107,84 @@ impl HttpScope {
         )
     }
 }
+
+/// Request metadata for a WebSocket upgrade.
+///
+/// The shape follows the HTTP scope so a handler can read the same attributes,
+/// with the offered subprotocols added and the body-related ones left out.
+#[pyclass(name = "WsScope", module = "nitro._nitro", frozen)]
+pub struct WsScope {
+    #[pyo3(get)]
+    pub proto: &'static str,
+    #[pyo3(get)]
+    pub http_version: &'static str,
+    #[pyo3(get)]
+    pub path: String,
+    #[pyo3(get)]
+    pub query_string: String,
+    #[pyo3(get)]
+    pub scheme: &'static str,
+    #[pyo3(get)]
+    pub authority: Option<String>,
+    #[pyo3(get)]
+    pub server: Option<(String, u16)>,
+    #[pyo3(get)]
+    pub client: Option<(String, u16)>,
+    #[pyo3(get)]
+    pub headers: Py<Headers>,
+    #[pyo3(get)]
+    pub subprotocols: Py<PyTuple>,
+    #[pyo3(get)]
+    pub route_id: Option<u64>,
+    #[pyo3(get)]
+    pub path_params: Py<PyDict>,
+}
+
+impl WsScope {
+    pub fn from_parts(
+        python: Python<'_>,
+        parts: &RequestParts,
+        matched: &RouteMatch,
+        subprotocols: &[String],
+    ) -> PyResult<Self> {
+        let path_params = PyDict::new(python);
+        let mut route_id = None;
+
+        if let RouteMatch::Found {
+            route_id: identifier,
+            parameters,
+        } = matched
+        {
+            route_id = Some(*identifier);
+            for (name, value) in parameters {
+                path_params.set_item(name, value)?;
+            }
+        }
+
+        Ok(Self {
+            proto: "websocket",
+            http_version: parts.http_version(),
+            path: parts.path().to_owned(),
+            query_string: parts.query().to_owned(),
+            scheme: if parts.scheme.is_secure() {
+                "wss"
+            } else {
+                "ws"
+            },
+            authority: parts.authority().map(str::to_owned),
+            server: address_pair(parts.server),
+            client: address_pair(parts.client),
+            headers: Py::new(python, Headers::new(parts.headers.clone()))?,
+            subprotocols: PyTuple::new(python, subprotocols)?.unbind(),
+            route_id,
+            path_params: path_params.unbind(),
+        })
+    }
+}
+
+#[pymethods]
+impl WsScope {
+    fn __repr__(&self) -> String {
+        format!("WsScope(path={:?}, scheme={:?})", self.path, self.scheme)
+    }
+}

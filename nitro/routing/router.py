@@ -23,6 +23,10 @@ _PARAMETER = re.compile(r"<([^>]*)>")
 
 DEFAULT_METHODS: tuple[str, ...] = ("GET", "HEAD")
 
+#: WebSocket routes live in the same table as HTTP ones, registered under a
+#: method no HTTP request can carry. One table then covers both protocols.
+WEBSOCKET_METHOD = "WEBSOCKET"
+
 
 @dataclass(frozen=True, slots=True)
 class ParameterSpec:

@@ -20,7 +20,13 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
 from nitro.routing.mount import Mount
-from nitro.routing.router import DEFAULT_METHODS, Route, Router, RouteTable
+from nitro.routing.router import (
+    DEFAULT_METHODS,
+    WEBSOCKET_METHOD,
+    Route,
+    Router,
+    RouteTable,
+)
 from nitro.settings import ServerOptions
 
 logger = logging.getLogger("nitro")
@@ -78,6 +84,28 @@ class Nitro:
             return handler
 
         return register
+
+    def websocket(
+        self, path: str, *, name: str | None = None
+    ) -> Callable[[Handler], Handler]:
+        """Register a WebSocket handler for `path`.
+
+        The handler is called with the connection scope and a transport it must
+        either accept or reject before any messages can pass.
+        """
+
+        def register(handler: Handler) -> Handler:
+            self.add_websocket_route(path, handler, name=name)
+            return handler
+
+        return register
+
+    def add_websocket_route(
+        self, path: str, handler: Handler, *, name: str | None = None
+    ) -> Route:
+        if not inspect.iscoroutinefunction(handler):
+            raise TypeError(f"WebSocket handler for {path!r} must be an async function")
+        return self.router.add(path, handler, methods=[WEBSOCKET_METHOD], name=name)
 
     def mount(self, mount: Mount) -> None:
         """Attach a sub-router's routes under its prefix."""
@@ -151,6 +179,35 @@ class Nitro:
         except Exception:
             logger.exception("handler for %s %s failed", scope.method, scope.path)
             protocol.response_str(500, [_PLAIN_TEXT], "Internal Server Error")
+
+    async def __handle_ws__(self, scope: Any, transport: Any) -> None:
+        route = self.router.get(scope.route_id) if scope.route_id is not None else None
+
+        if route is None:
+            await transport.reject(404, "Not Found")
+            return
+
+        try:
+            parameters = route.convert(dict(scope.path_params))
+        except (ValueError, TypeError):
+            logger.debug("path parameters for %s could not be converted", scope.path, exc_info=True)
+            await transport.reject(404, "Not Found")
+            return
+
+        try:
+            await route.handler(scope, transport, **parameters)
+        except Exception:
+            logger.exception("WebSocket handler for %s failed", scope.path)
+            # Whether this refuses the upgrade or closes an open connection
+            # depends on how far the handler got; both are the right answer at
+            # their respective stage, and neither should raise here.
+            try:
+                if transport.connected:
+                    await transport.close(1011, "handler failed")
+                else:
+                    await transport.reject(500, "Internal Server Error")
+            except RuntimeError:
+                logger.debug("the WebSocket was already finished", exc_info=True)
 
     def __startup__(self, loop: asyncio.AbstractEventLoop) -> None:
         """Run startup callbacks before the worker accepts anything.
