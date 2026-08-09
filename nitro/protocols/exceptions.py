@@ -125,7 +125,7 @@ class HttpException(Exception):
 
 
 class HttpBadRequest(HttpException):
-    """400 Bad Request."""
+    """400 Bad HttpRequest."""
 
     status_code = 400
     default_detail = "Bad request"
@@ -181,10 +181,10 @@ class HttpProxyAuthenticationRequired(HttpException):
 
 
 class HttpRequestTimeout(HttpException):
-    """408 Request Timeout."""
+    """408 HttpRequest Timeout."""
 
     status_code = 408
-    default_detail = "Request timeout"
+    default_detail = "HttpRequest timeout"
 
 
 class HttpConflict(HttpException):

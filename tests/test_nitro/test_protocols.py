@@ -9,12 +9,12 @@ from nitro.protocols import (
     Http404,
     HttpException,
     HttpForbidden,
+    HttpRequest,
+    HttpResponse,
     JSONResponse,
     PlainTextResponse,
     QueryParams,
     RedirectResponse,
-    Request,
-    Response,
     State,
 )
 from nitro.protocols.http import FileResponse, StreamingResponse
@@ -107,7 +107,7 @@ def make_request(**overrides):
     protocol = FakeProtocol(
         body=overrides.pop("body", b""), chunks=overrides.pop("chunks", None)
     )
-    return Request(FakeScope(**overrides), protocol), protocol
+    return HttpRequest(FakeScope(**overrides), protocol), protocol
 
 
 class TestURL:
@@ -227,26 +227,26 @@ class TestRequest:
 class TestResponse:
     async def test_text_is_encoded(self):
         _, protocol = make_request()
-        await Response("hello").__http__(protocol)
+        await HttpResponse("hello").__http__(protocol)
 
         assert protocol.status == 200
         assert protocol.written == b"hello"
 
     async def test_a_mapping_becomes_json(self):
         _, protocol = make_request()
-        await Response({"a": 1}).__http__(protocol)
+        await HttpResponse({"a": 1}).__http__(protocol)
 
         assert json.loads(protocol.written) == {"a": 1}
         assert protocol.header("content-type") == ["application/json"]
 
     async def test_bytes_pass_through(self):
         _, protocol = make_request()
-        await Response(b"\x00\x01").__http__(protocol)
+        await HttpResponse(b"\x00\x01").__http__(protocol)
         assert protocol.written == b"\x00\x01"
 
     async def test_none_is_an_empty_body(self):
         _, protocol = make_request()
-        await Response(None, status_code=204).__http__(protocol)
+        await HttpResponse(None, status_code=204).__http__(protocol)
         assert protocol.written == b""
         assert protocol.status == 204
 
@@ -268,7 +268,7 @@ class TestResponse:
         assert protocol.header("location") == ["/elsewhere"]
 
     async def test_several_cookies_all_survive(self):
-        response = Response("hi")
+        response = HttpResponse("hi")
         response.set_cookie("session", "abc")
         response.set_cookie("theme", "dark", max_age=60, httponly=True)
 
@@ -281,7 +281,7 @@ class TestResponse:
         assert any("HttpOnly" in cookie for cookie in cookies)
 
     async def test_deleting_a_cookie_expires_it(self):
-        response = Response("hi")
+        response = HttpResponse("hi")
         response.delete_cookie("session")
 
         _, protocol = make_request()

@@ -21,7 +21,7 @@ from typing import Any
 
 from nitro.middleware.stack import MiddlewareStack
 from nitro.protocols.exceptions import HttpException
-from nitro.protocols.http import Request
+from nitro.protocols.http import HttpRequest
 from nitro.protocols.websocket import WebSocket
 from nitro.protocols.webtransport import WebTransportSession
 from nitro.routing.mount import Mount
@@ -213,9 +213,9 @@ class Nitro:
             protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
             return
 
-        request = Request(scope, protocol, parameters)
+        request = HttpRequest(scope, protocol, parameters)
 
-        async def call_handler(request: Request) -> Any:
+        async def call_handler(request: HttpRequest) -> Any:
             return await route.handler(request, **parameters)
 
         try:
@@ -236,7 +236,7 @@ class Nitro:
         if writer is None:
             raise TypeError(
                 f"a handler returned {type(result).__name__}, which is not a response; "
-                "return a Response, or answer through request.protocol and return None"
+                "return a HttpResponse, or answer through request.protocol and return None"
             )
         await writer(protocol)
 

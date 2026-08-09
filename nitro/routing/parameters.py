@@ -190,7 +190,7 @@ class Path(ParamBase):
     Example:
         @app.http_route('/users/<int:user_id>')
         async def get_user(
-            request: Request,
+            request: HttpRequest,
             user_id: int = Path(..., gt=0)
         ):
             ...
@@ -269,14 +269,14 @@ class Cookie(ParamBase):
 
 class Body(ParamBase):
     r"""
-    Request body field extraction and validation.
+    HttpRequest body field extraction and validation.
 
     For JSON request bodies. Can extract individual fields or entire body.
 
     Example:
         # Extract individual fields
         async def create_user(
-            request: Request,
+            request: HttpRequest,
             name: str = Body(..., min_length=1),
             age: int = Body(..., ge=0, le=150),
             email: str = Body(..., regex=r'^[\w\.-]+@[\w\.-]+\.\w+$')
@@ -285,7 +285,7 @@ class Body(ParamBase):
 
         # Or use with embed=True for nested body
         async def handler(
-            request: Request,
+            request: HttpRequest,
             item: dict = Body(...)
         ):
             ...
@@ -346,7 +346,7 @@ class File(ParamBase):
 
     Example:
         async def upload(
-            request: Request,
+            request: HttpRequest,
             file: bytes = File(...),
             filename: str = Query(...)
         ):
@@ -355,7 +355,7 @@ class File(ParamBase):
 
         # With size validation
         async def upload_avatar(
-            request: Request,
+            request: HttpRequest,
             avatar: bytes = File(..., max_length=1024*1024)  # Max 1MB
         ):
             ...

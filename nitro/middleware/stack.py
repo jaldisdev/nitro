@@ -73,7 +73,7 @@ class MiddlewareStack:
             handler: Final route handler
 
         Returns:
-            Response from handler or middleware
+            HttpResponse from handler or middleware
         """
         return await self._execute_stack(MiddlewareProtocol.HTTP, request, handler)
 

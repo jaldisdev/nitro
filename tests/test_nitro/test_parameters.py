@@ -40,14 +40,14 @@ class FakeProtocol:
 
 
 def make_request(query_string="", headers=None, path_params=None, cookies_str=None, body=b""):
-    from nitro.protocols.http import Request
+    from nitro.protocols.http import HttpRequest
 
     supplied = dict(headers or {})
     if cookies_str:
         supplied["cookie"] = cookies_str
 
     scope = FakeScope(query_string=query_string, headers=supplied, path_params=path_params)
-    return Request(scope, FakeProtocol(body), path_params)
+    return HttpRequest(scope, FakeProtocol(body), path_params)
 
 
 class TestValidationError:
