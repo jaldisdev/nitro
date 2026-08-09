@@ -25,3 +25,4 @@ bytes.workspace = true
 http.workspace = true
 tracing.workspace = true
 futures-util.workspace = true
+hyper.workspace = true
