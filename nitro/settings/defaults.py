@@ -70,6 +70,23 @@ SERVER: dict[str, Any] = {
     "ACCESS_LOG_FORMAT": "combined",
 }
 
+# Template engines. Each entry configures one engine; DIRS lists the
+# directories searched, and APP_DIRS additionally searches a "templates"
+# directory inside each installed package.
+TEMPLATES: list[dict[str, Any]] = [
+    {
+        "BACKEND": "nitro.templates.engine.Jinja2",
+        "NAME": "default",
+        "DIRS": [],
+        "APP_DIRS": False,
+        "OPTIONS": {},
+    }
+]
+
+# The cache alias used for compiled template bytecode, when a template engine
+# is configured to cache it.
+TEMPLATE_CACHE: str = "default"
+
 CACHES: dict[str, dict[str, Any]] = {
     "default": {
         "BACKEND": "nitro.cache.backends.MemoryCache",
