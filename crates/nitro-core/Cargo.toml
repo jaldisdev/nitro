@@ -56,3 +56,4 @@ rcgen.workspace = true
 reqwest.workspace = true
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 libc.workspace = true
+wtransport = { version = "0.7.1", default-features = false, features = ["dangerous-configuration"] }
