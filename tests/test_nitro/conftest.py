@@ -40,7 +40,9 @@ class RunningServer:
     log: list[str]
 
     def url(self, path: str = "/") -> str:
-        return f"http://127.0.0.1:{self.port}{path}"
+        # By name, as a client would. The server binds every address the name
+        # resolves to, on one port.
+        return f"http://localhost:{self.port}{path}"
 
     def request(
         self,
@@ -117,8 +119,6 @@ def server_factory(tmp_path):
                 "nitro.cli",
                 "run",
                 f"{module}:app",
-                "-H",
-                "127.0.0.1",
                 "-p",
                 "0",
                 *arguments,

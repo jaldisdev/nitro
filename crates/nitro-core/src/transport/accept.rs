@@ -152,9 +152,24 @@ fn bind_tcp(host: &str, port: u16, backlog: u32) -> Result<Vec<std::net::TcpList
         });
     }
 
+    // A host name usually resolves to more than one address — `localhost` to
+    // both loopback families — and each gets a socket. Asking for port zero
+    // means "any free port", but the kernel would then choose a *different*
+    // one per socket, so a client resolving the name to the other family would
+    // find nothing there. The port the first socket is given is therefore
+    // reused for the rest, so one name means one port.
     let mut listeners = Vec::with_capacity(addresses.len());
-    for address in addresses {
-        listeners.push(bind_one_tcp(address, backlog)?);
+    let mut chosen = port;
+
+    for mut address in addresses {
+        if chosen != 0 {
+            address.set_port(chosen);
+        }
+        let listener = bind_one_tcp(address, backlog)?;
+        if chosen == 0 {
+            chosen = listener.local_addr().map(|bound| bound.port()).unwrap_or(0);
+        }
+        listeners.push(listener);
     }
     Ok(listeners)
 }
@@ -511,6 +526,24 @@ mod tests {
     }
 
     #[test]
+    fn a_name_resolving_to_several_addresses_uses_one_port() {
+        let mut config = ephemeral_config();
+        config.bind = BindAddress::tcp("localhost", 0);
+
+        let sockets = bind(&config).expect("binding localhost must work");
+        let addresses = sockets.local_addresses();
+        assert!(!addresses.is_empty());
+
+        let ports: std::collections::BTreeSet<u16> =
+            addresses.iter().map(|address| address.port()).collect();
+        assert_eq!(
+            ports.len(),
+            1,
+            "every address a name resolves to must be served on the same port, got {addresses:?}"
+        );
+    }
+
+    #[test]
     fn quic_follows_the_port_tcp_was_given() {
         let mut config = ephemeral_config();
         config.http = crate::config::HttpVersion::Http3;
@@ -523,6 +556,29 @@ mod tests {
             tcp_port, quic_port,
             "HTTP/3 must be reachable on the port it is advertised from"
         );
+    }
+
+    #[test]
+    fn quic_uses_one_port_across_a_name_too() {
+        let mut config = ephemeral_config();
+        config.bind = BindAddress::tcp("localhost", 0);
+        config.http = crate::config::HttpVersion::Http3;
+
+        let sockets = bind(&config).expect("binding localhost must work");
+        let tcp: std::collections::BTreeSet<u16> = sockets
+            .local_addresses()
+            .iter()
+            .map(|address| address.port())
+            .collect();
+        let quic: std::collections::BTreeSet<u16> = sockets
+            .quic
+            .iter()
+            .filter_map(|socket| socket.local_addr().ok())
+            .map(|address| address.port())
+            .collect();
+
+        assert_eq!(tcp, quic, "HTTP/3 must be reachable wherever TCP is");
+        assert_eq!(tcp.len(), 1);
     }
 
     #[test]
