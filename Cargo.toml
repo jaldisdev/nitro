@@ -40,7 +40,9 @@ h3-datagram = "0.0.2"
 # TLS
 rustls = { version = "0.23.43", default-features = false, features = ["tls12", "ring", "logging", "std"] }
 rustls-pemfile = "2.2.0"
-tokio-rustls = "0.26.4"
+# Default features would bring aws-lc-rs. Everything here uses ring, and a
+# second crypto provider compiled into the wheel is weight nothing calls.
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12", "logging"] }
 
 # WebSocket framing
 tokio-tungstenite = "0.30.0"
@@ -77,7 +79,11 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "jso
 # Test-only
 tempfile = "3.24.0"
 rcgen = "0.14.7"
-reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls-manual-roots", "http2", "stream"] }
+# Test-only. The provider-less rustls feature is deliberate: `rustls` would
+# bring aws-lc-rs, and because rustls is also a normal dependency here the
+# feature unifies across the graph and that C library ends up compiled into the
+# shipped wheel. The tests install ring instead, which the server already uses.
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "http2", "stream"] }
 
 [profile.release]
 lto = "thin"

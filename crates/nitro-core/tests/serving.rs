@@ -150,7 +150,22 @@ fn cleartext_config() -> ServerConfig {
     }
 }
 
+/// Give rustls a provider for this process.
+///
+/// The test client is built with the provider-less rustls feature, so that
+/// choosing one here does not drag a second crypto library into the shipped
+/// wheel. Ring is chosen to match what the server uses.
+fn install_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // Already installed is not a failure; only one caller can win, and any
+        // of them installing ring is the outcome that matters.
+        let _installed = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 fn client() -> reqwest::Client {
+    install_crypto_provider();
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -849,6 +864,7 @@ async fn http3_and_tcp_share_a_port_and_an_application() {
 
     // The same port answers over TCP with TLS, and advertises HTTP/3 while
     // doing so.
+    install_crypto_provider();
     let tcp = reqwest::Client::builder()
         .add_root_certificate(reqwest::Certificate::from_der(&certificate).unwrap())
         .resolve("localhost", format!("127.0.0.1:{port}").parse().unwrap())
