@@ -1,5 +1,6 @@
 """End-to-end tests against a real `nitro run` process."""
 
+import asyncio
 import os
 import signal
 
@@ -847,7 +848,142 @@ class TestWebSockets:
         assert failure.value.response.status_code == 500
         server.stop()
 
+    def test_a_handler_can_read_and_write_at_the_same_time(self, server_factory):
+        """Reading and writing must not wait on each other.
+
+        A handler with one task pushing messages out while another waits for
+        them to come in is the usual shape; if the two directions shared a lock
+        the pushing task would never get a turn.
+        """
+        import websockets
+
+        server = server_factory(
+            """
+            import asyncio
+            from nitro import Nitro
+
+            app = Nitro(http="1", log_level="warning")
+
+            @app.websocket("/duplex")
+            async def duplex(scope, transport):
+                await transport.accept()
+
+                async def heartbeat():
+                    for index in range(100):
+                        await transport.send_str(f"tick-{index}")
+                        await asyncio.sleep(0.01)
+
+                pump = asyncio.create_task(heartbeat())
+                try:
+                    # This waits for a message that will not come until the
+                    # client has seen several ticks.
+                    async for incoming in transport:
+                        await transport.send_str(f"echo:{incoming}")
+                        break
+                finally:
+                    pump.cancel()
+            """
+        )
+
+        async def exchange():
+            url = f"ws://127.0.0.1:{server.port}/duplex"
+            async with websockets.connect(url) as socket:
+                ticks = [await asyncio.wait_for(socket.recv(), timeout=5) for _ in range(3)]
+
+                await socket.send("now")
+                while True:
+                    message = await asyncio.wait_for(socket.recv(), timeout=5)
+                    if message.startswith("echo:"):
+                        return ticks, message
+
+        ticks, echo = self.run_client(exchange())
+
+        assert ticks == ["tick-0", "tick-1", "tick-2"]
+        assert echo == "echo:now"
+        server.stop()
+
     def test_ordinary_requests_still_work(self, server_factory):
         server = server_factory(self.SOCKET_APP)
         assert server.request("/plain").text == "plain"
+        server.stop()
+
+
+class TestIntercomOverWebSocket:
+    """The in-process fast path: a socket handler reaching Intercom directly."""
+
+    RELAY_APP = """
+        import asyncio
+        from nitro import Nitro
+        from nitro.intercom import intercom, new_channel
+        from nitro.settings import settings
+
+        settings.INTERCOMS = {{
+            "default": {{
+                "LOCATION": "redis://127.0.0.1:6379",
+                "OPTIONS": {{"PREFIX": {prefix!r}}},
+            }}
+        }}
+
+        app = Nitro(http="1", log_level="warning")
+
+        @app.websocket("/rooms/<slug:room>")
+        async def relay(scope, transport, room):
+            await transport.accept()
+            channel = new_channel("socket")
+
+            async with intercom.listen(channel, groups=[room]) as messages:
+                # Let the subscription settle before anyone publishes to it.
+                await asyncio.sleep(0.2)
+                await transport.send_str("ready")
+
+                async def outbound():
+                    async for message in messages:
+                        await transport.send_str(message["text"])
+
+                pump = asyncio.create_task(outbound())
+                try:
+                    async for incoming in transport:
+                        await intercom.group_publish(room, {{"text": incoming}})
+                finally:
+                    pump.cancel()
+    """
+
+    def redis_available(self):
+        import socket
+
+        with socket.socket() as probe:
+            probe.settimeout(1.0)
+            try:
+                probe.connect(("127.0.0.1", 6379))
+            except OSError:
+                return False
+        return True
+
+    def test_two_sockets_in_a_room_reach_each_other(self, server_factory, tmp_path):
+        import asyncio
+
+        import websockets
+
+        if not self.redis_available():
+            pytest.skip("no Redis at 127.0.0.1:6379")
+
+        prefix = f"nitro-test:relay:{tmp_path.name}"
+        server = server_factory(self.RELAY_APP.format(prefix=prefix))
+
+        async def exchange():
+            url = f"ws://127.0.0.1:{server.port}/rooms/lobby"
+            async with websockets.connect(url) as first, websockets.connect(url) as second:
+                assert await first.recv() == "ready"
+                assert await second.recv() == "ready"
+
+                await first.send("hello from first")
+
+                # Both sockets are in the room, so both see it.
+                return [
+                    await asyncio.wait_for(first.recv(), timeout=10),
+                    await asyncio.wait_for(second.recv(), timeout=10),
+                ]
+
+        received = asyncio.run(asyncio.wait_for(exchange(), timeout=30))
+        assert received == ["hello from first", "hello from first"]
         server.stop()

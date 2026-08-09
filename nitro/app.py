@@ -264,6 +264,12 @@ class Nitro:
         The loop exists but is not running yet, so an asynchronous callback is
         driven to completion here rather than scheduled.
         """
+        # A worker is forked from a process that may have opened connections of
+        # its own. Sharing one across a fork means two processes reading the
+        # same socket, so each worker starts with none.
+        from nitro.intercom import reset_connections
+
+        reset_connections()
         self._run_callbacks(loop, self._startup_callbacks, "startup")
 
     def __shutdown__(self, loop: asyncio.AbstractEventLoop) -> None:

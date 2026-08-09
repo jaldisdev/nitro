@@ -233,13 +233,26 @@ impl Drop for WebSocketHandshake {
     }
 }
 
+type Stream = WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>;
+
 /// An established WebSocket connection.
 #[derive(Debug)]
 pub struct WebSocketConnection {
-    stream: WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>,
+    stream: Stream,
 }
 
 impl WebSocketConnection {
+    /// Separate the two directions.
+    ///
+    /// Reading and writing at the same time is the usual shape of a WebSocket
+    /// handler — one task relaying messages out while another waits for them to
+    /// come in — and that only works if the two halves can be held
+    /// independently.
+    pub fn split(self) -> (WebSocketSender, WebSocketReceiver) {
+        let (sink, stream) = self.stream.split();
+        (WebSocketSender { sink }, WebSocketReceiver { stream })
+    }
+
     /// The next message, or `None` once the connection has ended.
     pub async fn receive(&mut self) -> Option<Result<WebSocketMessage, WebSocketError>> {
         loop {
@@ -271,6 +284,58 @@ impl WebSocketConnection {
             reason: reason.into().into(),
         });
         self.stream.close(frame).await.map_err(transport_error)
+    }
+}
+
+/// The writing half of a connection.
+#[derive(Debug)]
+pub struct WebSocketSender {
+    sink: futures_util::stream::SplitSink<Stream, Message>,
+}
+
+impl WebSocketSender {
+    pub async fn send(&mut self, message: WebSocketMessage) -> Result<(), WebSocketError> {
+        self.sink
+            .send(message.into_frame())
+            .await
+            .map_err(transport_error)
+    }
+
+    pub async fn close(
+        &mut self,
+        code: Option<u16>,
+        reason: impl Into<String>,
+    ) -> Result<(), WebSocketError> {
+        let frame = code.map(|code| CloseFrame {
+            code: code.into(),
+            reason: reason.into().into(),
+        });
+        self.sink
+            .send(Message::Close(frame))
+            .await
+            .map_err(transport_error)?;
+        self.sink.close().await.map_err(transport_error)
+    }
+}
+
+/// The reading half of a connection.
+#[derive(Debug)]
+pub struct WebSocketReceiver {
+    stream: futures_util::stream::SplitStream<Stream>,
+}
+
+impl WebSocketReceiver {
+    /// The next message, or `None` once the connection has ended.
+    pub async fn receive(&mut self) -> Option<Result<WebSocketMessage, WebSocketError>> {
+        loop {
+            match self.stream.next().await? {
+                Ok(frame) => match WebSocketMessage::from_frame(frame) {
+                    Some(message) => return Some(Ok(message)),
+                    None => continue,
+                },
+                Err(error) => return Some(Err(transport_error(error))),
+            }
+        }
     }
 }
 
