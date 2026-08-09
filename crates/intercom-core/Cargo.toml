@@ -1,0 +1,25 @@
+[package]
+name = "intercom-core"
+description = "Transport-agnostic publish/subscribe channels backed by Redis"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "intercom_core"
+path = "src/intercom_core.rs"
+
+[dependencies]
+tokio.workspace = true
+futures-util.workspace = true
+redis.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
