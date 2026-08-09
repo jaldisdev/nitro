@@ -808,7 +808,7 @@ class TestWebSockets:
         server = server_factory(self.SOCKET_APP)
 
         async def exchange():
-            async with websockets.connect(f"ws://127.0.0.1:{server.port}/echo") as socket:
+            async with websockets.connect(f"ws://localhost:{server.port}/echo") as socket:
                 await socket.send("hello")
                 text = await socket.recv()
                 await socket.send(b"\x01\x02")
@@ -826,7 +826,7 @@ class TestWebSockets:
         server = server_factory(self.SOCKET_APP)
 
         async def exchange():
-            async with websockets.connect(f"ws://127.0.0.1:{server.port}/rooms/lobby") as socket:
+            async with websockets.connect(f"ws://localhost:{server.port}/rooms/lobby") as socket:
                 return await socket.recv()
 
         assert self.run_client(exchange()) == "room=lobby path=/rooms/lobby scheme=ws"
@@ -839,7 +839,7 @@ class TestWebSockets:
 
         async def exchange():
             async with websockets.connect(
-                f"ws://127.0.0.1:{server.port}/pick", subprotocols=["chat", "superchat"]
+                f"ws://localhost:{server.port}/pick", subprotocols=["chat", "superchat"]
             ) as socket:
                 return socket.subprotocol, await socket.recv()
 
@@ -854,7 +854,7 @@ class TestWebSockets:
         server = server_factory(self.SOCKET_APP)
 
         async def exchange():
-            async with websockets.connect(f"ws://127.0.0.1:{server.port}/refuse"):
+            async with websockets.connect(f"ws://localhost:{server.port}/refuse"):
                 pass
 
         with pytest.raises(websockets.exceptions.InvalidStatus) as failure:
@@ -868,7 +868,7 @@ class TestWebSockets:
         server = server_factory(self.SOCKET_APP)
 
         async def exchange():
-            async with websockets.connect(f"ws://127.0.0.1:{server.port}/nowhere"):
+            async with websockets.connect(f"ws://localhost:{server.port}/nowhere"):
                 pass
 
         with pytest.raises(websockets.exceptions.InvalidStatus) as failure:
@@ -882,7 +882,7 @@ class TestWebSockets:
         server = server_factory(self.SOCKET_APP)
 
         async def exchange():
-            async with websockets.connect(f"ws://127.0.0.1:{server.port}/boom"):
+            async with websockets.connect(f"ws://localhost:{server.port}/boom"):
                 pass
 
         with pytest.raises(websockets.exceptions.InvalidStatus) as failure:
@@ -928,7 +928,7 @@ class TestWebSockets:
         )
 
         async def exchange():
-            url = f"ws://127.0.0.1:{server.port}/duplex"
+            url = f"ws://localhost:{server.port}/duplex"
             async with websockets.connect(url) as socket:
                 ticks = [await asyncio.wait_for(socket.recv(), timeout=5) for _ in range(3)]
 
@@ -1013,7 +1013,7 @@ class TestIntercomOverWebSocket:
         server = server_factory(self.RELAY_APP.format(prefix=prefix))
 
         async def exchange():
-            url = f"ws://127.0.0.1:{server.port}/rooms/lobby"
+            url = f"ws://localhost:{server.port}/rooms/lobby"
             async with websockets.connect(url) as first, websockets.connect(url) as second:
                 assert await first.recv() == "ready"
                 assert await second.recv() == "ready"

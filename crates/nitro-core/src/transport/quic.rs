@@ -29,7 +29,7 @@ use crate::transport::tls::{TlsError, TlsMaterial};
 use crate::transport::{
     BodyError, Dispatch, HttpRequest, HttpResponse, RequestBody, RequestParts, Scheme,
 };
-use crate::webtransport::{WebTransportRequest, WebTransportSession};
+use crate::webtransport::{ConnectionKeeper, WebTransportRequest, WebTransportSession};
 
 /// How many body chunks are held for a handler that is not reading yet.
 const BODY_QUEUE_DEPTH: usize = 8;
@@ -58,7 +58,22 @@ pub fn bind_udp(host: &str, port: u16) -> Result<Vec<std::net::UdpSocket>, BindE
         });
     }
 
-    addresses.into_iter().map(bind_one_udp).collect()
+    // As with TCP, one name means one port: the kernel would otherwise give a
+    // different ephemeral port to each address the name resolves to.
+    let mut sockets = Vec::with_capacity(addresses.len());
+    let mut chosen = port;
+
+    for mut address in addresses {
+        if chosen != 0 {
+            address.set_port(chosen);
+        }
+        let socket = bind_one_udp(address)?;
+        if chosen == 0 {
+            chosen = socket.local_addr().map(|bound| bound.port()).unwrap_or(0);
+        }
+        sockets.push(socket);
+    }
+    Ok(sockets)
 }
 
 fn bind_one_udp(address: SocketAddr) -> Result<std::net::UdpSocket, BindError> {
@@ -224,7 +239,7 @@ async fn serve_connection<D: Dispatch>(
         if webtransport && is_webtransport(&request) {
             // The session takes over the whole connection, so nothing else can
             // be served on it afterwards.
-            serve_webtransport(
+            let keeper = serve_webtransport(
                 request,
                 stream,
                 h3,
@@ -234,6 +249,14 @@ async fn serve_connection<D: Dispatch>(
                 config.datagram_queue_capacity,
             )
             .await;
+
+            // The same close as any other connection, rather than returning
+            // here: a handler that refused the session has just written a
+            // response, and closing now would cut it off before the client saw
+            // it.
+            drop(guard);
+            let _closed = tokio::time::timeout(CLOSE_GRACE, closing.closed()).await;
+            drop(keeper);
             return;
         }
 
@@ -351,6 +374,8 @@ async fn serve_request<D: Dispatch>(
     sender.finish().await.map_err(|error| error.to_string())
 }
 
+/// Returns whatever is left holding the connection, so the caller can keep it
+/// open while the last frames are flushed.
 #[allow(clippy::too_many_arguments)]
 async fn serve_webtransport<D: Dispatch>(
     request: Request<()>,
@@ -360,8 +385,13 @@ async fn serve_webtransport<D: Dispatch>(
     parts: RequestParts,
     disconnect: DisconnectWatcher,
     datagram_capacity: usize,
-) {
-    let session = WebTransportSession::pending(request, stream, connection, datagram_capacity);
+) -> ConnectionKeeper {
+    // Held here rather than by the session, so that a refusal — which drops
+    // the session as soon as the handler returns — still has an open
+    // connection to travel over.
+    let keeper: ConnectionKeeper = Arc::new(std::sync::Mutex::new(Some(connection)));
+    let session =
+        WebTransportSession::pending(request, stream, Arc::clone(&keeper), datagram_capacity);
 
     dispatch
         .handle_webtransport(WebTransportRequest {
@@ -371,6 +401,7 @@ async fn serve_webtransport<D: Dispatch>(
         })
         .await;
     tracing::debug!("the WebTransport session ended");
+    keeper
 }
 
 #[cfg(test)]

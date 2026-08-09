@@ -12,7 +12,7 @@
 //! a stream, a datagram carries no promise of delivery to break.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use h3::quic::BidiStream as _;
@@ -45,6 +45,13 @@ fn transport(error: impl std::fmt::Display) -> WebTransportError {
     WebTransportError::Transport(error.to_string())
 }
 
+fn take(keeper: &ConnectionKeeper) -> Option<H3Connection> {
+    match keeper.lock() {
+        Ok(mut held) => held.take(),
+        Err(poisoned) => poisoned.into_inner().take(),
+    }
+}
+
 /// A session request handed to the application.
 pub struct WebTransportRequest {
     pub parts: RequestParts,
@@ -61,11 +68,19 @@ impl std::fmt::Debug for WebTransportRequest {
     }
 }
 
+/// The HTTP/3 connection a session is answered on.
+///
+/// It is shared rather than owned because dropping it closes the QUIC
+/// connection, and a refusal needs the connection to outlive the handler that
+/// wrote it — otherwise the close races the response and the client is told
+/// nothing at all.
+pub type ConnectionKeeper = Arc<Mutex<Option<H3Connection>>>;
+
 /// Everything needed to answer a session request, before it is answered.
 struct Pending {
     request: Request<()>,
     stream: RequestStream,
-    connection: H3Connection,
+    connection: ConnectionKeeper,
 }
 
 enum SessionState {
@@ -101,7 +116,7 @@ impl WebTransportSession {
     pub fn pending(
         request: Request<()>,
         stream: RequestStream,
-        connection: H3Connection,
+        connection: ConnectionKeeper,
         datagram_capacity: usize,
     ) -> Self {
         Self {
@@ -141,6 +156,12 @@ impl WebTransportSession {
             stream,
             connection,
         } = *pending;
+
+        // Accepting takes ownership of the connection; from here the session
+        // itself keeps it alive.
+        let Some(connection) = take(&connection) else {
+            return Err(WebTransportError::AlreadyAnswered);
+        };
 
         let session = Session::accept(request, stream, connection)
             .await

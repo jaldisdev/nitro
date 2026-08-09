@@ -154,7 +154,7 @@ impl TestServer {
         let material = TlsMaterial::load(&settings).expect("the certificate must load");
 
         let mut config = ServerConfig {
-            bind: BindAddress::tcp("127.0.0.1", 0),
+            bind: BindAddress::tcp("localhost", 0),
             http: HttpVersion::Http3,
             tls: Some(settings),
             drain_timeout: Duration::from_secs(5),
@@ -190,11 +190,10 @@ impl TestServer {
         }
     }
 
-    /// The address by literal IP rather than by name: the server binds the
-    /// loopback address it was given, and `localhost` may resolve to the other
-    /// family first.
+    /// Reached by name, as a client would: `localhost` resolves to both
+    /// loopback families and the server must answer on whichever one is tried.
     fn url(&self) -> String {
-        format!("https://127.0.0.1:{}/session", self.port)
+        format!("https://localhost:{}/session", self.port)
     }
 
     async fn stop(self) {
@@ -399,7 +398,7 @@ async fn ordinary_http3_still_works_alongside_sessions() {
         .expect("building an HTTP client");
 
     let response = client
-        .get(format!("https://127.0.0.1:{}/", server.port))
+        .get(format!("https://localhost:{}/", server.port))
         .send()
         .await
         .expect("the request must succeed");
