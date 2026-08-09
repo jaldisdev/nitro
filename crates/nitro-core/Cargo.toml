@@ -51,6 +51,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# The WebTransport test client requires the aws-lc-rs provider. Enabling it
+# here keeps it in the test build only: the server itself uses ring, and the
+# resolver does not carry a dev-dependency's features into a normal build.
+rustls = { workspace = true, features = ["aws_lc_rs"] }
 tempfile.workspace = true
 rcgen.workspace = true
 reqwest.workspace = true

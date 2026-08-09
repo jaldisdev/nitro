@@ -391,6 +391,8 @@ async fn ordinary_http3_still_works_alongside_sessions() {
 
     // The same port serves HTTP over TCP; WebTransport support must not have
     // taken the ordinary path away.
+    // The provider-less rustls feature means the client needs one chosen here.
+    let _installed = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(PATIENCE)
