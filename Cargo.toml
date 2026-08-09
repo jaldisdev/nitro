@@ -20,13 +20,14 @@ intercom-core = { path = "crates/intercom-core", version = "0.1.0" }
 
 # Async runtime
 tokio = { version = "1.53.1", features = ["full"] }
-tokio-util = { version = "0.7.19", features = ["io"] }
+tokio-util = { version = "0.7.19", features = ["io", "rt"] }
 futures-util = "0.3.33"
 
 # HTTP/1 + HTTP/2
 hyper = { version = "1.11.0", features = ["http1", "http2", "server"] }
-hyper-util = { version = "0.1.20", features = ["tokio", "server-auto", "server-graceful"] }
+hyper-util = { version = "0.1.20", features = ["tokio", "server-auto"] }
 http = "1.5.0"
+http-body = "1.1.0"
 http-body-util = "0.1.4"
 
 # HTTP/3 + QUIC + WebTransport
@@ -65,6 +66,8 @@ mime_guess = "2.0.5"
 percent-encoding = "2.3.2"
 socket2 = { version = "0.6.5", features = ["all"] }
 thiserror = "2.0.20"
+time = { version = "0.3.55", features = ["formatting", "macros"] }
+serde_json = "1.0.151"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 
