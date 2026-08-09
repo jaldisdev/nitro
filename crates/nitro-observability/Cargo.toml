@@ -1,0 +1,28 @@
+[package]
+name = "nitro-observability"
+description = "Prometheus metrics for the Nitro server"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "nitro_observability"
+path = "src/nitro_observability.rs"
+
+[dependencies]
+prometheus.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+socket2.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+rustls = { workspace = true, features = ["aws_lc_rs"] }

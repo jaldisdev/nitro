@@ -63,6 +63,25 @@ def check(verbose: bool) -> None:
         if not settings.DEBUG and not settings.ALLOWED_HOSTS:
             problems += not _report(False, "ALLOWED_HOSTS is empty and DEBUG is off")
 
+        if options.observability_enabled:
+            if options.observability_port == options.port:
+                problems += not _report(
+                    False,
+                    "the metrics exporter is configured on the application's port",
+                )
+            elif options.observability_host in {"0.0.0.0", "::"}:
+                problems += not _report(
+                    False,
+                    "OBSERVABILITY_HOST exposes metrics on every interface; "
+                    "bind it to a loopback or internal address instead",
+                )
+            else:
+                _report(
+                    True,
+                    "metrics on "
+                    f"{options.observability_host}:{options.observability_port}",
+                )
+
     click.echo()
     click.echo(click.style("Runtime", bold=True))
     _report(sys.version_info >= (3, 13), f"Python {sys.version.split()[0]}")

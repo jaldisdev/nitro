@@ -12,6 +12,8 @@ name = "nitro_core"
 path = "src/nitro_core.rs"
 
 [dependencies]
+nitro-observability.workspace = true
+
 tokio.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true

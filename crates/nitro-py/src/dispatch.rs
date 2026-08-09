@@ -5,7 +5,7 @@ use std::sync::Arc;
 use http::StatusCode;
 use nitro_core::files::{OpenFile, ResolvedRange, resolve_range};
 use nitro_core::headers::Headers;
-use nitro_core::router::RouteTable;
+use nitro_core::router::{RouteMatch, RouteTable};
 use nitro_core::transport::{Dispatch, HttpRequest, HttpResponse, ResponseBody, WebSocketRequest};
 use nitro_core::webtransport::WebTransportRequest;
 use pyo3::prelude::*;
@@ -67,6 +67,7 @@ impl PythonDispatch {
     ) -> PyResult<(
         oneshot::Receiver<PreparedResponse>,
         impl Future<Output = ()> + Send + use<>,
+        Option<String>,
     )> {
         let (responder, receiver) = oneshot::channel();
 
@@ -76,6 +77,12 @@ impl PythonDispatch {
         let matched = self
             .routes
             .find(request.parts.method.as_str(), request.parts.path());
+        let route = match &matched {
+            RouteMatch::Found { route_id, .. } => {
+                self.routes.declared_path(*route_id).map(str::to_owned)
+            }
+            _ => None,
+        };
 
         let coroutine = Python::attach(|python| -> PyResult<_> {
             let scope = Py::new(
@@ -103,13 +110,17 @@ impl PythonDispatch {
             pyo3_async_runtimes::into_future_with_locals(&self.locals, awaitable)
         })?;
 
-        Ok((receiver, async move {
-            if let Err(error) = coroutine.await {
-                Python::attach(|python| {
-                    tracing::error!(error = %error.value(python), "the HTTP handler raised");
-                });
-            }
-        }))
+        Ok((
+            receiver,
+            async move {
+                if let Err(error) = coroutine.await {
+                    Python::attach(|python| {
+                        tracing::error!(error = %error.value(python), "the HTTP handler raised");
+                    });
+                }
+            },
+            route,
+        ))
     }
 }
 
@@ -126,6 +137,7 @@ async fn to_response(prepared: PreparedResponse) -> HttpResponse {
             status: parse_status(prepared.status),
             headers: prepared.headers,
             body,
+            route: None,
         },
         PreparedBody::File(request) => {
             file_response(prepared.status, prepared.headers, request).await
@@ -183,6 +195,7 @@ async fn file_response(status: u16, mut headers: Headers, request: FileRequest) 
             status,
             headers,
             body: ResponseBody::File(body),
+            route: None,
         },
         Err(error) => {
             tracing::error!(%error, "a file could not be positioned for sending");
@@ -230,7 +243,7 @@ impl PythonDispatch {
 
 impl Dispatch for PythonDispatch {
     async fn handle_http(&self, request: HttpRequest) -> HttpResponse {
-        let (mut receiver, handler) = match self.start_handler(request) {
+        let (mut receiver, handler, route) = match self.start_handler(request) {
             Ok(started) => started,
             Err(error) => {
                 Python::attach(|python| {
@@ -244,7 +257,7 @@ impl Dispatch for PythonDispatch {
 
         // Preferring the response branch means a handler that answers and then
         // returns in the same tick still has its answer used.
-        tokio::select! {
+        let response = tokio::select! {
             biased;
             prepared = &mut receiver => match prepared {
                 Ok(prepared) => to_response(prepared).await,
@@ -261,7 +274,9 @@ impl Dispatch for PythonDispatch {
                     Err(_) => internal_error("the handler ended without sending a response"),
                 }
             }
-        }
+        };
+
+        response.from_route(route)
     }
 
     async fn handle_webtransport(&self, request: WebTransportRequest) {

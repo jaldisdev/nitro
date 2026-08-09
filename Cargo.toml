@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/nitro-core",
+    "crates/nitro-observability",
     "crates/nitro-py",
     "crates/intercom-core",
     "crates/intercom-py",
@@ -16,6 +17,7 @@ repository = "https://github.com/jaldis/nitro"
 
 [workspace.dependencies]
 nitro-core = { path = "crates/nitro-core", version = "0.1.0" }
+nitro-observability = { path = "crates/nitro-observability", version = "0.1.0" }
 intercom-core = { path = "crates/intercom-core", version = "0.1.0" }
 
 # Async runtime
@@ -48,6 +50,9 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring
 tokio-tungstenite = "0.30.0"
 sha1 = "0.11.0"
 base64 = "0.23.1"
+
+# Metrics
+prometheus = { version = "0.14.0", default-features = false }
 
 # Routing
 matchit = "0.9.2"

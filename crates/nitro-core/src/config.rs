@@ -6,6 +6,8 @@
 //! socket is bound.
 
 use std::net::SocketAddr;
+
+use nitro_observability::ExporterConfig;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -244,6 +246,8 @@ pub struct ServerConfig {
     pub server_header: Option<String>,
     pub logging: LoggingConfig,
     pub access_log: Option<AccessLogConfig>,
+    /// Where metrics are exposed. Off by default, and on its own port when on.
+    pub observability: ExporterConfig,
 }
 
 impl Default for ServerConfig {
@@ -265,6 +269,7 @@ impl Default for ServerConfig {
             server_header: Some("nitro".to_owned()),
             logging: LoggingConfig::default(),
             access_log: None,
+            observability: ExporterConfig::default(),
         }
     }
 }

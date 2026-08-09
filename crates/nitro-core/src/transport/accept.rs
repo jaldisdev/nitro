@@ -22,6 +22,7 @@ use crate::transport::connection::{self, ConnectionContext};
 use crate::transport::quic;
 use crate::transport::tls::{TlsError, TlsMaterial};
 use crate::transport::{Dispatch, Scheme};
+use nitro_observability::exporter::{self, BoundExporter};
 
 /// How long the accept loop pauses after an error that is worth retrying, so a
 /// process at its descriptor limit does not spin at full speed.
@@ -61,6 +62,12 @@ pub struct BoundSockets {
     pub unix: Option<std::os::unix::net::UnixListener>,
     /// UDP sockets for QUIC, bound only when HTTP/3 is enabled.
     pub quic: Vec<std::net::UdpSocket>,
+    /// One metrics listener per worker, each on a port of its own. Empty
+    /// unless observability is switched on.
+    ///
+    /// A forked worker keeps only the entry for its own index; a process that
+    /// serves this set directly serves everything in it.
+    pub metrics: Vec<BoundExporter>,
 }
 
 impl BoundSockets {
@@ -117,6 +124,7 @@ pub fn bind(config: &ServerConfig) -> Result<BoundSockets, BindError> {
                 } else {
                     Vec::new()
                 },
+                metrics: bind_metrics(config)?,
                 tcp,
             })
         }
@@ -125,6 +133,7 @@ pub fn bind(config: &ServerConfig) -> Result<BoundSockets, BindError> {
             tcp: Vec::new(),
             unix: Some(bind_unix(path, config.backlog)?),
             quic: Vec::new(),
+            metrics: bind_metrics(config)?,
         }),
         #[cfg(not(unix))]
         BindAddress::Unix { path } => Err(BindError::Socket {
@@ -135,6 +144,18 @@ pub fn bind(config: &ServerConfig) -> Result<BoundSockets, BindError> {
             ),
         }),
     }
+}
+
+fn bind_metrics(config: &ServerConfig) -> Result<Vec<BoundExporter>, BindError> {
+    exporter::bind_workers(&config.observability, config.workers).map_err(|error| {
+        BindError::Socket {
+            address: format!(
+                "{}:{}",
+                config.observability.host, config.observability.port
+            ),
+            source: io::Error::other(error.to_string()),
+        }
+    })
 }
 
 fn bind_tcp(host: &str, port: u16, backlog: u32) -> Result<Vec<std::net::TcpListener>, BindError> {
@@ -269,6 +290,7 @@ pub async fn serve<D: Dispatch>(
         .map(|address| address.port());
     let context =
         ConnectionContext::new(dispatch, Arc::clone(&config), drain.signal(), served_port);
+    nitro_observability::metrics::worker_started();
     let limit = config
         .max_concurrent_connections
         .map(|maximum| Arc::new(Semaphore::new(maximum)));
@@ -316,6 +338,14 @@ pub async fn serve<D: Dispatch>(
                 shutdown.clone(),
             )));
         }
+    }
+
+    for endpoint in sockets.metrics {
+        let shutdown = shutdown.clone();
+        loops.push(Box::pin(exporter::serve(endpoint, move || {
+            let shutdown = shutdown.clone();
+            async move { shutdown.wait().await }
+        })));
     }
 
     if loops.is_empty() {

@@ -27,6 +27,7 @@ use crate::transport::{
     Dispatch, HttpRequest, HttpResponse, RequestBody, RequestParts, Scheme, WebSocketRequest,
 };
 use crate::websocket::{self, HandshakeOutcome, WebSocketHandshake};
+use nitro_observability::metrics;
 
 /// State shared by every connection a worker serves.
 #[derive(Debug)]
@@ -122,6 +123,8 @@ pub async fn serve_tcp<D: Dispatch>(
         server,
     };
 
+    metrics::connection_opened(metrics::Transport::Tcp);
+
     match tls {
         Some(acceptor) => match acceptor.accept(stream).await {
             Ok(stream) => serve_io(stream, addresses, scheme, context, graceful).await,
@@ -129,6 +132,8 @@ pub async fn serve_tcp<D: Dispatch>(
         },
         None => serve_io(stream, addresses, scheme, context, graceful).await,
     }
+
+    metrics::connection_closed(metrics::Transport::Tcp);
 }
 
 #[cfg(unix)]
@@ -141,7 +146,10 @@ pub async fn serve_unix<D: Dispatch>(
         client: None,
         server: None,
     };
+
+    metrics::connection_opened(metrics::Transport::Unix);
     serve_io(stream, addresses, Scheme::Http, context, graceful).await;
+    metrics::connection_closed(metrics::Transport::Unix);
 }
 
 /// Poll a connection to completion, asking it to shut down gracefully once the
@@ -281,11 +289,16 @@ fn start_upgrade<D: Dispatch>(
 
     async move {
         match outcome.await {
-            Ok(HandshakeOutcome::Accepted { subprotocol }) => acceptance(&key, subprotocol),
+            Ok(HandshakeOutcome::Accepted { subprotocol }) => {
+                metrics::socket_handshake(metrics::SocketProtocol::WebSocket, true);
+                acceptance(&key, subprotocol)
+            }
             Ok(HandshakeOutcome::Rejected { status, reason }) => {
+                metrics::socket_handshake(metrics::SocketProtocol::WebSocket, false);
                 finish_plain(HttpResponse::text(status, reason))
             }
             Err(_) => {
+                metrics::socket_handshake(metrics::SocketProtocol::WebSocket, false);
                 tracing::error!("a WebSocket handler ended without answering the handshake");
                 finish_plain(HttpResponse::text(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -315,6 +328,7 @@ fn finish_plain(response: HttpResponse) -> Response<BoxBody<Bytes, StreamError>>
         status,
         headers,
         body,
+        route: _,
     } = response;
     let length = body.content_length();
     let mut built = Response::new(body.into_boxed());
@@ -359,7 +373,9 @@ async fn exchange<D: Dispatch>(
     context: ConnectionContext<D>,
 ) -> Response<BoxBody<Bytes, StreamError>> {
     let started = Instant::now();
+    metrics::request_started();
     let (parts, body) = request.into_parts();
+    let method = parts.method.clone();
 
     let request_parts = request_parts(
         parts.method,
@@ -375,7 +391,7 @@ async fn exchange<D: Dispatch>(
         .as_ref()
         .map(|_| RequestSummary::from(&request_parts));
 
-    let response = context
+    let answered = context
         .dispatch
         .handle_http(HttpRequest {
             parts: request_parts,
@@ -384,7 +400,16 @@ async fn exchange<D: Dispatch>(
         })
         .await;
 
-    let response = finish(response, &context);
+    let route = answered.route.clone();
+    let response = finish(answered, &context);
+
+    metrics::request_finished();
+    metrics::record_request(
+        route.as_deref(),
+        method.as_str(),
+        response.status().as_u16(),
+        started.elapsed(),
+    );
 
     if let (Some(logger), Some(summary)) = (&context.access_log, logged) {
         logger.record(AccessRecord {
@@ -416,6 +441,7 @@ fn finish<D: Dispatch>(
         status,
         headers,
         body,
+        route: _,
     } = response;
 
     let content_length = body.content_length();

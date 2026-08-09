@@ -194,6 +194,14 @@ pub struct HttpResponse {
     pub status: StatusCode,
     pub headers: Headers,
     pub body: ResponseBody,
+    /// The route pattern that produced this response, for metric labels.
+    ///
+    /// It travels back with the response because only the dispatcher knows it:
+    /// the transport hands a request over without having matched anything. It
+    /// is never sent to the client, and the pattern is used rather than the
+    /// path so that a route with an identifier in it stays one time series
+    /// instead of one per identifier.
+    pub route: Option<String>,
 }
 
 impl HttpResponse {
@@ -202,7 +210,14 @@ impl HttpResponse {
             status,
             headers: Headers::new(),
             body,
+            route: None,
         }
+    }
+
+    /// Label this response with the route that produced it.
+    pub fn from_route(mut self, route: Option<String>) -> Self {
+        self.route = route;
+        self
     }
 
     pub fn empty(status: StatusCode) -> Self {

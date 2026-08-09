@@ -30,6 +30,7 @@ use crate::transport::{
     BodyError, Dispatch, HttpRequest, HttpResponse, RequestBody, RequestParts, Scheme,
 };
 use crate::webtransport::{ConnectionKeeper, WebTransportRequest, WebTransportSession};
+use nitro_observability::metrics;
 
 /// How many body chunks are held for a handler that is not reading yet.
 const BODY_QUEUE_DEPTH: usize = 8;
@@ -161,6 +162,7 @@ pub async fn accept<D: Dispatch>(
                 }
             };
 
+            metrics::connection_opened(metrics::Transport::Quic);
             serve_connection(
                 connection,
                 dispatch,
@@ -170,6 +172,7 @@ pub async fn accept<D: Dispatch>(
                 server_address,
             )
             .await;
+            metrics::connection_closed(metrics::Transport::Quic);
         });
     }
 
@@ -307,6 +310,7 @@ async fn serve_request<D: Dispatch>(
     parts: RequestParts,
     disconnect: DisconnectWatcher,
 ) -> Result<(), String> {
+    let method = parts.method.clone();
     let (mut sender, mut receiver) = stream.split();
 
     // The body is read by a task of its own so a handler that never reads it
@@ -331,6 +335,9 @@ async fn serve_request<D: Dispatch>(
         }
     });
 
+    let started = std::time::Instant::now();
+    metrics::request_started();
+
     let response = dispatch
         .handle_http(HttpRequest {
             parts,
@@ -339,10 +346,19 @@ async fn serve_request<D: Dispatch>(
         })
         .await;
 
+    metrics::request_finished();
+    metrics::record_request(
+        response.route.as_deref(),
+        method.as_str(),
+        response.status.as_u16(),
+        started.elapsed(),
+    );
+
     let HttpResponse {
         status,
         headers,
         body,
+        route: _,
     } = response;
 
     let mut head = Response::new(());
