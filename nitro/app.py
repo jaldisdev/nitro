@@ -63,6 +63,36 @@ def _full_path(scope: Any) -> str:
     return f"{path}?{query}" if query else path
 
 
+def build_server(application: Any, **overrides: Any) -> tuple[Any, ServerOptions]:
+    """The compiled server for `application`, and the options it was built with.
+
+    Shared by :meth:`Nitro.serve` and the command line so the two cannot drift.
+    `application` is duck-typed rather than required to be a `Nitro`, since the
+    command line will serve anything that answers the protocol entry points.
+    The options come back because the server does not hand them out again, and
+    the caller needs them to describe what it is serving.
+    """
+    from nitro._nitro import Server
+
+    resolver = getattr(application, "server_options", None)
+    options = resolver(**overrides) if callable(resolver) else ServerOptions.resolve(**overrides)
+
+    table = getattr(application, "route_table", None)
+    return Server(application, options, table() if callable(table) else []), options
+
+
+def served_addresses(server: Any, options: ServerOptions) -> list[str]:
+    """The URLs `server` answers on, as a person would type them.
+
+    The scheme follows whether TLS is terminated on the TCP socket: a
+    certificate configured only for HTTP/3 leaves the TCP listener plaintext,
+    and reporting `https` for it would send the reader somewhere that does not
+    answer.
+    """
+    scheme = "https" if options.tls_cert and options.tls_tcp else "http"
+    return [f"{scheme}://{host}:{port}" for host, port in server.addresses]
+
+
 def _is_async_callable(handler: Any) -> bool:
     """Whether `handler` can be awaited when called.
 
@@ -273,6 +303,29 @@ class Nitro:
         return callback
 
     # ── server configuration ─────────────────────────────────────────────────
+
+    def serve(self, **overrides: Any) -> None:
+        """Start the bundled server and block until it stops.
+
+        This is what `nitro app:app` does, reachable from Python so a script can
+        be the entry point instead — a container's `CMD`, most often, where the
+        application file being executable is worth more than a command line.
+
+        Keyword arguments override the server options the same way the command
+        line flags do.
+
+            if __name__ == "__main__":
+                app.serve()
+        """
+        server, options = build_server(self, **overrides)
+        for address in served_addresses(server, options):
+            # Flushed because stdout is a pipe under a process supervisor, and
+            # an address that appears after the first request is no use to
+            # whatever is waiting to send it.
+            print(f"Serving on {address}", flush=True)
+        if options.uds:
+            print(f"Serving on {options.uds}", flush=True)
+        server.serve()
 
     def server_options(self, **overrides: Any) -> ServerOptions:
         """The server configuration for this application.

@@ -44,6 +44,9 @@ Sockets are bound before any worker exists, so a port already in use is one
 clear error at startup rather than one per worker after the process appears to
 have started.
 
+An application can also start the server itself, which is what a container
+entry point usually wants. See [deployment](deployment.md#serving-from-the-application-itself).
+
 ## Commands of your own
 
 Any `click.Command` defined at module level in a package listed in

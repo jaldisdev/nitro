@@ -19,7 +19,7 @@ import pytest
 
 STARTUP_TIMEOUT = 30.0
 SHUTDOWN_TIMEOUT = 15.0
-_ADDRESS = re.compile(r"Serving on http://(?P<host>[^\s]+):(?P<port>\d+)")
+_ADDRESS = re.compile(r"Serving on https?://(?P<host>[^\s]+):(?P<port>\d+)")
 
 
 @dataclass
@@ -105,23 +105,27 @@ def _wait_for_address(process: subprocess.Popen[str], log: list[str]) -> int:
 
 @pytest.fixture
 def server_factory(tmp_path):
-    """Start the server on a kernel-chosen port and yield a handle to it."""
+    """Start the server on a kernel-chosen port and yield a handle to it.
+
+    `script` runs the written file directly rather than serving it through the
+    command line, which is how an application that calls `app.serve()` for
+    itself is started.
+    """
     running: list[RunningServer] = []
 
-    def start(source: str, *arguments: str, module: str = "app") -> RunningServer:
+    def start(
+        source: str, *arguments: str, module: str = "app", script: bool = False
+    ) -> RunningServer:
         (tmp_path / f"{module}.py").write_text(textwrap.dedent(source))
 
+        command = (
+            [sys.executable, f"{module}.py"]
+            if script
+            else [sys.executable, "-m", "nitro.cli", f"{module}:app", "-p", "0"]
+        )
         environment = dict(os.environ, PYTHONUNBUFFERED="1")
         process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "nitro.cli",
-                f"{module}:app",
-                "-p",
-                "0",
-                *arguments,
-            ],
+            [*command, *arguments],
             cwd=tmp_path,
             env=environment,
             stdout=subprocess.PIPE,
