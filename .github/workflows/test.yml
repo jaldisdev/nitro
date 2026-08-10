@@ -23,6 +23,12 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v7
+      # The binding crate is built for abi3-py313, so PyO3 refuses to build
+      # against an older interpreter — and the runner's own is older than that.
+      # The floor is what to build against: it is the version that has to work.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
