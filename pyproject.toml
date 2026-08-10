@@ -30,7 +30,7 @@ dependencies = [
     "click>=8.4",
     "python-multipart>=0.0.32",
     "regex>=2026.5.9",
-    "cryptography>=48",
+    "cryptography>=50.0.0",
 ]
 
 [project.optional-dependencies]
