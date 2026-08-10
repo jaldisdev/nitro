@@ -51,7 +51,7 @@ all = [
 dev = [
     "pytest>=9",
     "pytest-asyncio>=1.0",
-    "httpx>=0.28",
+    "httpx>=0.28.1",
     "websockets>=15",
     "aioquic>=1.3",
 ]
