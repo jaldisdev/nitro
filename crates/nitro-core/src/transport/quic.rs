@@ -89,7 +89,12 @@ fn bind_one_udp(address: SocketAddr) -> Result<std::net::UdpSocket, BindError> {
         Domain::IPV6
     };
     let socket = Socket::new(domain, Type::DGRAM, Some(SocketProtocol::UDP)).map_err(describe)?;
-    socket.set_reuse_address(true).map_err(describe)?;
+    // No SO_REUSEADDR here, unlike the TCP listener. On TCP it only permits
+    // rebinding a port still in TIME_WAIT, which is what lets a restart happen
+    // immediately. UDP has no such state, and on Linux the option instead lets
+    // a second process bind a port that is already serving — two servers would
+    // then split datagrams between them, each apparently having started
+    // cleanly. A port already in use should be one clear error instead.
     socket.bind(&address.into()).map_err(describe)?;
     socket.set_nonblocking(true).map_err(describe)?;
 
