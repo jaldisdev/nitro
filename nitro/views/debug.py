@@ -35,18 +35,20 @@ def debug_response(
     method: str,
     path: str,
     *,
+    debug: bool,
     exception: BaseException | None = None,
     routes: Iterable[str] = (),
 ) -> HttpResponse | None:
     """The debug page for `status_code`, or `None` if there is not one.
 
-    `None` also comes back with ``DEBUG`` off, so a caller can ask for the page
-    unconditionally and fall back to its plain answer.
+    `None` also comes back when `debug` is off, so a caller can ask for the page
+    unconditionally and fall back to its plain answer. Whether debugging is on
+    is passed in rather than read here: an application may have been told
+    directly, and the setting is only where the answer comes from otherwise.
     """
     from nitro.protocols.http import HttpResponse
-    from nitro.settings import settings
 
-    if status_code not in _PAGES or not settings.DEBUG:
+    if status_code not in _PAGES or not debug:
         return None
 
     if status_code == 404:

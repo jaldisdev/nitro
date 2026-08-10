@@ -89,6 +89,7 @@ class Nitro:
         routes: str | Iterable[Any] | None = None,
         middleware: list[str] | None = None,
         exception_handlers: dict[type[Exception] | int, Any] | None = None,
+        debug: bool | None = None,
         **options: Any,
     ) -> None:
         self.router = Router()
@@ -98,8 +99,24 @@ class Nitro:
         self._option_overrides = options
         self._middleware_paths = middleware
         self._middleware: MiddlewareStack | None = None
+        self._debug = debug
         self._exception_handlers = ExceptionHandlerRegistry()
         self._load_routes(routes, exception_handlers)
+
+    @property
+    def debug(self) -> bool:
+        """Whether this application reports failures in detail.
+
+        Read from the ``DEBUG`` setting unless the application was told
+        directly. Resolved on each read rather than at construction, so a test
+        that changes the setting does not have to rebuild the application.
+        """
+        if self._debug is not None:
+            return self._debug
+
+        from nitro.settings import settings
+
+        return bool(settings.DEBUG)
 
     def _load_routes(
         self,
@@ -391,6 +408,7 @@ class Nitro:
                 status_code,
                 getattr(scope, "method", "GET"),
                 _full_path(scope),
+                debug=self.debug,
                 exception=exception,
                 routes=[route.path for route in self.router],
             )

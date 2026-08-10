@@ -228,15 +228,20 @@ class ExceptionMiddleware(Middleware):
         self, request: HttpRequest, status_code: int, exception: BaseException
     ) -> HttpResponse | None:
         """The same page the application shows, so both routes agree."""
+        from nitro.settings import settings
         from nitro.views.debug import debug_response
 
         router = getattr(self.app, "router", None)
+        # The application's own answer when there is one, since it may have been
+        # told directly rather than taking the setting.
+        debug = getattr(self.app, "debug", None)
         query = request.url.query
         try:
             return debug_response(
                 status_code,
                 request.method,
                 f"{request.path}?{query}" if query else request.path,
+                debug=bool(settings.DEBUG) if debug is None else debug,
                 exception=exception,
                 routes=[route.path for route in router] if router is not None else (),
             )

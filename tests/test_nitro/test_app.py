@@ -686,3 +686,46 @@ class TestExceptionHandlers:
     def test_a_handler_that_is_not_async_is_refused(self):
         with pytest.raises(ImproperlyConfigured, match="not an async function"):
             Nitro(exception_handlers={404: lambda request, exception: None})
+
+
+class TestDebugFlag:
+    def test_it_follows_the_setting_by_default(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        assert Nitro().debug is True
+
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+        assert Nitro().debug is False
+
+    def test_the_argument_wins_over_the_setting(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+        assert Nitro(debug=True).debug is True
+
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        assert Nitro(debug=False).debug is False
+
+    def test_it_is_read_again_rather_than_frozen(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+        app = Nitro()
+
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        assert app.debug is True
+
+    async def test_it_decides_whether_the_debug_page_is_shown(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+        app = Nitro(debug=True)
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "GET", "/missing"), protocol)
+
+        assert protocol.status == 404
+        assert protocol.header("content-type") == "text/html; charset=utf-8"
+
+    async def test_it_can_switch_the_page_off_while_the_setting_is_on(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        app = Nitro(debug=False)
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "GET", "/missing"), protocol)
+
+        assert protocol.status == 404
+        assert protocol.body == b"Not Found"
