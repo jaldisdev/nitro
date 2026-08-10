@@ -268,6 +268,17 @@ Every other status keeps its ordinary answer — a 403 stays the response the
 exception describes. With `DEBUG` off, a 404 is `Not Found` and a 500 is
 `Internal Server Error`, and nothing about the failure reaches the client.
 
+The `DEBUG` setting is where this comes from unless the application was told
+directly:
+
+```python
+app = Nitro(debug=True)
+```
+
+which is what a test wants when the project it runs against is configured for
+production. The setting is read on each request rather than at construction, so
+changing it takes effect without rebuilding the application.
+
 ## Answering directly
 
 A handler that wants the transport can reach it and return nothing:
