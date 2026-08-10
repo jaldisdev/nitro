@@ -6,8 +6,8 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, LazyLock, RwLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use http::{HeaderValue, Request, Response, StatusCode};
@@ -131,6 +131,15 @@ impl<D: Dispatch> ConnectionContext<D> {
         {
             headers.insert(http::header::CONTENT_LENGTH, HeaderValue::from(length));
         }
+        // Added here rather than left to hyper, which only covers the TCP
+        // transports. Hyper skips its own when the header is already set, so
+        // one date is sent either way.
+        if !headers.contains_key(http::header::DATE) {
+            let date = http_date();
+            if !date.is_empty() {
+                headers.insert(http::header::DATE, date);
+            }
+        }
     }
 
     /// The summary an access log entry is built from, or `None` when nothing
@@ -163,6 +172,44 @@ impl<D: Dispatch> ConnectionContext<D> {
             });
         }
     }
+}
+
+/// The `Date` layout every HTTP response uses: RFC 9110's IMF-fixdate.
+const HTTP_DATE: &[time::format_description::BorrowedFormatItem<'_>] = time::macros::format_description!(
+    "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] GMT"
+);
+
+/// The current time as a `Date` header, formatted at most once a second.
+///
+/// A second is the resolution the header itself has, so re-formatting per
+/// response would produce the same bytes at a cost paid on every exchange.
+fn http_date() -> HeaderValue {
+    static CACHED: LazyLock<RwLock<(u64, HeaderValue)>> =
+        LazyLock::new(|| RwLock::new((0, HeaderValue::from_static(""))));
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+
+    if let Ok(cached) = CACHED.read()
+        && cached.0 == now
+    {
+        return cached.1.clone();
+    }
+
+    let formatted = time::OffsetDateTime::from(SystemTime::now())
+        .format(HTTP_DATE)
+        .ok()
+        .and_then(|text| HeaderValue::from_str(&text).ok())
+        // A clock that cannot be formatted is no reason to fail a response; the
+        // header is omitted for this second instead.
+        .unwrap_or_else(|| HeaderValue::from_static(""));
+
+    if let Ok(mut cached) = CACHED.write() {
+        *cached = (now, formatted.clone());
+    }
+    formatted
 }
 
 fn header_value(value: &str, name: &str) -> Option<HeaderValue> {
@@ -569,6 +616,39 @@ mod tests {
             &context(ServerConfig::default()),
         );
         assert_eq!(response.headers()[http::header::SERVER], "nitro");
+    }
+
+    #[test]
+    fn a_date_is_added_in_the_format_the_protocol_asks_for() {
+        let response = finish(
+            HttpResponse::empty(StatusCode::OK),
+            &context(ServerConfig::default()),
+        );
+        let date = response.headers()[http::header::DATE].to_str().unwrap();
+
+        // IMF-fixdate: `Sun, 06 Nov 1994 08:49:37 GMT`.
+        assert!(date.ends_with(" GMT"), "{date}");
+        assert_eq!(date.len(), 29, "{date}");
+        time::OffsetDateTime::parse(date, &time::format_description::well_known::Rfc2822)
+            .expect("the date must parse as an HTTP date");
+    }
+
+    #[test]
+    fn an_application_date_is_left_alone() {
+        let response = finish(
+            HttpResponse::empty(StatusCode::OK)
+                .with_header("date", "Sun, 06 Nov 1994 08:49:37 GMT"),
+            &context(ServerConfig::default()),
+        );
+        assert_eq!(
+            response.headers()[http::header::DATE],
+            "Sun, 06 Nov 1994 08:49:37 GMT"
+        );
+    }
+
+    #[test]
+    fn the_date_is_reused_within_the_same_second() {
+        assert_eq!(http_date(), http_date());
     }
 
     #[test]

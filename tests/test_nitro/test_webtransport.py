@@ -290,6 +290,7 @@ class TestHttp3Requests:
         response = run(exchange())
         assert response.headers["server"] == "nitro"
         assert "alt-svc" in response.headers
+        assert response.headers["date"].endswith(" GMT")
         session_server.stop()
 
     def test_requests_reach_the_access_log(self, server_factory, certificate):
