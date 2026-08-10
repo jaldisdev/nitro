@@ -20,12 +20,21 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
 from nitro.middleware.stack import MiddlewareStack
-from nitro.protocols.exceptions import HttpException
+from nitro.protocols.exceptions import (
+    ExceptionHandlerRegistry,
+    Http404,
+    HttpException,
+    HttpMethodNotAllowed,
+)
 from nitro.protocols.http import HttpRequest
 from nitro.protocols.websocket import WebSocket
 from nitro.protocols.webtransport import WebTransportSession
 from nitro.routing.mount import Mount
-from nitro.routing.patterns import load_patterns
+from nitro.routing.patterns import (
+    load_exception_handlers,
+    load_patterns,
+    normalise_exception_handlers,
+)
 from nitro.routing.reverse import set_active_router
 from nitro.routing.router import (
     DEFAULT_METHODS,
@@ -79,6 +88,7 @@ class Nitro:
         *,
         routes: str | Iterable[Any] | None = None,
         middleware: list[str] | None = None,
+        exception_handlers: dict[type[Exception] | int, Any] | None = None,
         **options: Any,
     ) -> None:
         self.router = Router()
@@ -88,23 +98,47 @@ class Nitro:
         self._option_overrides = options
         self._middleware_paths = middleware
         self._middleware: MiddlewareStack | None = None
-        self._load_routes(routes)
+        self._exception_handlers = ExceptionHandlerRegistry()
+        self._load_routes(routes, exception_handlers)
 
-    def _load_routes(self, routes: str | Iterable[Any] | None) -> None:
-        """Register the project's route table.
+    def _load_routes(
+        self,
+        routes: str | Iterable[Any] | None,
+        exception_handlers: dict[type[Exception] | int, Any] | None,
+    ) -> None:
+        """Register the project's route table and its exception handlers.
 
         `routes` names a module defining ``patterns``, or is the declarations
         themselves; left out, it comes from the ``ROUTES`` setting. A project
         that configures neither is not an error — its routes are the ones its
         decorators register.
+
+        The route module's handlers are registered before the ones given here,
+        so a constructor argument overrides the project's own — the same
+        direction as the server options.
         """
         if routes is None:
             from nitro.settings import settings
 
             routes = settings.ROUTES
-        if not routes:
-            return
-        self.include(load_patterns(routes))
+
+        if routes:
+            self.include(load_patterns(routes))
+            self._register_handlers(load_exception_handlers(routes))
+
+        if exception_handlers:
+            self._register_handlers(
+                normalise_exception_handlers(exception_handlers, "Nitro(exception_handlers=...)")
+            )
+
+    def _register_handlers(self, handlers: dict[Any, Any]) -> None:
+        for key, handler in handlers.items():
+            self._exception_handlers.add_handler(key, handler)
+
+    @property
+    def exception_handlers(self) -> ExceptionHandlerRegistry:
+        """The handlers answering for particular statuses and exceptions."""
+        return self._exception_handlers
 
     @property
     def middleware(self) -> MiddlewareStack:
@@ -241,11 +275,15 @@ class Nitro:
 
         if route is None:
             if scope.allowed_methods:
-                protocol.response_str(
-                    405,
-                    [_PLAIN_TEXT, ("allow", ", ".join(scope.allowed_methods))],
-                    "Method Not Allowed",
-                )
+                allow = ", ".join(scope.allowed_methods)
+                if not await self._answered(
+                    scope, protocol, HttpMethodNotAllowed(headers={"Allow": allow})
+                ):
+                    protocol.response_str(
+                        405,
+                        [_PLAIN_TEXT, ("allow", allow)],
+                        "Method Not Allowed",
+                    )
             else:
                 await self._not_found(scope, protocol)
             return
@@ -268,15 +306,17 @@ class Nitro:
         try:
             result = await self.middleware.execute_http(request, call_handler)
         except HttpException as exception:
-            page = self._debug_page(scope, exception.status_code, exception)
-            await (page or exception.as_response()).__http__(protocol)
+            if not await self._answered(scope, protocol, exception, request):
+                page = self._debug_page(scope, exception.status_code, exception)
+                await (page or exception.as_response()).__http__(protocol)
         except Exception as exception:
             logger.exception("handler for %s %s failed", scope.method, scope.path)
-            page = self._debug_page(scope, 500, exception)
-            if page is not None:
-                await page.__http__(protocol)
-            else:
-                protocol.response_str(500, [_PLAIN_TEXT], "Internal Server Error")
+            if not await self._answered(scope, protocol, exception, request):
+                page = self._debug_page(scope, 500, exception)
+                if page is not None:
+                    await page.__http__(protocol)
+                else:
+                    protocol.response_str(500, [_PLAIN_TEXT], "Internal Server Error")
         else:
             # A handler may answer through the protocol itself and return
             # nothing; only a returned response has to be written here.
@@ -284,11 +324,57 @@ class Nitro:
                 await self._write(result, protocol)
 
     async def _not_found(self, scope: Any, protocol: Any) -> None:
+        if await self._answered(scope, protocol, Http404()):
+            return
         page = self._debug_page(scope, 404)
         if page is None:
             protocol.response_str(404, [_PLAIN_TEXT], "Not Found")
             return
         await page.__http__(protocol)
+
+    async def _answered(
+        self,
+        scope: Any,
+        protocol: Any,
+        exception: BaseException,
+        request: HttpRequest | None = None,
+    ) -> bool:
+        """Whether a registered handler answered `exception`.
+
+        A path that matched nothing has no request of its own, so one is built
+        here: a handler for a 404 is exactly the one most likely to want the
+        path it was asked for.
+        """
+        handled, answer = await self._dispatch_exception(
+            request if request is not None else HttpRequest(scope, protocol, {}), exception
+        )
+        if handled and answer is not None:
+            await self._write(answer, protocol)
+        return handled
+
+    async def _dispatch_exception(
+        self, target: Any, exception: BaseException
+    ) -> tuple[bool, Any]:
+        """Run the handler registered for `exception`, if there is one.
+
+        A handler that fails is logged and reported as absent, so the client
+        still gets an answer for the original exception rather than for the one
+        raised while describing it.
+        """
+        handler = self._exception_handlers.get_handler(exception)
+        if handler is None and not isinstance(exception, HttpException):
+            # An ordinary exception carries no status of its own, and the
+            # answer it becomes is a 500, so that is the key it should reach.
+            handler = self._exception_handlers.get_status_handler(500)
+        if handler is None:
+            return False, None
+        try:
+            return True, await handler(target, exception)
+        except Exception:
+            logger.exception(
+                "the handler for %s failed", type(exception).__name__
+            )
+            return False, None
 
     def _debug_page(
         self, scope: Any, status_code: int, exception: BaseException | None = None
@@ -344,7 +430,10 @@ class Nitro:
 
         try:
             await self.middleware.execute_websocket(socket, call_handler)
-        except Exception:
+        except Exception as exception:
+            handled, _ = await self._dispatch_exception(socket, exception)
+            if handled:
+                return
             logger.exception("WebSocket handler for %s failed", scope.path)
             # Whether this refuses the upgrade or closes an open connection
             # depends on how far the handler got; both are the right answer at
@@ -378,7 +467,10 @@ class Nitro:
 
         try:
             await self.middleware.execute_webtransport(connection, call_handler)
-        except Exception:
+        except Exception as exception:
+            handled, _ = await self._dispatch_exception(connection, exception)
+            if handled:
+                return
             logger.exception("WebTransport handler for %s failed", scope.path)
             try:
                 if connection.connected:

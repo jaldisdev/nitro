@@ -20,6 +20,7 @@ inspected before any application exists to hold it.
 from __future__ import annotations
 
 import importlib
+import inspect
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -39,6 +40,7 @@ __all__ = [
     "HTTPRoute",
     "WebSocketRoute",
     "WebTransportRoute",
+    "load_exception_handlers",
     "load_patterns",
     "qualified",
 ]
@@ -159,6 +161,17 @@ class WebTransportRoute:
         )
 
 
+def _routes_module(source: str) -> Any:
+    from nitro.settings import ImproperlyConfigured
+
+    try:
+        return importlib.import_module(source)
+    except ImportError as error:
+        raise ImproperlyConfigured(
+            f"ROUTES names {source!r}, which could not be imported: {error}"
+        ) from error
+
+
 def load_patterns(source: str | Iterable[Any]) -> list[Any]:
     """The route declarations named by `source`.
 
@@ -170,16 +183,77 @@ def load_patterns(source: str | Iterable[Any]) -> list[Any]:
     if not isinstance(source, str):
         return list(source)
 
-    try:
-        module = importlib.import_module(source)
-    except ImportError as error:
-        raise ImproperlyConfigured(
-            f"ROUTES names {source!r}, which could not be imported: {error}"
-        ) from error
-
+    module = _routes_module(source)
     patterns = getattr(module, "patterns", None)
     if patterns is None:
         raise ImproperlyConfigured(
             f"the route module {source!r} does not define `patterns`"
         )
     return list(patterns)
+
+
+def load_exception_handlers(source: str | Iterable[Any]) -> dict[Any, Callable[..., Any]]:
+    """The ``exception_handlers`` mapping `source` declares, resolved.
+
+    Only a routes module can carry one; declarations passed directly have no
+    module to read it from, and get an empty mapping. Keys are status codes or
+    exception classes, values are handlers or the import paths of handlers.
+    """
+    if not isinstance(source, str):
+        return {}
+
+    declared = getattr(_routes_module(source), "exception_handlers", None) or {}
+    return normalise_exception_handlers(declared, f"the route module {source!r}")
+
+
+def normalise_exception_handlers(
+    declared: dict[Any, Any], origin: str
+) -> dict[Any, Callable[..., Any]]:
+    """Check every key and resolve every handler, or say what is wrong.
+
+    Checked when the mapping is read rather than when an exception is raised:
+    a misspelled handler is a deployment problem, and finding out at startup
+    beats finding out from the one request that needed it.
+    """
+    from nitro.settings import ImproperlyConfigured
+
+    resolved: dict[Any, Callable[..., Any]] = {}
+    for key, handler in declared.items():
+        if isinstance(key, bool) or not isinstance(key, (int, type)):
+            raise ImproperlyConfigured(
+                f"{origin} maps {key!r} to a handler; a key must be a status code "
+                "or an exception class"
+            )
+        if isinstance(key, int) and not 100 <= key <= 599:
+            raise ImproperlyConfigured(f"{origin} maps {key!r} to a handler; that is not a status")
+        if isinstance(key, type) and not issubclass(key, Exception):
+            raise ImproperlyConfigured(
+                f"{origin} maps {key.__name__} to a handler; that is not an exception class"
+            )
+        resolved[key] = _resolve_handler(handler, key, origin)
+    return resolved
+
+
+def _resolve_handler(handler: Any, key: Any, origin: str) -> Callable[..., Any]:
+    from nitro.settings import ImproperlyConfigured
+    from nitro.utils.modules import import_string
+
+    name = key.__name__ if isinstance(key, type) else key
+
+    if isinstance(handler, str):
+        try:
+            handler = import_string(handler)
+        except ImportError as error:
+            raise ImproperlyConfigured(
+                f"{origin} names {handler!r} for {name}, which could not be imported: {error}"
+            ) from error
+
+    call = getattr(handler, "__call__", None)
+    if not (
+        inspect.iscoroutinefunction(handler)
+        or (call is not None and inspect.iscoroutinefunction(call))
+    ):
+        raise ImproperlyConfigured(
+            f"{origin} gives {name} a handler that is not an async function"
+        )
+    return handler

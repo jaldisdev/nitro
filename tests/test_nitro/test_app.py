@@ -6,9 +6,9 @@ import pytest
 
 from nitro import Nitro
 from nitro.endpoints import HTTPEndpoint
-from nitro.protocols import Http404, HttpForbidden
+from nitro.protocols import Http404, HttpForbidden, PlainTextResponse
 from nitro.routing import HTTPRoute
-from nitro.settings import settings
+from nitro.settings import ImproperlyConfigured, settings
 
 
 @pytest.fixture
@@ -17,6 +17,19 @@ def routes_module():
     name = "test_app_routes"
     module = types.ModuleType(name)
     module.patterns = [HTTPRoute("/things", ok, name="things")]
+    sys.modules[name] = module
+    yield name
+    sys.modules.pop(name, None)
+
+
+@pytest.fixture
+def handlers_module():
+    """A routes module carrying `exception_handlers` beside its `patterns`."""
+    name = "test_app_handlers"
+    module = types.ModuleType(name)
+    module.patterns = [HTTPRoute("/things", ok, name="things")]
+    module.not_found = ok
+    module.exception_handlers = {404: ok}
     sys.modules[name] = module
     yield name
     sys.modules.pop(name, None)
@@ -514,3 +527,162 @@ class TestDebugPages:
 
         assert protocol.status == 405
         assert protocol.body == b"Method Not Allowed"
+
+
+class TestExceptionHandlers:
+    async def test_a_status_handler_answers(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+
+        async def gone(request, exception):
+            return PlainTextResponse("custom 404", status_code=404)
+
+        app = Nitro(exception_handlers={404: gone})
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "GET", "/missing"), protocol)
+
+        assert protocol.status == 404
+        assert protocol.body == b"custom 404"
+
+    async def test_an_exception_class_handler_answers(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+
+        async def forbidden(request, exception):
+            return PlainTextResponse("nope", status_code=403)
+
+        app = Nitro(exception_handlers={HttpForbidden: forbidden})
+
+        @app.route("/private")
+        async def private(request):
+            raise HttpForbidden()
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/private"), protocol)
+
+        assert protocol.status == 403
+        assert protocol.body == b"nope"
+
+    async def test_a_handler_sees_the_path_that_missed(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+        seen = {}
+
+        async def gone(request, exception):
+            seen["path"] = request.path
+            return PlainTextResponse("gone", status_code=404)
+
+        app = Nitro(exception_handlers={404: gone})
+        await app.__handle_http__(scope_for(app, "GET", "/nowhere"), RecordingProtocol())
+
+        assert seen["path"] == "/nowhere"
+
+    async def test_a_handler_wins_over_the_debug_page(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+
+        async def gone(request, exception):
+            return PlainTextResponse("custom 404", status_code=404)
+
+        app = Nitro(exception_handlers={404: gone})
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "GET", "/missing"), protocol)
+        assert protocol.body == b"custom 404"
+
+    async def test_a_failing_handler_falls_back(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+
+        async def broken(request, exception):
+            raise RuntimeError("the handler itself is broken")
+
+        app = Nitro(exception_handlers={404: broken})
+        protocol = RecordingProtocol()
+
+        await app.__handle_http__(scope_for(app, "GET", "/missing"), protocol)
+
+        assert protocol.status == 404
+        assert protocol.body == b"Not Found"
+
+    async def test_a_500_handler_answers(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+
+        async def failed(request, exception):
+            return PlainTextResponse(f"sorry: {exception}", status_code=500)
+
+        app = Nitro(exception_handlers={500: failed})
+
+        @app.route("/boom")
+        async def boom(request):
+            raise ValueError("deliberate")
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/boom"), protocol)
+
+        assert protocol.status == 500
+        assert protocol.body == b"sorry: deliberate"
+
+    async def test_a_405_can_be_answered(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+
+        async def wrong_method(request, exception):
+            return PlainTextResponse("no such verb", status_code=405)
+
+        app = Nitro(exception_handlers={405: wrong_method})
+        app.add_route("/things", ok, methods=["GET"])
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "POST", "/things"), protocol)
+
+        assert protocol.status == 405
+        assert protocol.body == b"no such verb"
+
+    async def test_an_unhandled_status_keeps_its_answer(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+
+        async def gone(request, exception):
+            return PlainTextResponse("custom 404", status_code=404)
+
+        app = Nitro(exception_handlers={404: gone})
+
+        @app.route("/private")
+        async def private(request):
+            raise HttpForbidden({"reason": "not yours"})
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/private"), protocol)
+
+        assert protocol.status == 403
+        assert b"not yours" in protocol.body
+
+    def test_handlers_come_from_the_routes_module(self, handlers_module):
+        app = Nitro(routes=handlers_module)
+        assert app.exception_handlers.get_handler(Http404()) is not None
+
+    def test_the_constructor_overrides_the_routes_module(self, handlers_module):
+        async def mine(request, exception):
+            return None
+
+        app = Nitro(routes=handlers_module, exception_handlers={404: mine})
+        assert app.exception_handlers.get_handler(Http404()) is mine
+
+    def test_a_handler_may_be_named_as_an_import_path(self, handlers_module):
+        app = Nitro(exception_handlers={404: f"{handlers_module}.not_found"})
+        assert app.exception_handlers.get_handler(Http404()) is ok
+
+    def test_a_key_that_is_not_a_status_or_exception_is_refused(self):
+        with pytest.raises(ImproperlyConfigured, match="status code or an exception class"):
+            Nitro(exception_handlers={"404": ok})
+
+    def test_a_status_outside_the_range_is_refused(self):
+        with pytest.raises(ImproperlyConfigured, match="not a status"):
+            Nitro(exception_handlers={9000: ok})
+
+    def test_a_class_that_is_not_an_exception_is_refused(self):
+        with pytest.raises(ImproperlyConfigured, match="not an exception class"):
+            Nitro(exception_handlers={dict: ok})
+
+    def test_an_unimportable_handler_is_refused(self):
+        with pytest.raises(ImproperlyConfigured, match="could not be imported"):
+            Nitro(exception_handlers={404: "nowhere.at.all"})
+
+    def test_a_handler_that_is_not_async_is_refused(self):
+        with pytest.raises(ImproperlyConfigured, match="not an async function"):
+            Nitro(exception_handlers={404: lambda request, exception: None})

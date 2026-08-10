@@ -206,12 +206,63 @@ Raising one of these is a way of saying "answer with this status" without
 building the response. A string detail becomes plain text; anything else becomes
 JSON. They are answers, not failures, and are never flattened into a 500.
 
+### Answering a status yourself
+
+`exception_handlers` maps a status code or an exception class to the handler
+that answers it. It lives beside `patterns` in the route module, so a project's
+error pages are declared where its routes are:
+
+```python
+# myproject/routes.py
+from nitro.protocols import HttpForbidden
+
+patterns = [...]
+
+exception_handlers = {
+    404: "myproject.views.not_found",     # by status, named to avoid the import
+    500: server_error,                    # or the callable itself
+    HttpForbidden: forbidden,             # or by exception class
+}
+```
+
+or given to the application, which overrides what the route module declares:
+
+```python
+app = Nitro(exception_handlers={404: not_found})
+```
+
+A handler takes the request and the exception, and returns a response:
+
+```python
+async def not_found(request: HttpRequest, exception: Exception) -> HttpResponse:
+    return TemplateResponse("errors/404.html", {"path": request.path}, status_code=404)
+```
+
+A key is looked up by exact exception type, then by status for an
+`HttpException`, then up the class hierarchy — so `HttpException` catches every
+status a handler has not claimed for itself. An ordinary exception carries no
+status of its own, and the answer it becomes is a 500, so `500` is the key it
+reaches.
+
+Handlers cover WebSocket and WebTransport failures too; there the handler is
+given the socket or session rather than a request, and returns nothing.
+
+A path that matched no route has no request of its own, so one is built for the
+handler — a 404 page is the one most likely to want the path it was asked for.
+A handler that raises is logged and treated as absent: the client is owed an
+answer for the original failure, not for the one raised while describing it.
+
+Only the route module named by `ROUTES` is read. A `Mount` does not carry its
+own, because an unmatched path belongs to no route and so to no mount.
+
 ### While DEBUG is on
 
 A 404 is answered with a page listing the routes that were tried, and a 500 with
 the traceback and the source around each frame. Both come from templates Nitro
 carries rather than the project's own engine, since they have to work when the
-project's configuration is what is broken.
+project's configuration is what is broken. A handler registered for the status
+wins over either, so a project's own page is what you see whether or not
+`DEBUG` is on.
 
 Every other status keeps its ordinary answer — a 403 stays the response the
 exception describes. With `DEBUG` off, a 404 is `Not Found` and a 500 is

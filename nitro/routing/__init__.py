@@ -16,6 +16,7 @@ from nitro.routing.patterns import (
     HTTPRoute,
     WebSocketRoute,
     WebTransportRoute,
+    load_exception_handlers,
     load_patterns,
 )
 from nitro.routing.parameters import (
@@ -42,6 +43,7 @@ __all__ = [
     "ValidationError",
     "WebSocketRoute",
     "WebTransportRoute",
+    "load_exception_handlers",
     "load_patterns",
     "reverse",
     "IntConverter",
