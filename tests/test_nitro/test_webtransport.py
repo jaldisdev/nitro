@@ -11,7 +11,10 @@ import asyncio
 
 import pytest
 
-from tests.test_nitro.webtransport_client import SessionRefused, http3, webtransport
+# Imported as a plain module, not through a `tests` package: there is none, and
+# reaching the repository root would shadow the installed nitro with the source
+# tree, which carries no compiled extension.
+from webtransport_client import SessionRefused, http3, webtransport
 
 pytest.importorskip("aioquic", reason="a WebTransport client is needed")
 
