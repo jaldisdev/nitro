@@ -277,3 +277,47 @@ class TestHttp3Requests:
         assert bytes(response.body) == b""
         assert response.headers["content-length"] == "5"
         session_server.stop()
+
+    def test_the_server_headers_match_the_tcp_path(self, session_server):
+        # The response head is built by hand on the HTTP/3 path, so the headers
+        # the server owns have to be added there too rather than only by hyper.
+        async def exchange():
+            async with http3("localhost", session_server.port) as client:
+                return await client.request(
+                    "GET", f"localhost:{session_server.port}", "/plain"
+                )
+
+        response = run(exchange())
+        assert response.headers["server"] == "nitro"
+        assert "alt-svc" in response.headers
+        session_server.stop()
+
+    def test_requests_reach_the_access_log(self, server_factory, certificate):
+        certificate_path, key_path = certificate
+        server = server_factory(
+            f"""
+            from nitro import Nitro
+            from nitro.protocols import PlainTextResponse
+
+            app = Nitro(
+                http="3",
+                log_level="warning",
+                access_log=True,
+                tls_cert={certificate_path!r},
+                tls_key={key_path!r},
+                drain_timeout=2,
+            )
+
+            @app.route("/plain")
+            async def plain(request):
+                return PlainTextResponse("plain")
+            """
+        )
+
+        async def exchange():
+            async with http3("localhost", server.port) as client:
+                return await client.request("GET", f"localhost:{server.port}", "/plain")
+
+        assert run(exchange()).status == 200
+        server.stop()
+        assert '"GET /plain HTTP/3" 200 5' in server.output

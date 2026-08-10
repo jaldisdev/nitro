@@ -332,8 +332,7 @@ pub async fn serve<D: Dispatch>(
         for endpoint in quic::endpoints(sockets.quic, material)? {
             loops.push(Box::pin(quic::accept(
                 endpoint,
-                context.dispatch().clone(),
-                Arc::clone(&config),
+                context.clone(),
                 drain.clone(),
                 shutdown.clone(),
             )));

@@ -19,12 +19,12 @@ use quinn::{Endpoint, EndpointConfig};
 use socket2::{Domain, Protocol as SocketProtocol, Socket, Type};
 use tokio::sync::mpsc;
 
-use crate::config::ServerConfig;
 use crate::disconnect::{DisconnectGuard, DisconnectWatcher};
 use crate::headers::Headers;
 use crate::lifecycle::drain::DrainCoordinator;
 use crate::lifecycle::signals::ShutdownSignal;
 use crate::transport::accept::BindError;
+use crate::transport::connection::ConnectionContext;
 use crate::transport::tls::{TlsError, TlsMaterial};
 use crate::transport::{
     BodyError, Dispatch, HttpRequest, HttpResponse, RequestBody, RequestParts, Scheme,
@@ -129,8 +129,7 @@ pub fn endpoints(
 /// Accept QUIC connections until shutdown is requested.
 pub async fn accept<D: Dispatch>(
     endpoint: Endpoint,
-    dispatch: D,
-    config: Arc<ServerConfig>,
+    context: ConnectionContext<D>,
     drain: DrainCoordinator,
     shutdown: ShutdownSignal,
 ) {
@@ -146,8 +145,7 @@ pub async fn accept<D: Dispatch>(
             },
         };
 
-        let dispatch = dispatch.clone();
-        let config = Arc::clone(&config);
+        let context = context.clone();
         let drain = drain.clone();
 
         drain.clone().connections().spawn(async move {
@@ -168,15 +166,7 @@ pub async fn accept<D: Dispatch>(
             };
 
             metrics::connection_opened(metrics::Transport::Quic);
-            serve_connection(
-                connection,
-                dispatch,
-                config,
-                drain,
-                client_address,
-                server_address,
-            )
-            .await;
+            serve_connection(connection, context, drain, client_address, server_address).await;
             metrics::connection_closed(metrics::Transport::Quic);
         });
     }
@@ -188,13 +178,12 @@ pub async fn accept<D: Dispatch>(
 
 async fn serve_connection<D: Dispatch>(
     connection: quinn::Connection,
-    dispatch: D,
-    config: Arc<ServerConfig>,
+    context: ConnectionContext<D>,
     drain: DrainCoordinator,
     client: SocketAddr,
     server: Option<SocketAddr>,
 ) {
-    let webtransport = config.webtransport;
+    let webtransport = context.config().webtransport;
     let closing = connection.clone();
 
     let mut h3 = match h3::server::builder()
@@ -251,10 +240,10 @@ async fn serve_connection<D: Dispatch>(
                 request,
                 stream,
                 h3,
-                dispatch,
+                context.dispatch().clone(),
                 parts,
                 watcher,
-                config.datagram_queue_capacity,
+                context.config().datagram_queue_capacity,
             )
             .await;
 
@@ -268,10 +257,10 @@ async fn serve_connection<D: Dispatch>(
             return;
         }
 
-        let dispatch = dispatch.clone();
+        let context = context.clone();
         let watcher = watcher.clone();
         requests.push(tokio::spawn(async move {
-            if let Err(error) = serve_request(stream, dispatch, parts, watcher).await {
+            if let Err(error) = serve_request(stream, context, parts, watcher).await {
                 tracing::debug!(%error, "an HTTP/3 request failed");
             }
         }));
@@ -311,7 +300,7 @@ fn parts_from(
 
 async fn serve_request<D: Dispatch>(
     stream: h3::server::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>,
-    dispatch: D,
+    context: ConnectionContext<D>,
     parts: RequestParts,
     disconnect: DisconnectWatcher,
 ) -> Result<(), String> {
@@ -343,7 +332,10 @@ async fn serve_request<D: Dispatch>(
     let started = std::time::Instant::now();
     metrics::request_started();
 
-    let response = dispatch
+    let logged = context.summarise(&parts);
+
+    let response = context
+        .dispatch()
         .handle_http(HttpRequest {
             parts,
             body: RequestBody::Chunks(body),
@@ -371,17 +363,10 @@ async fn serve_request<D: Dispatch>(
     *head.status_mut() = status;
     *head.headers_mut() = headers.into_map();
 
-    // A body of known size is described even when it is not sent, because a
-    // HEAD response is only useful for the length it reports.
-    if let Some(length) = content_length
-        && !head.headers().contains_key(http::header::CONTENT_LENGTH)
-        && status != http::StatusCode::NO_CONTENT
-    {
-        head.headers_mut().insert(
-            http::header::CONTENT_LENGTH,
-            http::HeaderValue::from(length),
-        );
-    }
+    // The same headers a response over TCP is given, including the length —
+    // which a HEAD response is described by even though it is not sent.
+    context.decorate(head.headers_mut(), status, content_length);
+    context.log_access(logged, status.as_u16(), content_length, started.elapsed());
 
     sender
         .send_response(head)

@@ -97,6 +97,72 @@ impl<D: Dispatch> ConnectionContext<D> {
     pub fn dispatch(&self) -> &D {
         &self.dispatch
     }
+
+    /// The headers the server owns, added to a response on its way out.
+    ///
+    /// Every transport calls this, because a response should not depend on
+    /// which one carried it: HTTP/3 announcing no server and no length while
+    /// HTTP/2 announces both would be a difference in the protocol's clothing
+    /// rather than in the protocol.
+    pub(crate) fn decorate(
+        &self,
+        headers: &mut http::HeaderMap,
+        status: StatusCode,
+        content_length: Option<u64>,
+    ) {
+        if let Some(server) = &self.server_header
+            && !headers.contains_key(http::header::SERVER)
+        {
+            headers.insert(http::header::SERVER, server.clone());
+        }
+        if let Some(alt_svc) = &self.alt_svc
+            && !headers.contains_key("alt-svc")
+        {
+            headers.insert(
+                http::header::HeaderName::from_static("alt-svc"),
+                alt_svc.clone(),
+            );
+        }
+        // A body of known size gets an explicit length so responses that cannot
+        // use chunked transfer encoding still frame correctly.
+        if let Some(length) = content_length
+            && !headers.contains_key(http::header::CONTENT_LENGTH)
+            && status != StatusCode::NO_CONTENT
+        {
+            headers.insert(http::header::CONTENT_LENGTH, HeaderValue::from(length));
+        }
+    }
+
+    /// The summary an access log entry is built from, or `None` when nothing
+    /// is logging. Taken before the request is consumed.
+    pub(crate) fn summarise(&self, parts: &RequestParts) -> Option<RequestSummary> {
+        self.access_log
+            .as_ref()
+            .map(|_| RequestSummary::from(parts))
+    }
+
+    /// Write one access log entry, if an access log is configured.
+    pub(crate) fn log_access(
+        &self,
+        summary: Option<RequestSummary>,
+        status: u16,
+        body_length: Option<u64>,
+        duration: std::time::Duration,
+    ) {
+        if let (Some(logger), Some(summary)) = (&self.access_log, summary) {
+            logger.record(AccessRecord {
+                client: summary.client,
+                method: &summary.method,
+                target: &summary.target,
+                http_version: summary.version,
+                status,
+                body_length,
+                referer: summary.referer.as_deref(),
+                user_agent: summary.user_agent.as_deref(),
+                duration,
+            });
+        }
+    }
 }
 
 fn header_value(value: &str, name: &str) -> Option<HeaderValue> {
@@ -386,10 +452,7 @@ async fn exchange<D: Dispatch>(
         addresses,
     );
 
-    let logged = context
-        .access_log
-        .as_ref()
-        .map(|_| RequestSummary::from(&request_parts));
+    let logged = context.summarise(&request_parts);
 
     let answered = context
         .dispatch
@@ -411,23 +474,16 @@ async fn exchange<D: Dispatch>(
         started.elapsed(),
     );
 
-    if let (Some(logger), Some(summary)) = (&context.access_log, logged) {
-        logger.record(AccessRecord {
-            client: summary.client,
-            method: &summary.method,
-            target: &summary.target,
-            http_version: summary.version,
-            status: response.status().as_u16(),
-            body_length: response
-                .headers()
-                .get(http::header::CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse().ok()),
-            referer: summary.referer.as_deref(),
-            user_agent: summary.user_agent.as_deref(),
-            duration: started.elapsed(),
-        });
-    }
+    context.log_access(
+        logged,
+        response.status().as_u16(),
+        response
+            .headers()
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse().ok()),
+        started.elapsed(),
+    );
 
     response
 }
@@ -449,29 +505,7 @@ fn finish<D: Dispatch>(
     *built.status_mut() = status;
     *built.headers_mut() = headers.into_map();
 
-    let headers = built.headers_mut();
-    if let Some(server) = &context.server_header
-        && !headers.contains_key(http::header::SERVER)
-    {
-        headers.insert(http::header::SERVER, server.clone());
-    }
-    if let Some(alt_svc) = &context.alt_svc
-        && !headers.contains_key("alt-svc")
-    {
-        headers.insert(
-            http::header::HeaderName::from_static("alt-svc"),
-            alt_svc.clone(),
-        );
-    }
-    // A body of known size gets an explicit length so responses that cannot use
-    // chunked transfer encoding still frame correctly.
-    if let Some(length) = content_length
-        && !headers.contains_key(http::header::CONTENT_LENGTH)
-        && status != StatusCode::NO_CONTENT
-    {
-        headers.insert(http::header::CONTENT_LENGTH, HeaderValue::from(length));
-    }
-
+    context.decorate(built.headers_mut(), status, content_length);
     built
 }
 
