@@ -66,6 +66,15 @@ class ExceptionHandlerRegistry:
 
         return None
 
+    def get_status_handler(self, status: int) -> Callable[[Any, Exception], Awaitable[Any]] | None:
+        """The handler registered for a status code, looked up by the code.
+
+        `get_handler` reaches a status key only through an `HttpException`,
+        which carries one. An ordinary exception carries no status, so the
+        caller that decides it is a 500 is the one that has to ask.
+        """
+        return self._handlers.get(status)
+
     def remove_handler(self, exc_class_or_status: type[Exception] | int) -> None:
         """Remove an exception handler."""
         self._handlers.pop(exc_class_or_status, None)

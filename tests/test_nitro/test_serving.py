@@ -32,6 +32,49 @@ class TestRequestHandling:
         assert server.request("/missing").status == 404
         server.stop()
 
+    def test_a_configured_error_page_is_served(self, server_factory, tmp_path):
+        (tmp_path / "routes.py").write_text(
+            "from nitro.protocols import HTMLResponse, PlainTextResponse\n"
+            "from nitro.routing import HTTPRoute\n"
+            "\n"
+            "async def index(request):\n"
+            "    return PlainTextResponse('index')\n"
+            "\n"
+            "async def not_found(request, exception):\n"
+            "    return HTMLResponse('<p>no such page: ' + request.path + '</p>', "
+            "status_code=404)\n"
+            "\n"
+            "async def failed(request, exception):\n"
+            "    return PlainTextResponse('sorry', status_code=500)\n"
+            "\n"
+            "patterns = [HTTPRoute('/', index, name='index')]\n"
+            "exception_handlers = {404: not_found, 500: 'routes.failed'}\n"
+        )
+        server = server_factory(
+            """
+            from nitro import Nitro
+            from nitro.protocols import PlainTextResponse
+
+            app = Nitro(routes="routes", http="1", log_level="error")
+
+            @app.route("/boom")
+            async def boom(request):
+                raise RuntimeError("deliberate")
+            """
+        )
+
+        missing = server.request("/nowhere")
+        assert missing.status == 404
+        assert missing.text == "<p>no such page: /nowhere</p>"
+        assert missing.headers["content-type"].startswith("text/html")
+
+        failed = server.request("/boom")
+        assert failed.status == 500
+        assert failed.text == "sorry"
+
+        assert server.request("/").text == "index"
+        assert server.stop() == 0
+
     def test_static_files_are_served(self, server_factory, tmp_path):
         (tmp_path / "assets").mkdir()
         (tmp_path / "assets" / "app.css").write_text("body { color: red }")

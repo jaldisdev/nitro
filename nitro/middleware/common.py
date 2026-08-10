@@ -195,15 +195,34 @@ class ExceptionMiddleware(Middleware):
             # Raising one of these is how a handler asks for a particular
             # status, so it is an answer rather than a failure and must not be
             # flattened into a 500.
+            handled, answer = await self._registered(request, e)
+            if handled:
+                return answer
             return self._debug_page(request, e.status_code, e) or e.as_response()
         except Exception as e:
             logger.exception(f"Unhandled exception in HTTP handler: {e}")
+
+            handled, answer = await self._registered(request, e)
+            if handled:
+                return answer
 
             page = self._debug_page(request, 500, e)
             if page is not None:
                 return page
 
             return HttpResponse(content={"error": "Internal server error"}, status_code=500)
+
+    async def _registered(self, request: HttpRequest, exception: BaseException):
+        """The application's own handler for `exception`, run here.
+
+        This middleware catches before the application does, so without asking
+        the same registry a project's handlers would be reachable only when
+        this middleware is not installed.
+        """
+        dispatch = getattr(self.app, "_dispatch_exception", None)
+        if dispatch is None:
+            return False, None
+        return await dispatch(request, exception)
 
     def _debug_page(
         self, request: HttpRequest, status_code: int, exception: BaseException

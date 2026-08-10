@@ -41,6 +41,10 @@ module of its own is what lets it be imported and read on its own — by a test,
 by a command, by anything that wants to know what a project serves without
 starting it.
 
+The module may also declare `exception_handlers`, which says what answers a
+status or an exception the routes did not. See
+[protocols](protocols.md#answering-a-status-yourself).
+
 A route may be named, which is what makes it reversible.
 
 ### What a route answers
