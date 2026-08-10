@@ -361,28 +361,49 @@ async fn serve_request<D: Dispatch>(
         route: _,
     } = response;
 
+    let content_length = body.content_length();
     let mut head = Response::new(());
     *head.status_mut() = status;
     *head.headers_mut() = headers.into_map();
+
+    // A body of known size is described even when it is not sent, because a
+    // HEAD response is only useful for the length it reports.
+    if let Some(length) = content_length
+        && !head.headers().contains_key(http::header::CONTENT_LENGTH)
+        && status != http::StatusCode::NO_CONTENT
+    {
+        head.headers_mut().insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from(length),
+        );
+    }
+
     sender
         .send_response(head)
         .await
         .map_err(|error| error.to_string())?;
 
-    let mut body = std::pin::pin!(body.into_boxed());
-    while let Some(frame) = std::future::poll_fn(|context| body.as_mut().poll_frame(context)).await
-    {
-        match frame {
-            Ok(frame) => {
-                if let Ok(chunk) = frame.into_data()
-                    && sender.send_data(chunk).await.is_err()
-                {
+    // RFC 9110 §9.3.2: a HEAD response carries the header fields a GET would
+    // and no content. Over TCP hyper drops the body itself; here the frames are
+    // written by hand, so the check has to be too — and a client that receives
+    // DATA on a HEAD response resets the stream rather than reading it.
+    if method != Method::HEAD {
+        let mut body = std::pin::pin!(body.into_boxed());
+        while let Some(frame) =
+            std::future::poll_fn(|context| body.as_mut().poll_frame(context)).await
+        {
+            match frame {
+                Ok(frame) => {
+                    if let Ok(chunk) = frame.into_data()
+                        && sender.send_data(chunk).await.is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "an HTTP/3 response body failed mid-send");
                     break;
                 }
-            }
-            Err(error) => {
-                tracing::debug!(%error, "an HTTP/3 response body failed mid-send");
-                break;
             }
         }
     }

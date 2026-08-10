@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from tests.test_nitro.webtransport_client import SessionRefused, webtransport
+from tests.test_nitro.webtransport_client import SessionRefused, http3, webtransport
 
 pytest.importorskip("aioquic", reason="a WebTransport client is needed")
 
@@ -243,4 +243,34 @@ class TestCoexistence:
         with urllib.request.urlopen(url, context=context, timeout=10) as answer:
             assert answer.read() == b"plain"
 
+        session_server.stop()
+
+
+class TestHttp3Requests:
+    def test_a_get_carries_its_body(self, session_server):
+        async def exchange():
+            async with http3("localhost", session_server.port) as client:
+                return await client.request(
+                    "GET", f"localhost:{session_server.port}", "/plain"
+                )
+
+        response = run(exchange())
+        assert response.status == 200
+        assert bytes(response.body) == b"plain"
+        assert response.headers["content-length"] == "5"
+        session_server.stop()
+
+    def test_a_head_carries_the_length_and_no_body(self, session_server):
+        # RFC 9110 §9.3.2. A client that receives DATA on a HEAD response
+        # resets the stream, which is what this looked like from curl.
+        async def exchange():
+            async with http3("localhost", session_server.port) as client:
+                return await client.request(
+                    "HEAD", f"localhost:{session_server.port}", "/plain"
+                )
+
+        response = run(exchange())
+        assert response.status == 200
+        assert bytes(response.body) == b""
+        assert response.headers["content-length"] == "5"
         session_server.stop()

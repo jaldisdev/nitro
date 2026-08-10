@@ -17,6 +17,7 @@ from aioquic.asyncio.client import connect
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.h3.connection import H3_ALPN, H3Connection
 from aioquic.h3.events import (
+    DataReceived,
     DatagramReceived,
     HeadersReceived,
     WebTransportStreamDataReceived,
@@ -141,6 +142,84 @@ class WebTransportClient(QuicConnectionProtocol):
             if name == b":status":
                 return int(value)
         return 0
+
+
+class Http3Response:
+    """One HTTP/3 response, collected from the events it arrived in."""
+
+    def __init__(self) -> None:
+        self.status: int = 0
+        self.headers: dict[str, str] = {}
+        self.body = bytearray()
+
+
+class Http3Client(QuicConnectionProtocol):
+    """An ordinary HTTP/3 client, for the requests that are not sessions."""
+
+    def __init__(self, *arguments: Any, **options: Any) -> None:
+        super().__init__(*arguments, **options)
+        self._http = H3Connection(self._quic)
+        self._responses: dict[int, Http3Response] = {}
+        self._finished: dict[int, asyncio.Future[Http3Response]] = {}
+
+    async def request(
+        self, method: str, authority: str, path: str, timeout: float = 10.0
+    ) -> Http3Response:
+        stream_id = self._quic.get_next_available_stream_id(is_unidirectional=False)
+        self._responses[stream_id] = Http3Response()
+        self._finished[stream_id] = asyncio.get_event_loop().create_future()
+
+        self._http.send_headers(
+            stream_id=stream_id,
+            headers=[
+                (b":method", method.encode()),
+                (b":scheme", b"https"),
+                (b":authority", authority.encode()),
+                (b":path", path.encode()),
+            ],
+            end_stream=True,
+        )
+        self.transmit()
+        return await asyncio.wait_for(self._finished[stream_id], timeout)
+
+    def quic_event_received(self, event: QuicEvent) -> None:
+        for received in self._http.handle_event(event):
+            response = self._responses.get(received.stream_id)
+            if response is None:
+                continue
+            if isinstance(received, HeadersReceived):
+                for name, value in received.headers:
+                    if name == b":status":
+                        response.status = int(value)
+                    elif not name.startswith(b":"):
+                        response.headers[name.decode()] = value.decode()
+            elif isinstance(received, DataReceived):
+                response.body.extend(received.data)
+
+        # The stream ending is read from QUIC rather than from the HTTP/3
+        # event: the server greases its connections, and a GREASE frame after
+        # the body leaves aioquic's own `stream_ended` unset even though the
+        # stream is finished.
+        if isinstance(event, StreamDataReceived) and event.end_stream:
+            pending = self._finished.get(event.stream_id)
+            if pending is not None and not pending.done():
+                pending.set_result(self._responses[event.stream_id])
+
+
+@asynccontextmanager
+async def http3(host: str, port: int) -> AsyncIterator[Http3Client]:
+    """Connect an HTTP/3 client to a server using a self-signed certificate."""
+    configuration = QuicConfiguration(
+        is_client=True, alpn_protocols=H3_ALPN, verify_mode=False
+    )
+    async with connect(
+        host,
+        port,
+        configuration=configuration,
+        create_protocol=Http3Client,
+        wait_connected=True,
+    ) as client:
+        yield client
 
 
 @asynccontextmanager
