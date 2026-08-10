@@ -102,27 +102,21 @@ def build_options(application: Any, **overrides: Any) -> ServerOptions:
 )
 def serve(application: str, **overrides: Any) -> None:
     """Serve APPLICATION, given as 'module:attribute'."""
-    from nitro._nitro import Server
+    from nitro.app import build_server, served_addresses
 
     loaded = load_application(application)
     if callable(loaded) and not hasattr(loaded, "__handle_http__"):
         loaded = loaded()
 
     try:
-        options = build_options(loaded, **overrides)
+        server, options = build_server(loaded, **overrides)
     except ImproperlyConfigured as error:
         raise click.ClickException(str(error)) from error
-
-    route_table = getattr(loaded, "route_table", None)
-    routes = route_table() if callable(route_table) else []
-
-    try:
-        server = Server(loaded, options, routes)
     except (ValueError, RuntimeError) as error:
         raise click.ClickException(str(error)) from error
 
-    for host, port in server.addresses:
-        click.echo(f"Serving on http://{host}:{port}")
+    for address in served_addresses(server, options):
+        click.echo(f"Serving on {address}")
     if options.uds:
         click.echo(f"Serving on {options.uds}")
 

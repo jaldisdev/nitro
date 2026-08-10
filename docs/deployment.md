@@ -7,6 +7,35 @@ There is no ASGI server to choose and no worker class to configure.
 nitro app:app --workers 4 --host 0.0.0.0 --port 8000
 ```
 
+## Serving from the application itself
+
+`app.serve()` starts the same server from Python, which makes the application
+file its own entry point:
+
+```python
+# app.py
+app = Nitro()
+
+if __name__ == "__main__":
+    app.serve()
+```
+
+```dockerfile
+CMD ["python", "app.py"]
+```
+
+Keyword arguments override the server options exactly as the command line flags
+do — `app.serve(host="0.0.0.0", workers=4)`.
+
+This is for a container or a process supervisor, where one executable file is
+worth more than a command line to get wrong. For development the command line
+is the easier of the two, since it takes flags without editing anything.
+
+Both go through the same code, so an application serves identically either way.
+A settings module still has to be named before the application is imported; a
+file that sets `NITRO_SETTINGS_MODULE` itself before importing Nitro covers
+that, and is the usual shape for an entry point.
+
 ## Workers
 
 Each worker is a separate process, forked from the parent after the sockets are

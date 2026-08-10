@@ -32,6 +32,48 @@ class TestRequestHandling:
         assert server.request("/missing").status == 404
         server.stop()
 
+    def test_an_application_can_serve_itself(self, server_factory):
+        server = server_factory(
+            """
+            from nitro import Nitro
+            from nitro.protocols import PlainTextResponse
+
+            app = Nitro(http="1", log_level="warning", port=0)
+
+            @app.route("/")
+            async def index(request):
+                return PlainTextResponse("served by the script")
+
+            if __name__ == "__main__":
+                app.serve()
+            """,
+            script=True,
+        )
+
+        assert server.request("/").text == "served by the script"
+        assert server.stop() == 0
+
+    def test_serving_itself_takes_overrides(self, server_factory):
+        server = server_factory(
+            """
+            from nitro import Nitro
+            from nitro.protocols import PlainTextResponse
+
+            app = Nitro(http="1", log_level="warning")
+
+            @app.route("/")
+            async def index(request):
+                return PlainTextResponse("hello")
+
+            if __name__ == "__main__":
+                app.serve(port=0)
+            """,
+            script=True,
+        )
+
+        assert server.request("/").status == 200
+        assert server.stop() == 0
+
     def test_a_configured_error_page_is_served(self, server_factory, tmp_path):
         (tmp_path / "routes.py").write_text(
             "from nitro.protocols import HTMLResponse, PlainTextResponse\n"
