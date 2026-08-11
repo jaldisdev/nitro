@@ -31,7 +31,8 @@ pre-1.0 caveat that minor versions may still break things.
 - **Breaking.** The `SERVER` settings mapping is gone. Its keys are now flat
   top-level settings prefixed with `SERVER_` — `SERVER_PORT`, `SERVER_WORKERS`,
   `SERVER_TLS_CERT` and so on — matching how every other subsystem's settings
-  are named. A project that still defines `SERVER` is told so at startup.
+  are named. Nothing reads `SERVER` any more, so a project that still defines
+  it is running on the defaults.
 - `BaseEmailBackend` no longer takes SMTP-shaped constructor arguments. A
   backend declares the settings it wants in a `settings_map`, and
   `get_connection` reads that instead of matching on the import path.

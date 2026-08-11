@@ -143,19 +143,14 @@ class TestServerOptions:
         assert options.allowed_hosts == ["example.test"]
         assert options.observability_port == 9999
 
-    def test_the_retired_server_mapping_is_reported(self):
+    def test_a_settings_module_may_hold_a_name_the_server_does_not_read(self):
+        # `SERVER` is not special: it is read by nothing, like any other name a
+        # project defines for itself.
         class Source:
             SERVER = {"PORT": 9000}
+            SERVER_PORT = 9500
 
-        with pytest.raises(ImproperlyConfigured, match="no longer a setting"):
-            ServerOptions.resolve(Source())
-
-    def test_the_retired_mapping_names_what_to_move(self):
-        class Source:
-            SERVER = {"PORT": 9000, "HOST": "0.0.0.0"}
-
-        with pytest.raises(ImproperlyConfigured, match="SERVER_HOST, SERVER_PORT"):
-            ServerOptions.resolve(Source())
+        assert ServerOptions.resolve(Source()).port == 9500
 
     def test_an_unknown_override_is_rejected(self):
         with pytest.raises(ImproperlyConfigured, match="nonsense"):

@@ -9,7 +9,7 @@ import urllib.request
 
 import pytest
 
-from nitro.settings import ImproperlyConfigured, ServerOptions, settings
+from nitro.settings import ServerOptions, settings
 
 # Metrics ports are chosen from below the ephemeral range. The application is
 # started on a kernel-chosen port, and the kernel hands those out in ascending
@@ -123,14 +123,13 @@ class TestSettings:
 
         assert options.observability_port != options.port
 
-    def test_the_settings_are_flat_not_nested_under_server(self):
-        # SERVER is gone entirely; every server option is top level now, so
-        # there is no nesting left for these to be confused with.
+    def test_the_settings_are_flat_and_read_from_the_top_level(self):
+        # Every server option is top level now, so there is no nesting left for
+        # these to be confused with.
         class Source:
-            SERVER = {"OBSERVABILITY_ENABLED": True}
+            OBSERVABILITY_ENABLED = True
 
-        with pytest.raises(ImproperlyConfigured, match="no longer a setting"):
-            ServerOptions.resolve(Source())
+        assert ServerOptions.resolve(Source()).observability_enabled is True
 
     def test_a_settings_module_can_turn_it_on(self):
         class Source:

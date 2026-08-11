@@ -105,11 +105,6 @@ class LazySettings:
 settings = LazySettings()
 
 
-#: The setting that used to hold the server's options as a mapping. Named here
-#: only to report its removal: a project that still defines it would otherwise
-#: be configuring nothing and never hear about it.
-RETIRED_MAPPING = "SERVER"
-
 #: Server options that keep a name of their own instead of taking the server's
 #: prefix. ``ALLOWED_HOSTS`` describes the site rather than the socket, and the
 #: observability options already carry a prefix naming their own subsystem.
@@ -199,8 +194,6 @@ class ServerOptions:
         known = [field.name for field in dataclasses.fields(cls)]
         settings_source = settings if source is None else source
 
-        cls._reject_retired_mapping(settings_source)
-
         values: dict[str, Any] = {}
         for name in known:
             try:
@@ -217,28 +210,3 @@ class ServerOptions:
             values[name] = value
 
         return cls(**values)
-
-    @classmethod
-    def _reject_retired_mapping(cls, source: Any) -> None:
-        """Report a project still configuring the server through ``SERVER``.
-
-        Silently ignoring it would leave a deployment running on defaults while
-        its settings file says otherwise, which is the worst of the three
-        possible behaviours.
-        """
-        try:
-            configured = getattr(source, RETIRED_MAPPING, None)
-        except ImproperlyConfigured:
-            return
-        if not configured:
-            return
-
-        known = {field.name for field in dataclasses.fields(cls)}
-        moved = sorted(
-            setting_name(str(key).lower()) for key in configured if str(key).lower() in known
-        )
-        raise ImproperlyConfigured(
-            f"{RETIRED_MAPPING} is no longer a setting; its keys are now top-level "
-            f"settings of their own. Write {', '.join(moved) or 'them'} in the "
-            "settings module directly instead."
-        )

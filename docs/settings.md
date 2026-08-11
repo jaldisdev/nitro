@@ -44,9 +44,6 @@ settings module is one namespace shared with everything a project configures
 for itself, so a bare `PORT` or `WORKERS` there belongs to whoever thought of
 it first.
 
-> A project that still defines `SERVER` is told so on startup rather than
-> quietly served the defaults.
-
 | Setting | Default | Meaning |
 |---|---|---|
 | `SERVER_HOST`, `SERVER_PORT` | `localhost`, `8000` | Where to listen. Every address the host resolves to gets a socket. |
