@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,11 +27,19 @@ __all__ = [
     "DependencyCache",
     "DependencyCycle",
     "DependencyError",
+    "DependencyScope",
     "Depends",
+    "close_worker_dependencies",
+    "open_worker_dependencies",
     "dependencies_for",
     "extract_dependencies",
+    "reset_worker_dependencies",
     "resolve_dependencies",
+    "worker_scoped",
 ]
+
+#: Set on a provider by :func:`worker_scoped`.
+WORKER_SCOPED = "__nitro_worker_scoped__"
 
 #: Parameter names that receive the request, socket or session itself rather
 #: than a dependency.
@@ -44,6 +52,40 @@ class DependencyError(Exception):
 
 class DependencyCycle(DependencyError):
     """A dependency depends on itself, directly or through others."""
+
+
+class DependencyScope(DependencyError):
+    """A dependency asks for something that does not live as long as it does."""
+
+
+def worker_scoped(provider: Callable[..., Any]) -> Callable[..., Any]:
+    """Marks `provider` as producing one value for the whole worker.
+
+    Lifetime belongs to the resource rather than to whoever asks for it: a
+    connection pool is worker-lifetime whether a handler, a middleware or
+    another dependency wants it, so it is declared once here instead of at
+    every use.
+
+        @worker_scoped
+        async def get_pool() -> AsyncIterator[Pool]:
+            pool = await create_pool(...)
+            try:
+                yield pool
+            finally:
+                await pool.close()
+
+    A worker is a forked process, so this is one value per worker rather than
+    one for the deployment — with ``WORKERS = 4`` there are four pools, in the
+    same way caches and storages are rebuilt per worker because a connection
+    cannot cross a fork.
+    """
+    setattr(provider, WORKER_SCOPED, True)
+    return provider
+
+
+def is_worker_scoped(provider: Callable[..., Any]) -> bool:
+    return bool(getattr(provider, WORKER_SCOPED, False))
+
 
 
 class Depends:
@@ -149,6 +191,52 @@ class DependencyCache:
         self._values.clear()
 
 
+#: Values that live as long as the worker does, and whatever they left open.
+#: Reset per worker, because a value built before a fork would be shared by
+#: processes that must not share it.
+_worker_cache = DependencyCache()
+
+
+def reset_worker_dependencies() -> None:
+    """Forget everything worker-scoped, without releasing it.
+
+    For a worker that has just been forked: whatever the parent resolved
+    belongs to the parent, and closing it here would close it there too.
+    """
+    global _worker_cache
+    _worker_cache = DependencyCache()
+
+
+async def close_worker_dependencies() -> None:
+    """Release everything worker-scoped. For a worker that is shutting down."""
+    await _worker_cache.aclose()
+
+
+async def open_worker_dependencies(graphs: Iterable[dict[str, DependencyParam]]) -> None:
+    """Build everything worker-scoped that `graphs` can reach.
+
+    Done before the worker serves anything, so a pool that cannot connect stops
+    the worker rather than failing the first request that wanted it — and so
+    that two requests arriving together do not both find it missing and build
+    it twice.
+
+    Nothing has to be registered for this: a provider is reachable only if some
+    handler depends on it, and every handler's graph was read when its route
+    was.
+    """
+    for graph in graphs:
+        for parameter in _worker_scoped_in(graph):
+            await _resolve_one(parameter, None, _worker_cache)
+
+
+def _worker_scoped_in(graph: dict[str, DependencyParam]) -> Iterator[DependencyParam]:
+    for parameter in graph.values():
+        if is_worker_scoped(parameter.depends.dependency):
+            yield parameter
+        else:
+            yield from _worker_scoped_in(parameter.sub_dependencies)
+
+
 def extract_dependencies(function: Callable[..., Any]) -> dict[str, DependencyParam]:
     """Every parameter of `function` supplied by a dependency, with its own.
 
@@ -202,10 +290,23 @@ def _extract(
 
     found: dict[str, DependencyParam] = {}
     for name, parameter in signature.parameters.items():
-        if name in CONTEXT_PARAMETERS or not isinstance(parameter.default, Depends):
+        if name in CONTEXT_PARAMETERS:
+            if is_worker_scoped(function):
+                raise DependencyScope(
+                    f"{_name(function)} lives for the worker but asks for {name!r}; "
+                    "it is built before any of them exist"
+                )
+            continue
+        if not isinstance(parameter.default, Depends):
             continue
 
         depends = parameter.default
+        if is_worker_scoped(function) and not is_worker_scoped(depends.dependency):
+            raise DependencyScope(
+                f"{_name(function)} lives for the worker but depends on "
+                f"{_name(depends.dependency)}, which lives for one request; "
+                "the request's value would be held for every later one"
+            )
         found[name] = DependencyParam(
             name=name,
             depends=depends,
@@ -239,6 +340,13 @@ async def _resolve_one(
     cache: DependencyCache,
 ) -> Any:
     depends = parameter.depends
+
+    # Where the value is kept, and so how long it and whatever it opened live.
+    # A worker-scoped provider resolves into the cache that outlives the
+    # request, which is what makes it one value per worker rather than one per
+    # request that happens to be built the same way.
+    if is_worker_scoped(depends.dependency):
+        cache = _worker_cache
 
     if depends.use_cache:
         cached = cache.get(depends.dependency)

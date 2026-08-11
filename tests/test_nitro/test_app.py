@@ -5,7 +5,7 @@ import types
 import pytest
 
 from nitro import Nitro
-from nitro.di import Depends
+from nitro.di import Depends, reset_worker_dependencies, worker_scoped
 from nitro.endpoints import HTTPEndpoint
 from nitro.endpoints import HTTPEndpoint
 from nitro.protocols import Http404, HttpForbidden, PlainTextResponse
@@ -794,3 +794,64 @@ class TestDependencyRelease:
         await app.__handle_http__(scope_for(app, "GET", "/endpoint"), RecordingProtocol())
 
         assert trail == ["handler saw connection", "released"]
+
+
+class TestWorkerScopedDependencies:
+    def test_they_are_built_at_startup_and_released_at_shutdown(self):
+        trail = []
+
+        @worker_scoped
+        async def get_pool():
+            trail.append("opened")
+            yield "pool"
+            trail.append("closed")
+
+        async def handler(request, pool=Depends(get_pool)):
+            request.protocol.response_empty(204)
+
+        app = Nitro()
+        app.add_route("/thing", handler)
+
+        loop = asyncio.new_event_loop()
+        try:
+            app.__startup__(loop)
+            assert trail == ["opened"]  # before a single request
+
+            loop.run_until_complete(
+                app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+            )
+            assert trail == ["opened"]  # the request does not release it
+
+            app.__shutdown__(loop)
+            assert trail == ["opened", "closed"]
+        finally:
+            reset_worker_dependencies()
+            loop.close()
+
+    def test_one_value_is_shared_across_requests(self):
+        seen = []
+
+        @worker_scoped
+        async def get_pool():
+            return object()
+
+        async def handler(request, pool=Depends(get_pool)):
+            seen.append(pool)
+            request.protocol.response_empty(204)
+
+        app = Nitro()
+        app.add_route("/thing", handler)
+
+        loop = asyncio.new_event_loop()
+        try:
+            app.__startup__(loop)
+            for _ in range(3):
+                loop.run_until_complete(
+                    app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+                )
+        finally:
+            reset_worker_dependencies()
+            loop.close()
+
+        assert len(seen) == 3
+        assert seen[0] is seen[1] is seen[2]

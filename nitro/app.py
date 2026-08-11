@@ -608,17 +608,31 @@ class Nitro:
         # its own. Sharing one across a fork means two processes reading the
         # same socket, so each worker starts with none.
         from nitro.cache import reset_caches
+        from nitro.di import open_worker_dependencies, reset_worker_dependencies
         from nitro.intercom import reset_connections
         from nitro.storage import reset_storages
 
         reset_connections()
         reset_caches()
         reset_storages()
+        reset_worker_dependencies()
+
+        # Worker-scoped dependencies are built before anything is served, so a
+        # pool that cannot connect stops this worker instead of failing the
+        # first request that asked for it.
+        loop.run_until_complete(
+            open_worker_dependencies(route.dependencies for route in self.routes)
+        )
         self._run_callbacks(loop, self._startup_callbacks, "startup")
 
     def __shutdown__(self, loop: asyncio.AbstractEventLoop) -> None:
         """Run shutdown callbacks after the worker has stopped serving."""
+        from nitro.di import close_worker_dependencies
+
         self._run_callbacks(loop, self._shutdown_callbacks, "shutdown")
+        # After the callbacks: one of them may still want what a worker-scoped
+        # dependency is holding.
+        loop.run_until_complete(close_worker_dependencies())
 
     def _run_callbacks(
         self,

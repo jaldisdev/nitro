@@ -7,9 +7,14 @@ from nitro.di import (
     DependencyCycle,
     DependencyError,
     DependencyParam,
+    DependencyScope,
     Depends,
+    close_worker_dependencies,
     extract_dependencies,
+    open_worker_dependencies,
+    reset_worker_dependencies,
     resolve_dependencies,
+    worker_scoped,
 )
 
 
@@ -519,3 +524,140 @@ class TestSuppliedCache:
         await shared.aclose()
 
         assert trail == ["acquired", "released"]
+
+
+class TestWorkerScope:
+    def setup_method(self):
+        reset_worker_dependencies()
+
+    async def test_one_value_serves_every_request(self):
+        built = []
+
+        @worker_scoped
+        async def get_pool():
+            built.append("built")
+            return "pool"
+
+        graph = extract_dependencies(lambda pool=Depends(get_pool): None)
+
+        first = await resolve_dependencies(graph, None, DependencyCache())
+        second = await resolve_dependencies(graph, None, DependencyCache())
+
+        assert first == second == {"pool": "pool"}
+        assert built == ["built"]  # not once per request
+
+    async def test_it_is_not_released_with_the_request(self):
+        trail = []
+
+        @worker_scoped
+        async def get_pool():
+            yield "pool"
+            trail.append("closed")
+
+        graph = extract_dependencies(lambda pool=Depends(get_pool): None)
+        cache = DependencyCache()
+
+        await resolve_dependencies(graph, None, cache)
+        await cache.aclose()
+
+        assert trail == []  # the request ending is not the worker ending
+
+        await close_worker_dependencies()
+        assert trail == ["closed"]
+
+    async def test_a_request_scoped_dependency_still_belongs_to_the_request(self):
+        trail = []
+
+        @worker_scoped
+        async def get_pool():
+            yield "pool"
+            trail.append("pool closed")
+
+        async def get_connection(pool=Depends(get_pool)):
+            yield f"connection from {pool}"
+            trail.append("connection closed")
+
+        graph = extract_dependencies(lambda connection=Depends(get_connection): None)
+        cache = DependencyCache()
+
+        values = await resolve_dependencies(graph, None, cache)
+        assert values == {"connection": "connection from pool"}
+
+        await cache.aclose()
+        assert trail == ["connection closed"]
+
+        await close_worker_dependencies()
+        assert trail == ["connection closed", "pool closed"]
+
+    async def test_forgetting_does_not_close_what_the_parent_holds(self):
+        trail = []
+
+        @worker_scoped
+        async def get_pool():
+            yield "pool"
+            trail.append("closed")
+
+        graph = extract_dependencies(lambda pool=Depends(get_pool): None)
+        await resolve_dependencies(graph, None, DependencyCache())
+
+        reset_worker_dependencies()  # as a freshly forked worker does
+
+        assert trail == []  # the parent's pool is the parent's to close
+
+    def test_it_may_not_depend_on_something_shorter_lived(self):
+        async def get_current_user():
+            return "user"
+
+        @worker_scoped
+        async def get_pool(user=Depends(get_current_user)):
+            return "pool"
+
+        with pytest.raises(DependencyScope, match="lives for the worker"):
+            extract_dependencies(lambda pool=Depends(get_pool): None)
+
+    def test_it_may_not_ask_for_the_request(self):
+        @worker_scoped
+        async def get_pool(request):
+            return "pool"
+
+        with pytest.raises(DependencyScope, match="asks for 'request'"):
+            extract_dependencies(lambda pool=Depends(get_pool): None)
+
+    def test_it_may_depend_on_another_of_its_own_kind(self):
+        @worker_scoped
+        async def get_settings():
+            return "settings"
+
+        @worker_scoped
+        async def get_pool(settings=Depends(get_settings)):
+            return "pool"
+
+        graph = extract_dependencies(lambda pool=Depends(get_pool): None)
+        assert graph["pool"].sub_dependencies["settings"] is not None
+
+    async def test_they_are_built_before_anything_is_served(self):
+        built = []
+
+        @worker_scoped
+        async def get_pool():
+            built.append("built")
+            return "pool"
+
+        graph = extract_dependencies(lambda pool=Depends(get_pool): None)
+        await open_worker_dependencies([graph])
+
+        assert built == ["built"]
+
+        # And the request that follows finds it already there.
+        await resolve_dependencies(graph, None, DependencyCache())
+        assert built == ["built"]
+
+    async def test_one_that_cannot_be_built_stops_the_worker(self):
+        @worker_scoped
+        async def get_pool():
+            raise RuntimeError("cannot connect")
+
+        graph = extract_dependencies(lambda pool=Depends(get_pool): None)
+
+        with pytest.raises(RuntimeError, match="cannot connect"):
+            await open_worker_dependencies([graph])

@@ -96,6 +96,59 @@ for as long as the connection is. Releases happen in the reverse of the order
 things were acquired, and a dependency named twice is released once. One that
 fails to release is logged and the rest still run.
 
+## Something that lives longer than a request
+
+A connection pool is not per request. `worker_scoped` says so on the provider,
+which is where lifetime belongs — a pool is worker-lifetime whether a handler, a
+middleware or another dependency asks for it:
+
+```python
+from nitro.di import Depends, worker_scoped
+
+
+@worker_scoped
+async def get_pool() -> AsyncIterator[Pool]:
+    pool = await create_pool(...)
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+async def handler(request: HttpRequest, pool: Pool = Depends(get_pool)) -> HttpResponse:
+    ...                                      # the same pool every time
+```
+
+Nothing registers it and nothing imports the application to declare it. A
+provider is reachable only if something depends on it, and every handler's graph
+is read when its route is registered — so the worker already knows what to build
+before it serves anything.
+
+It is built at startup rather than on first use, which means a pool that cannot
+connect stops the worker instead of failing whichever request happened to arrive
+first. It is released at shutdown, after the `on_shutdown` callbacks, since one
+of those may still want it.
+
+A worker is a forked process, so this is one value **per worker**: with
+`WORKERS = 4` there are four pools, the same way caches and storages are rebuilt
+per worker because a connection cannot cross a fork.
+
+Two things it may not do, both refused when the graph is read rather than at
+runtime:
+
+```python
+@worker_scoped
+async def get_pool(request):                       # DependencyScope
+    ...                                            # built before any request exists
+
+@worker_scoped
+async def get_pool(user: User = Depends(get_current_user)):   # DependencyScope
+    ...                                            # one request's user, kept for all of them
+```
+
+The other direction is fine and is the usual shape: a request-scoped dependency
+built from a worker-scoped one, released with the request while the pool stays.
+
 ## Cycles
 
 A dependency that depends on itself, directly or through others, is reported
