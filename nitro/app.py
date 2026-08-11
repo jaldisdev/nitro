@@ -19,7 +19,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
-from nitro.di import DependencyCache, resolve_dependencies
+from nitro.di import DependencyCache, cache_for, resolve_dependencies
 from nitro.middleware.stack import MiddlewareStack
 from nitro.protocols.exceptions import (
     ExceptionHandlerRegistry,
@@ -107,6 +107,25 @@ async def _dependencies(route: Route, context: Any, cache: DependencyCache) -> d
     if not route.dependencies:
         return {}
     return await resolve_dependencies(route.dependencies, context, cache)
+
+
+async def _served(connection: Any, work: Any) -> Any:
+    """Await `work`, then release whatever it resolved on the way.
+
+    Outside the middleware stack rather than inside it: middleware resolves
+    into the same cache the handler does, so a dependency a middleware opened
+    is still open while the handler runs and is released once, here, when the
+    connection has been served. The failure, if there was one, is what each
+    dependency is told at its `yield`.
+    """
+    failure: BaseException | None = None
+    try:
+        return await work
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        await cache_for(connection).aclose(failure)
 
 
 def _is_async_callable(handler: Any) -> bool:
@@ -387,19 +406,11 @@ class Nitro:
         request = HttpRequest(scope, protocol, parameters)
 
         async def call_handler(request: HttpRequest) -> Any:
-            cache = DependencyCache()
-            failure: BaseException | None = None
-            try:
-                supplied = await _dependencies(route, request, cache)
-                return await route.handler(request, **supplied, **parameters)
-            except BaseException as error:
-                failure = error
-                raise
-            finally:
-                await cache.aclose(failure)
+            supplied = await _dependencies(route, request, cache_for(request))
+            return await route.handler(request, **supplied, **parameters)
 
         try:
-            result = await self.middleware.execute_http(request, call_handler)
+            result = await _served(request, self.middleware.execute_http(request, call_handler))
         except HttpException as exception:
             if not await self._answered(scope, protocol, exception, request):
                 page = self._debug_page(scope, exception.status_code, exception)
@@ -522,21 +533,11 @@ class Nitro:
         socket = WebSocket(scope, transport, parameters)
 
         async def call_handler(socket: WebSocket) -> None:
-            cache = DependencyCache()
-            failure: BaseException | None = None
-            try:
-                supplied = await _dependencies(route, socket, cache)
-                await route.handler(socket, **supplied, **parameters)
-            except BaseException as error:
-                failure = error
-                raise
-            finally:
-                # A socket's dependencies are held for the connection, so this
-                # is the disconnect rather than the end of a message.
-                await cache.aclose(failure)
+            supplied = await _dependencies(route, socket, cache_for(socket))
+            await route.handler(socket, **supplied, **parameters)
 
         try:
-            await self.middleware.execute_websocket(socket, call_handler)
+            await _served(socket, self.middleware.execute_websocket(socket, call_handler))
         except Exception as exception:
             handled, _ = await self._dispatch_exception(socket, exception)
             if handled:
@@ -570,21 +571,13 @@ class Nitro:
         connection = WebTransportSession(scope, session, parameters)
 
         async def call_handler(connection: WebTransportSession) -> None:
-            cache = DependencyCache()
-            failure: BaseException | None = None
-            try:
-                supplied = await _dependencies(route, connection, cache)
-                await route.handler(connection, **supplied, **parameters)
-            except BaseException as error:
-                failure = error
-                raise
-            finally:
-                # As for a socket: the session is the span, so this is where
-                # what it opened is released.
-                await cache.aclose(failure)
+            supplied = await _dependencies(route, connection, cache_for(connection))
+            await route.handler(connection, **supplied, **parameters)
 
         try:
-            await self.middleware.execute_webtransport(connection, call_handler)
+            await _served(
+                connection, self.middleware.execute_webtransport(connection, call_handler)
+            )
         except Exception as exception:
             handled, _ = await self._dispatch_exception(connection, exception)
             if handled:

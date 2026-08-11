@@ -29,6 +29,7 @@ __all__ = [
     "DependencyError",
     "DependencyScope",
     "Depends",
+    "cache_for",
     "close_worker_dependencies",
     "open_worker_dependencies",
     "dependencies_for",
@@ -195,6 +196,31 @@ class DependencyCache:
 #: Reset per worker, because a value built before a fork would be shared by
 #: processes that must not share it.
 _worker_cache = DependencyCache()
+
+
+#: Where a connection keeps its cache. Underscored because a request's state is
+#: the application's to write to, and this is not the application's.
+_CACHE_ATTRIBUTE = "_dependency_cache"
+
+
+def cache_for(connection: Any) -> DependencyCache:
+    """The cache belonging to `connection`, created on first use.
+
+    Kept on the connection's own state so that everything resolved while it is
+    being served — middleware, the handler, and anything either depends on —
+    shares one. A cache per layer would call a dependency once for the
+    middleware that authenticated and again for the handler that answered,
+    which is the thing caching exists to prevent.
+
+    Something with no state of its own gets a cache of its own, which shares
+    nothing and is released by whoever made it.
+    """
+    state = getattr(connection, "state", None)
+    if state is None:
+        return DependencyCache()
+    if _CACHE_ATTRIBUTE not in state:
+        setattr(state, _CACHE_ATTRIBUTE, DependencyCache())
+    return getattr(state, _CACHE_ATTRIBUTE)
 
 
 def reset_worker_dependencies() -> None:

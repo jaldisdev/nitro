@@ -149,6 +149,38 @@ async def get_pool(user: User = Depends(get_current_user)):   # DependencyScope
 The other direction is fine and is the usual shape: a request-scoped dependency
 built from a worker-scoped one, released with the request while the pool stays.
 
+## Middleware
+
+Middleware declares what it needs the same way a handler does:
+
+```python
+from nitro.di import Depends
+from nitro.middleware import Middleware
+
+
+class Auditing(Middleware):
+    async def __http__(self, request, call_next, account: Account = Depends(get_account)):
+        response = await call_next(request)
+        await record(account, request.path)
+        return response
+```
+
+`__websocket__` and `__webtransport__` take them too, and are given the socket
+or session as their context.
+
+**A dependency the middleware and the handler both name is produced once.** The
+cache belongs to the connection rather than to whichever layer resolved first,
+so authenticating in middleware and reading the same account in the handler is
+one lookup, not two. What a middleware opened is released when the connection
+has been served — after the response, not when the middleware's own frame ends,
+so the handler still has it.
+
+A middleware's graph is read when the stack is loaded, so a cycle or a scope
+error stops the process at startup rather than the first request through it.
+
+Bear in mind that middleware runs before routing: a request that matches no
+route still resolves what its middleware asks for.
+
 ## Cycles
 
 A dependency that depends on itself, directly or through others, is reported

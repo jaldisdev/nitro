@@ -1,7 +1,21 @@
 import importlib
 from typing import Any, Awaitable, Callable
 
+from nitro.di import cache_for, dependencies_for, resolve_dependencies
 from nitro.middleware.base import Middleware, MiddlewareProtocol
+
+
+async def _supplied(hook: Callable[..., Any], connection: Any) -> dict[str, Any]:
+    """Values for the parameters `hook` wants injected, or nothing.
+
+    Resolved against the connection's own cache, so a dependency a middleware
+    and a handler both name is produced once for the request rather than once
+    for each.
+    """
+    graph = dependencies_for(hook)
+    if not graph:
+        return {}
+    return await resolve_dependencies(graph, connection, cache_for(connection))
 
 
 class MiddlewareStack:
@@ -56,6 +70,15 @@ class MiddlewareStack:
                     raise TypeError(
                         f"Middleware {path} must inherit from nitro.middleware.Middleware"
                     )
+
+                for protocol in (
+                    MiddlewareProtocol.HTTP,
+                    MiddlewareProtocol.WEBSOCKET,
+                    MiddlewareProtocol.WEBTRANSPORT,
+                ):
+                    hook = getattr(instance, f"__{protocol}__", None)
+                    if hook is not None:
+                        dependencies_for(hook)
 
                 self.middleware_instances.append(instance)
 
@@ -147,7 +170,8 @@ class MiddlewareStack:
                             impl = getattr(middleware.__class__, method_name, None)
                             base_impl = getattr(Middleware, method_name, None)
                             if impl is not None and impl is not base_impl:
-                                return await method(conn, next_handler)
+                                supplied = await _supplied(method, conn)
+                                return await method(conn, next_handler, **supplied)
                         except (AttributeError, NotImplementedError):
                             pass
 
@@ -157,7 +181,8 @@ class MiddlewareStack:
                             impl = getattr(middleware.__class__, "__call__", None)
                             base_impl = getattr(Middleware, "__call__", None)
                             if impl is not None and impl is not base_impl:
-                                return await middleware(conn, next_handler)
+                                supplied = await _supplied(middleware, conn)
+                                return await middleware(conn, next_handler, **supplied)
                         except (AttributeError, NotImplementedError):
                             pass
 

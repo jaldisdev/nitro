@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
-from nitro.di import DependencyCache, dependencies_for, resolve_dependencies
+from nitro.di import DependencyCache, cache_for, dependencies_for, resolve_dependencies
 from nitro.protocols.exceptions import HttpMethodNotAllowed
 from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket, WebSocketDisconnect
@@ -72,16 +72,8 @@ class HTTPEndpoint:
         # A verb method is reached through here rather than being the
         # registered handler, so its graph is read on first use instead of at
         # registration; `dependencies_for` remembers it per method.
-        cache = DependencyCache()
-        failure: BaseException | None = None
-        try:
-            supplied = await _supplied(handler, request, cache)
-            response = await handler(request, **supplied, **params)
-        except BaseException as error:
-            failure = error
-            raise
-        finally:
-            await cache.aclose(failure)
+        supplied = await _supplied(handler, request, cache_for(request))
+        response = await handler(request, **supplied, **params)
 
         if request.method.upper() == "HEAD":
             if "content-length" not in response._headers:
@@ -126,30 +118,21 @@ class WebSocketEndpoint:
         one unit of work, and re-resolving per frame would give `on_receive`
         a different value each time.
         """
-        shared = DependencyCache()
+        shared = cache_for(websocket)
         connect = await _supplied(self.on_connect, websocket, shared)
         receive = await _supplied(self.on_receive, websocket, shared)
         disconnect = await _supplied(self.on_disconnect, websocket, shared)
 
-        failure: BaseException | None = None
-        try:
-            await self.on_connect(websocket, **connect, **params)
+        await self.on_connect(websocket, **connect, **params)
 
-            close_code = 1000
-            try:
-                async for data in websocket.iter(self.encoding):
-                    await self.on_receive(websocket, data, **receive, **params)
-            except WebSocketDisconnect as exc:
-                close_code = exc.code
-            finally:
-                await self.on_disconnect(websocket, close_code, **disconnect, **params)
-        except BaseException as error:
-            failure = error
-            raise
+        close_code = 1000
+        try:
+            async for data in websocket.iter(self.encoding):
+                await self.on_receive(websocket, data, **receive, **params)
+        except WebSocketDisconnect as exc:
+            close_code = exc.code
         finally:
-            # After the disconnect hook: what the connection opened is held for
-            # as long as the connection is, and no longer.
-            await shared.aclose(failure)
+            await self.on_disconnect(websocket, close_code, **disconnect, **params)
 
     async def on_connect(self, websocket: WebSocket, **params) -> None:
         """Override to handle WebSocket connection."""
@@ -190,48 +173,40 @@ class WebTransportEndpoint:
         One cache for the session, as `WebSocketEndpoint.dispatch` does and
         for the same reason.
         """
-        shared = DependencyCache()
+        shared = cache_for(session)
         connect = await _supplied(self.on_connect, session, shared)
         datagram = await _supplied(self.on_datagram, session, shared)
         stream_supplied = await _supplied(self.on_stream, session, shared)
         disconnect = await _supplied(self.on_disconnect, session, shared)
 
-        failure: BaseException | None = None
+        await self.on_connect(session, **connect, **params)
+
+        close_code = 0
         try:
-            await self.on_connect(session, **connect, **params)
+            if self.use_streams:
+                import asyncio
 
-            close_code = 0
-            try:
-                if self.use_streams:
-                    import asyncio
-
-                    async def handle_datagrams():
-                        async for data in session.iter_datagrams(self.encoding):
-                            await self.on_datagram(session, data, **datagram, **params)
-
-                    async def handle_streams():
-                        while True:
-                            stream = await session.receive_stream()
-                            asyncio.create_task(
-                                self.on_stream(session, stream, **stream_supplied, **params)
-                            )
-
-                    await asyncio.gather(
-                        handle_datagrams(), handle_streams(), return_exceptions=True
-                    )
-                else:
+                async def handle_datagrams():
                     async for data in session.iter_datagrams(self.encoding):
                         await self.on_datagram(session, data, **datagram, **params)
-            except WebTransportDisconnect as exc:
-                close_code = exc.code
-            finally:
-                await self.on_disconnect(session, close_code, **disconnect, **params)
-        except BaseException as error:
-            failure = error
-            raise
+
+                async def handle_streams():
+                    while True:
+                        stream = await session.receive_stream()
+                        asyncio.create_task(
+                            self.on_stream(session, stream, **stream_supplied, **params)
+                        )
+
+                await asyncio.gather(
+                    handle_datagrams(), handle_streams(), return_exceptions=True
+                )
+            else:
+                async for data in session.iter_datagrams(self.encoding):
+                    await self.on_datagram(session, data, **datagram, **params)
+        except WebTransportDisconnect as exc:
+            close_code = exc.code
         finally:
-            # As for a socket: released when the session ends, not per datagram.
-            await shared.aclose(failure)
+            await self.on_disconnect(session, close_code, **disconnect, **params)
 
     async def on_connect(self, session: WebTransportSession, **params) -> None:
         """Override to handle session connection."""

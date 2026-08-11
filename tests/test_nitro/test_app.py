@@ -6,6 +6,7 @@ import pytest
 
 from nitro import Nitro
 from nitro.di import Depends, reset_worker_dependencies, worker_scoped
+from nitro.middleware.base import Middleware
 from nitro.endpoints import HTTPEndpoint
 from nitro.endpoints import HTTPEndpoint
 from nitro.protocols import Http404, HttpForbidden, PlainTextResponse
@@ -855,3 +856,116 @@ class TestWorkerScopedDependencies:
 
         assert len(seen) == 3
         assert seen[0] is seen[1] is seen[2]
+
+
+class TestMiddlewareDependencies:
+    """What a middleware asks for, and how it relates to what the handler asks for."""
+
+    def make_app(self, middleware, handler, path="/thing"):
+        app = Nitro()
+        app.middleware.add_middleware(middleware)
+        app.add_route(path, handler)
+        return app
+
+    async def test_a_middleware_is_supplied_what_it_asks_for(self):
+        seen = []
+
+        async def get_account():
+            return "account"
+
+        class Auditing(Middleware):
+            async def __http__(self, request, call_next, account=Depends(get_account)):
+                seen.append(account)
+                return await call_next(request)
+
+        async def handler(request):
+            request.protocol.response_empty(204)
+
+        app = self.make_app(Auditing(), handler)
+        await app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+
+        assert seen == ["account"]
+
+    async def test_a_dependency_is_produced_once_for_the_request(self):
+        """The point of the connection owning its cache: a middleware and a
+        handler naming one dependency get one value, not one each."""
+        calls = []
+        seen = []
+
+        async def get_account():
+            calls.append("called")
+            return object()
+
+        class Auditing(Middleware):
+            async def __http__(self, request, call_next, account=Depends(get_account)):
+                seen.append(account)
+                return await call_next(request)
+
+        async def handler(request, account=Depends(get_account)):
+            seen.append(account)
+            request.protocol.response_empty(204)
+
+        app = self.make_app(Auditing(), handler)
+        await app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+
+        assert calls == ["called"]
+        assert seen[0] is seen[1]
+
+    async def test_it_is_not_shared_with_the_next_request(self):
+        seen = []
+
+        async def get_account():
+            return object()
+
+        class Auditing(Middleware):
+            async def __http__(self, request, call_next, account=Depends(get_account)):
+                seen.append(account)
+                return await call_next(request)
+
+        async def handler(request):
+            request.protocol.response_empty(204)
+
+        app = self.make_app(Auditing(), handler)
+        for _ in range(2):
+            await app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+
+        assert seen[0] is not seen[1]
+
+    async def test_what_a_middleware_opened_is_released_after_the_response(self):
+        trail = []
+
+        async def get_connection():
+            trail.append("acquired")
+            yield "connection"
+            trail.append("released")
+
+        class Auditing(Middleware):
+            async def __http__(self, request, call_next, connection=Depends(get_connection)):
+                response = await call_next(request)
+                trail.append("middleware finished")
+                return response
+
+        async def handler(request):
+            trail.append("handler ran")
+            request.protocol.response_empty(204)
+
+        app = self.make_app(Auditing(), handler)
+        await app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+
+        assert trail == ["acquired", "handler ran", "middleware finished", "released"]
+
+    async def test_a_middleware_that_asks_for_nothing_is_untouched(self):
+        calls = []
+
+        class Plain(Middleware):
+            async def __http__(self, request, call_next):
+                calls.append("ran")
+                return await call_next(request)
+
+        async def handler(request):
+            request.protocol.response_empty(204)
+
+        app = self.make_app(Plain(), handler)
+        await app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+
+        assert calls == ["ran"]
