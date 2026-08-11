@@ -344,21 +344,28 @@ class File(ParamBase):
     """
     File upload extraction and validation.
 
+    The part is taken from the multipart form by the parameter's name, or by
+    its ``alias``. Annotating it ``UploadFile`` hands over the file itself,
+    which is what a large upload wants — it has been spooled to disk and
+    reading it whole would undo that. Annotating it ``bytes`` reads it.
+
     Example:
         async def upload(
             request: HttpRequest,
-            file: bytes = File(...),
-            filename: str = Query(...)
+            file: UploadFile = File(...),
         ):
-            # file contains the raw bytes
-            ...
+            data = await file.read()
 
-        # With size validation
+        # With size validation, checked before the file is read
         async def upload_avatar(
             request: HttpRequest,
             avatar: bytes = File(..., max_length=1024*1024)  # Max 1MB
         ):
             ...
+
+    A request that is not a form at all is read as one file: a client posting
+    bare bytes with the content type of what it is sending has named nothing to
+    look up.
     """
 
     def __init__(self, default: Any = ..., *, media_type: str | None = None, **kwargs):
@@ -374,8 +381,41 @@ class File(ParamBase):
         self.media_type = media_type
 
     async def extract(self, request, param_name: str, param_type: type) -> Any:
-        """Extract file from request body."""
-        # Get raw body
+        """Extract the named file part from the request."""
+        from nitro.protocols.http import UploadFile
+
+        content_type = request.headers.get("content-type", "") or ""
+        if content_type.split(";", 1)[0].strip().lower() != "multipart/form-data":
+            # A body sent on its own is the file. Decided before the form is
+            # touched: parsing a multipart body consumes the stream, and the
+            # raw body could not be read afterwards to fall back to.
+            return await self._extract_bare_body(request, param_name)
+
+        upload = (await request.form()).get(self.alias or param_name)
+
+        if not isinstance(upload, UploadFile):
+            if self.required:
+                raise ValidationError(param_name, "file required")
+            return self.default if self.default is not ... else None
+
+        if self.media_type and not (upload.content_type or "").startswith(self.media_type):
+            raise ValidationError(
+                param_name,
+                f"expected media type {self.media_type}, got {upload.content_type}",
+            )
+
+        # Checked against the size the parser recorded rather than against the
+        # bytes, so an upload that is too large is refused without reading it.
+        if self.max_length is not None and upload.size > self.max_length:
+            raise ValidationError(
+                param_name, f"must be at most {self.max_length} characters"
+            )
+
+        if isinstance(param_type, type) and issubclass(param_type, UploadFile):
+            return upload
+        return self.validate(await upload.read(), param_name)
+
+    async def _extract_bare_body(self, request, param_name: str) -> Any:
         body = await request.body()
 
         if not body:
@@ -383,7 +423,6 @@ class File(ParamBase):
                 raise ValidationError(param_name, "file required")
             return self.default if self.default is not ... else None
 
-        # Validate media type if specified
         if self.media_type:
             content_type = request.headers.get("content-type", "")
             if not content_type.startswith(self.media_type):
@@ -392,7 +431,6 @@ class File(ParamBase):
                     f"expected media type {self.media_type}, got {content_type}",
                 )
 
-        # Validate
         return self.validate(body, param_name)
 
 

@@ -1,8 +1,10 @@
 import pytest
 
+from nitro.protocols.http import UploadFile
 from nitro.routing.parameters import (
     Body,
     Cookie,
+    File,
     Header,
     Path,
     Query,
@@ -37,6 +39,16 @@ class FakeProtocol:
 
     async def __call__(self):
         return self._body
+
+    def __aiter__(self):
+        self._iterator = iter([self._body] if self._body else [])
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            raise StopAsyncIteration from None
 
 
 def make_request(query_string="", headers=None, path_params=None, cookies_str=None, body=b""):
@@ -195,3 +207,67 @@ class TestBodyParam:
         req = self.make_json_request({})
         result = await Body("default_val").extract(req, "optional", str)
         assert result == "default_val"
+
+
+class TestFileParam:
+    BOUNDARY = b"boundary"
+    HEADERS = {"content-type": "multipart/form-data; boundary=boundary"}
+
+    def make_upload_request(self, name="avatar", filename="avatar.png", content_type="image/png", value=b"pixels"):
+        disposition = f'form-data; name="{name}"; filename="{filename}"'
+        headers = f"Content-Disposition: {disposition}\r\n"
+        if content_type is not None:
+            headers += f"Content-Type: {content_type}\r\n"
+        body = (
+            b"--" + self.BOUNDARY + b"\r\n" + headers.encode() + b"\r\n" + value + b"\r\n"
+            b"--" + self.BOUNDARY + b"--\r\n"
+        )
+        return make_request(headers=self.HEADERS, body=body)
+
+    @pytest.mark.asyncio
+    async def test_the_named_part_is_read_as_bytes(self):
+        request = self.make_upload_request(value=b"pixels")
+        assert await File(...).extract(request, "avatar", bytes) == b"pixels"
+
+    @pytest.mark.asyncio
+    async def test_an_upload_file_annotation_hands_over_the_file(self):
+        request = self.make_upload_request()
+
+        upload = await File(...).extract(request, "avatar", UploadFile)
+
+        assert isinstance(upload, UploadFile)
+        assert upload.filename == "avatar.png"
+        assert await upload.read() == b"pixels"
+
+    @pytest.mark.asyncio
+    async def test_a_part_is_taken_by_its_alias(self):
+        request = self.make_upload_request(name="the-file")
+        assert await File(..., alias="the-file").extract(request, "avatar", bytes) == b"pixels"
+
+    @pytest.mark.asyncio
+    async def test_a_part_over_the_size_limit_is_refused(self):
+        request = self.make_upload_request(value=b"x" * 100)
+        with pytest.raises(ValidationError):
+            await File(..., max_length=10).extract(request, "avatar", bytes)
+
+    @pytest.mark.asyncio
+    async def test_the_media_type_is_checked_against_the_part(self):
+        request = self.make_upload_request(content_type="text/plain")
+        with pytest.raises(ValidationError):
+            await File(..., media_type="image/").extract(request, "avatar", bytes)
+
+    @pytest.mark.asyncio
+    async def test_a_missing_part_is_a_validation_error(self):
+        request = self.make_upload_request(name="something-else")
+        with pytest.raises(ValidationError):
+            await File(...).extract(request, "avatar", bytes)
+
+    @pytest.mark.asyncio
+    async def test_a_missing_optional_part_falls_back_to_the_default(self):
+        request = self.make_upload_request(name="something-else")
+        assert await File(None).extract(request, "avatar", bytes) is None
+
+    @pytest.mark.asyncio
+    async def test_a_body_sent_on_its_own_is_still_the_file(self):
+        request = make_request(headers={"content-type": "image/png"}, body=b"raw pixels")
+        assert await File(...).extract(request, "avatar", bytes) == b"raw pixels"

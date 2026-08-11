@@ -9,6 +9,7 @@ from nitro.protocols.http import (
     URL,
     Address,
     FileResponse,
+    FormData,
     HTMLResponse,
     HttpRequest,
     HttpResponse,
@@ -19,12 +20,14 @@ from nitro.protocols.http import (
     State,
     StreamingResponse,
     TemplateResponse,
+    UploadFile,
 )
 
 __all__ = [
     "URL",
     "Address",
     "FileResponse",
+    "FormData",
     "HTMLResponse",
     "Http404",
     "HttpException",
@@ -38,4 +41,5 @@ __all__ = [
     "State",
     "StreamingResponse",
     "TemplateResponse",
+    "UploadFile",
 ]

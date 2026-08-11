@@ -4,6 +4,7 @@ Override any of these in the module named by ``NITRO_SETTINGS_MODULE``. Only
 names in upper case are read.
 """
 
+import os
 from typing import Any
 
 # SECURITY WARNING: don't run with debug turned on in production.
@@ -32,6 +33,14 @@ MIDDLEWARE: list[str] = []
 
 # Import path of the module holding the route table, or the routes themselves.
 ROUTES: str | list[Any] = []
+
+# Uploaded files. A file part larger than MAX_UPLOAD_MEMORY is written to disk
+# as it arrives rather than held in memory, so a large upload costs a file
+# descriptor instead of resident memory in the process serving every other
+# connection. UPLOAD_DIR names where those files are written; None uses the
+# system temporary directory, and either way they are deleted when closed.
+MAX_UPLOAD_MEMORY: int = 1024 * 1024
+UPLOAD_DIR: str | os.PathLike[str] | None = None
 
 # The bundled server. Keys map onto the server's own configuration; anything
 # left out keeps the value below.

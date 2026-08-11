@@ -29,8 +29,73 @@ async def handler(request: HttpRequest) -> HttpResponse:
 
     body: bytes = await request.body()
     payload: dict = await request.json()
-    fields: dict[str, str] = await request.form()
+    fields: FormData = await request.form()
+    whatever = await request.data()
 ```
+
+### Reading a body of more than one kind
+
+`json()` and `form()` each say which format is expected. `data()` is for a
+handler that takes more than one and would rather ask once — it parses by what
+the request said it was sending:
+
+| Content type | `data()` |
+|---|---|
+| `application/json`, `*+json` | what the JSON decodes to |
+| `application/x-www-form-urlencoded` | `FormData` |
+| `multipart/form-data` | `FormData`, uploads included |
+| anything else | the bytes that arrived |
+
+```python
+async def receive(request: HttpRequest) -> HttpResponse:
+    payload = await request.data()
+    ...
+```
+
+Nothing here guesses at a body whose type it was not told, and a body that does
+not parse as what it claimed is a `400`. That last part is where `data()` and
+`json()` differ: a caller that named the format itself is handed the decoder's
+own error instead, to do with as it likes.
+
+The body is parsed once and remembered, so reading it again through any of these
+costs nothing. `request.media_type` is the declared content type without its
+parameters, for a handler that would rather branch itself.
+
+### Forms and uploads
+
+`form()` reads both kinds of form — urlencoded and multipart — and which one is
+decided by the content type rather than attempted in turn. A body that is not a
+form has no fields to give, and parsing one as a form would invent them, so a
+JSON request gets an empty form and its body is still there for `json()`.
+
+```python
+async def submit(request: HttpRequest) -> HttpResponse:
+    form = await request.form()
+
+    title: str = form["title"]
+    every: list[str | UploadFile] = form.get_all("tag")
+
+    for name, upload in form.files:
+        content: bytes = await upload.read()
+```
+
+A file part arrives as an `UploadFile`, with the `filename` and `content_type`
+the client declared and the `size` that actually arrived:
+
+```python
+avatar = form["avatar"]
+data: bytes = await avatar.read()
+await avatar.close()
+```
+
+The body is parsed as it arrives rather than read whole first, so a file larger
+than `MAX_UPLOAD_MEMORY` is written to `UPLOAD_DIR` as it comes in instead of
+being held in memory twice. Reading it is blocking I/O and happens in a thread,
+which is why `read()` is awaited. What was spooled is deleted when the file is
+closed, and `form.close()` closes every upload at once.
+
+A body that claims to be multipart and is not answers `400`, like the other
+malformed requests.
 
 `headers` is a mapping that keeps every value a name was sent with:
 
