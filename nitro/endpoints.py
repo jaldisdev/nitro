@@ -1,4 +1,7 @@
-from collections.abc import Callable, Sequence
+import asyncio
+import json as json_module
+import logging
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any, Literal
 
 from nitro.di import DependencyCache, cache_for, dependencies_for, resolve_dependencies
@@ -6,6 +9,11 @@ from nitro.protocols.exceptions import HttpMethodNotAllowed
 from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket, WebSocketDisconnect
 from nitro.protocols.webtransport import WebTransportDisconnect, WebTransportSession
+
+logger = logging.getLogger("nitro.endpoints")
+
+#: How a message is handed to `on_receive` and `on_datagram`.
+Encoding = Literal["text", "bytes", "json"]
 
 
 async def _supplied(
@@ -28,6 +36,48 @@ async def _supplied(
     return await resolve_dependencies(
         graph, context, DependencyCache() if cache is None else cache
     )
+
+
+async def _decoded(websocket: WebSocket, encoding: Encoding) -> AsyncIterator[Any]:
+    """Every message of the connection, as `encoding` says to read it.
+
+    A message of the wrong kind is a client sending something the endpoint did
+    not declare it accepts, which the underlying `receive_text`/`receive_bytes`
+    report by raising — so nothing here has to guess what was meant.
+    """
+    while True:
+        try:
+            if encoding == "text":
+                yield await websocket.receive_text()
+            elif encoding == "bytes":
+                yield await websocket.receive_bytes()
+            else:
+                yield await websocket.receive_json()
+        except WebSocketDisconnect:
+            return
+
+
+def _report_failure(task: asyncio.Task[None]) -> None:
+    """Log what a stream handler failed with.
+
+    A task's exception is otherwise only seen if somebody awaits it, and
+    nothing awaits these — without this a handler that raised would disappear
+    silently.
+    """
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("a WebTransport stream handler failed", exc_info=error)
+
+
+def _decode_datagram(payload: bytes, encoding: Encoding) -> Any:
+    """One datagram, as `encoding` says to read it."""
+    if encoding == "bytes":
+        return payload
+    if encoding == "text":
+        return payload.decode("utf-8")
+    return json_module.loads(payload)
 
 
 #: The verbs an endpoint may implement, lower case as they are written on the
@@ -104,7 +154,8 @@ class WebSocketEndpoint:
     #: single method, decorate it with `nitro.utils.decorators.method_decorator`.
     decorators: Sequence[Callable[..., Any]] = ()
 
-    encoding: Literal["text", "bytes", "json"] = "text"
+    #: How each message is handed to `on_receive`.
+    encoding: Encoding = "text"
 
     async def __call__(self, websocket: WebSocket, **params):
         """Handle WebSocket lifecycle."""
@@ -127,7 +178,7 @@ class WebSocketEndpoint:
 
         close_code = 1000
         try:
-            async for data in websocket.iter(self.encoding):
+            async for data in _decoded(websocket, self.encoding):
                 await self.on_receive(websocket, data, **receive, **params)
         except WebSocketDisconnect as exc:
             close_code = exc.code
@@ -160,7 +211,10 @@ class WebTransportEndpoint:
     #: single method, decorate it with `nitro.utils.decorators.method_decorator`.
     decorators: Sequence[Callable[..., Any]] = ()
 
-    encoding: Literal["bytes", "text", "json"] = "bytes"
+    #: How each datagram is handed to `on_datagram`. Streams are not
+    #: decoded: a stream is read through its own methods, which already
+    #: offer text, bytes and JSON.
+    encoding: Encoding = "bytes"
     use_streams: bool = False
 
     async def __call__(self, session: WebTransportSession, **params):
@@ -182,30 +236,39 @@ class WebTransportEndpoint:
         await self.on_connect(session, **connect, **params)
 
         close_code = 0
+        #: Streams are handled concurrently, so a slow one does not hold up the
+        #: next. The tasks are held here because a task nothing refers to may be
+        #: collected while it is still running.
+        running: set[asyncio.Task[None]] = set()
+
+        async def handle_datagrams() -> None:
+            async for payload in session.iter_datagrams():
+                data = _decode_datagram(payload, self.encoding)
+                await self.on_datagram(session, data, **datagram, **params)
+
+        async def handle_streams() -> None:
+            async for stream in session.iter_streams():
+                task = asyncio.create_task(
+                    self.on_stream(session, stream, **stream_supplied, **params)
+                )
+                running.add(task)
+                task.add_done_callback(running.discard)
+                task.add_done_callback(_report_failure)
+
         try:
             if self.use_streams:
-                import asyncio
-
-                async def handle_datagrams():
-                    async for data in session.iter_datagrams(self.encoding):
-                        await self.on_datagram(session, data, **datagram, **params)
-
-                async def handle_streams():
-                    while True:
-                        stream = await session.receive_stream()
-                        asyncio.create_task(
-                            self.on_stream(session, stream, **stream_supplied, **params)
-                        )
-
-                await asyncio.gather(
-                    handle_datagrams(), handle_streams(), return_exceptions=True
-                )
+                # Both loops end when the session does. `gather` without
+                # `return_exceptions` re-raises the first failure here, where
+                # the `except` below can see it, rather than returning it as a
+                # value nothing reads.
+                await asyncio.gather(handle_datagrams(), handle_streams())
             else:
-                async for data in session.iter_datagrams(self.encoding):
-                    await self.on_datagram(session, data, **datagram, **params)
+                await handle_datagrams()
         except WebTransportDisconnect as exc:
             close_code = exc.code
         finally:
+            for task in list(running):
+                task.cancel()
             await self.on_disconnect(session, close_code, **disconnect, **params)
 
     async def on_connect(self, session: WebTransportSession, **params) -> None:

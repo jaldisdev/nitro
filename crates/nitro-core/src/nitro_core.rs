@@ -9,6 +9,7 @@ pub mod config;
 pub mod disconnect;
 pub mod files;
 pub mod headers;
+pub mod hosts;
 pub mod lifecycle;
 /// The metrics crate, re-exported so binding code has one path to every type
 /// the server is configured with.

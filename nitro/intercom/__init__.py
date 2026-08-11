@@ -16,6 +16,13 @@ the wire so a service written in another language can read them.
     async with intercom.listen("socket:abc", groups=["room:42"]) as messages:
         async for message in messages:
             await transport.send_str(message["event"])
+
+Which backend answers is the ``BACKEND`` key of the alias, and the default is
+:class:`~nitro.intercom.backends.MemoryIntercom` — this process only, so a
+project can use Intercom before it has a Redis and so its tests need nothing
+running. A deployment with more than one worker has to point ``BACKEND`` at
+:class:`~nitro.intercom.backends.RedisIntercom`, because separate processes
+share nothing.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ from typing import Any
 from nitro._nitro import Intercom as _Intercom
 from nitro._nitro import IntercomListener, IntercomReader
 from nitro.settings import ImproperlyConfigured, settings
+from nitro.utils.modules import import_string
 
 __all__ = [
     "ChannelListener",
@@ -38,6 +46,10 @@ __all__ = [
 ]
 
 DEFAULT_ALIAS = "default"
+
+#: Used when an alias does not name one, so an entry that only gives a
+#: `LOCATION` still works.
+DEFAULT_BACKEND = "nitro.intercom.backends.MemoryIntercom"
 
 Intercom = _Intercom
 
@@ -62,18 +74,37 @@ def _configuration(alias: str) -> dict[str, Any]:
         ) from None
 
 
-async def connect(alias: str = DEFAULT_ALIAS) -> _Intercom:
-    """Connect using the settings for `alias`."""
+def _backend(alias: str, entry: dict[str, Any]) -> Any:
+    """The backend class named by `alias`, imported."""
+    path = entry.get("BACKEND") or DEFAULT_BACKEND
+    try:
+        return import_string(path)
+    except ImportError as error:
+        raise ImproperlyConfigured(
+            f"INTERCOMS[{alias!r}] names the backend {path!r}, "
+            f"which could not be imported: {error}"
+        ) from error
+
+
+async def connect(alias: str = DEFAULT_ALIAS) -> Any:
+    """Connect using the settings for `alias`.
+
+    The client is whatever the backend's `connect` hands back — the compiled
+    one for Redis, a Python object for the memory backend — and the two answer
+    the same calls.
+    """
     entry = _configuration(alias)
+    backend = _backend(alias, entry)
     options = entry.get("OPTIONS", {})
     location = entry.get("LOCATION", "")
 
-    if not location:
+    if getattr(backend, "requires_location", True) and not location:
         raise ImproperlyConfigured(
-            f"INTERCOMS[{alias!r}] needs a LOCATION, for example 'redis://localhost:6379'"
+            f"INTERCOMS[{alias!r}] uses {backend.__name__} and needs a LOCATION, "
+            "for example 'redis://localhost:6379'"
         )
 
-    return await _Intercom.connect(
+    return await backend.connect(
         location,
         prefix=options.get("PREFIX", ""),
         capacity=options.get("CAPACITY", 100),
@@ -91,10 +122,10 @@ class _Handle:
 
     def __init__(self, alias: str = DEFAULT_ALIAS) -> None:
         self._alias = alias
-        self._client: _Intercom | None = None
+        self._client: Any = None
         self._connecting: asyncio.Lock | None = None
 
-    async def client(self) -> _Intercom:
+    async def client(self) -> Any:
         if self._client is not None:
             return self._client
 
@@ -121,7 +152,7 @@ class _Handle:
     async def publish(self, channel: str, message: Any) -> int:
         return await (await self.client()).publish(channel, message)
 
-    async def subscribe(self, channel: str) -> IntercomListener:
+    async def subscribe(self, channel: str) -> Any:
         return await (await self.client()).subscribe(channel)
 
     async def send(self, channel: str, message: Any) -> None:
@@ -130,7 +161,7 @@ class _Handle:
     async def receive(self, channel: str) -> Any:
         return await (await self.client()).receive(channel)
 
-    async def reader(self, channel: str) -> IntercomReader:
+    async def reader(self, channel: str) -> Any:
         return await (await self.client()).reader(channel)
 
     async def group_add(self, group: str, channel: str) -> None:
@@ -180,7 +211,7 @@ class ChannelListener:
         self._handle = handle
         self.channel = channel
         self.groups = list(groups or [])
-        self._listener: IntercomListener | None = None
+        self._listener: Any = None
 
     async def __aenter__(self) -> ChannelListener:
         # Subscribing before joining any group means nothing published to the
@@ -223,9 +254,16 @@ def get_intercom(alias: str = DEFAULT_ALIAS) -> _Handle:
 
 
 def reset_connections() -> None:
-    """Forget every connection. Called after a worker forks."""
+    """Forget every connection. Called after a worker forks.
+
+    The memory backend's contents go with them: what the parent queued belongs
+    to the parent, and a worker that inherited a copy would answer from it.
+    """
+    from nitro.intercom.backends import reset_store
+
     for handle in _handles.values():
         handle.reset()
+    reset_store()
 
 
 #: The default Intercom, connected on first use.

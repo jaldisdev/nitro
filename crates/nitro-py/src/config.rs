@@ -12,6 +12,7 @@ use nitro_core::config::{
     AccessLogConfig, AccessLogFormat, AltSvc, BindAddress, ClientAuth, HttpVersion, LogDestination,
     LogFormat, LogLevel, LoggingConfig, ServerConfig, TlsSettings,
 };
+use nitro_core::hosts::AllowedHosts;
 use nitro_core::observability::ExporterConfig;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -221,6 +222,11 @@ pub fn server_config(source: &Bound<'_, PyAny>) -> PyResult<ServerConfig> {
 
     let mut config = ServerConfig {
         bind: bind_from(source)?,
+        allowed_hosts: AllowedHosts::new(extract::<Vec<String>>(
+            source,
+            "allowed_hosts",
+            Vec::new(),
+        )?),
         observability: observability_from(source, &defaults.observability)?,
         tls: tls_from(source)?,
         http: parse_http_version(&extract(source, "http", "auto".to_owned())?)?,

@@ -69,11 +69,40 @@ class TestConfiguration:
         with pytest.raises(ImproperlyConfigured, match="nowhere"):
             await connect("nowhere")
 
-    async def test_a_missing_location_is_reported(self, monkeypatch):
+    async def test_a_missing_location_is_reported_for_a_backend_that_needs_one(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            settings,
+            "INTERCOMS",
+            {
+                "default": {
+                    "BACKEND": "nitro.intercom.backends.RedisIntercom",
+                    "LOCATION": "",
+                }
+            },
+            raising=False,
+        )
+        with pytest.raises(ImproperlyConfigured, match="LOCATION"):
+            await connect()
+
+    async def test_a_backend_that_needs_no_location_connects_without_one(
+        self, monkeypatch
+    ):
         monkeypatch.setattr(
             settings, "INTERCOMS", {"default": {"LOCATION": ""}}, raising=False
         )
-        with pytest.raises(ImproperlyConfigured, match="LOCATION"):
+        client = await connect()
+        assert type(client).__name__ == "MemoryIntercom"
+
+    async def test_an_unimportable_backend_is_reported(self, monkeypatch):
+        monkeypatch.setattr(
+            settings,
+            "INTERCOMS",
+            {"default": {"BACKEND": "nitro.intercom.backends.NoSuchThing"}},
+            raising=False,
+        )
+        with pytest.raises(ImproperlyConfigured, match="NoSuchThing"):
             await connect()
 
     async def test_connecting_is_deferred_until_first_use(self, configured):

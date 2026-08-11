@@ -10,6 +10,22 @@ MessagePack on the wire, so a service written in another language can read them.
 
 ## Configuration
 
+Nothing has to be configured to start. The default backend keeps everything in
+this process, so Intercom works on a fresh project and its tests need nothing
+running:
+
+```python
+INTERCOMS = {
+    "default": {
+        "BACKEND": "nitro.intercom.backends.MemoryIntercom",
+        "LOCATION": "",
+        "OPTIONS": {},
+    }
+}
+```
+
+A deployment points it at Redis:
+
 ```python
 INTERCOMS = {
     "default": {
@@ -21,7 +37,29 @@ INTERCOMS = {
 ```
 
 `PREFIX` keeps several applications apart on one server. `CAPACITY` and
-`EXPIRY` apply to queued channels, below.
+`EXPIRY` apply to queued channels, below. `LOCATION` is required by
+`RedisIntercom` and ignored by `MemoryIntercom`.
+
+### Which backend
+
+| | `MemoryIntercom` | `RedisIntercom` |
+|---|---|---|
+| Reaches | this process | every process pointed at the same server |
+| Needs | nothing | a Redis |
+| For | development, tests, a single-worker deployment | anything else |
+
+**`MemoryIntercom` does not cross workers.** `WORKERS = 2` means two processes:
+a message published in one is not seen in the other, and a socket held by the
+second will never receive it. If you serve with more than one worker, or more
+than one machine, the backend has to be `RedisIntercom`.
+
+The two are interchangeable otherwise — same methods, same delivery semantics,
+same bounded queue, same refusal of values that could not cross a wire — so a
+project can develop against one and deploy against the other.
+
+A backend is anything importable offering
+`async connect(location, *, prefix, capacity, expiry)` that returns a client
+with the methods below, so a project can supply its own.
 
 ## Two ways to deliver
 

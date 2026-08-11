@@ -13,8 +13,18 @@ DEBUG: bool = False
 # SECURITY WARNING: keep the secret key used in production secret.
 SECRET_KEY: str = ""
 
+# Keys accepted for signatures that were made with an earlier SECRET_KEY, so a
+# key can be rotated without invalidating everything signed under the old one.
+SECRET_KEY_FALLBACKS: list[str] = []
+
 # Host names this site answers for. "*" matches anything, and a leading dot
 # matches a domain and all of its subdomains.
+#
+# The server checks every request against this before the application sees it,
+# and answers 400 to a name that is not here. An empty list means "not
+# configured" and answers for any name, which is right while developing and
+# wrong in production — `nitro check` refuses to pass a deployment that left it
+# empty with DEBUG off.
 ALLOWED_HOSTS: list[str] = []
 
 TIME_ZONE: str = "Europe/Zurich"
@@ -30,6 +40,28 @@ COMMAND_MODULES: list[str] = []
 # subclass; a request passes through them in order on the way in and in reverse
 # on the way out.
 MIDDLEWARE: list[str] = []
+
+# Cross-origin requests, read by nitro.middleware.common.CORSMiddleware. They
+# do nothing unless that middleware is installed.
+#
+# SECURITY WARNING: CORS_ALLOW_ALL_ORIGINS answers for any site that asks.
+# Combined with CORS_ALLOW_CREDENTIALS it hands a visitor's cookies to it.
+CORS_ALLOWED_ORIGINS: list[str] = []
+CORS_ALLOW_ALL_ORIGINS: bool = False
+CORS_ALLOW_CREDENTIALS: bool = False
+CORS_ALLOW_METHODS: list[str] = ["*"]
+CORS_ALLOW_HEADERS: list[str] = ["*"]
+
+# Security headers, read by nitro.middleware.common.SecurityHeadersMiddleware.
+# They do nothing unless that middleware is installed.
+#
+# SECURE_HSTS_SECONDS is zero because HSTS is hard to undo: a browser told to
+# use HTTPS for a year will refuse plain HTTP for that long, including on
+# subdomains once SECURE_HSTS_INCLUDE_SUBDOMAINS is on.
+SECURE_HSTS_SECONDS: int = 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS: bool = False
+SECURE_CONTENT_TYPE_NOSNIFF: bool = True
+SECURE_FRAME_DENY: bool = True
 
 # Import path of the module holding the route table, or the routes themselves.
 ROUTES: str | list[Any] = []
@@ -158,9 +190,15 @@ STORAGES: dict[str, dict[str, Any]] = {
     }
 }
 
+# Publish/subscribe channels. The default backend keeps everything in this
+# process, so Intercom works before a project has a Redis and its tests need
+# nothing running. A deployment with more than one worker has to name
+# RedisIntercom instead: separate processes share nothing, so a message
+# published in one worker would not reach a socket held by another.
 INTERCOMS: dict[str, dict[str, Any]] = {
     "default": {
         "BACKEND": "nitro.intercom.backends.MemoryIntercom",
         "LOCATION": "",
+        "OPTIONS": {},
     }
 }

@@ -1,97 +1,115 @@
+"""The middleware that ships with Nitro.
+
+Each one is opt-in through the ``MIDDLEWARE`` setting; none is installed by
+default.
+"""
+
+from __future__ import annotations
+
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from nitro.middleware.base import Middleware
 from nitro.protocols.exceptions import HttpException
 from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket
 
+__all__ = [
+    "CORSMiddleware",
+    "ExceptionMiddleware",
+    "LoggingMiddleware",
+    "RateLimitMiddleware",
+    "SecurityHeadersMiddleware",
+]
+
 logger = logging.getLogger("nitro.middleware")
+
+HttpNext = Callable[[HttpRequest], Awaitable[Any]]
+
+
+def _protocol_of(connection: Any) -> str:
+    """Which protocol `connection` arrived over.
+
+    Read from the scope the server built, where it is an attribute rather than
+    a key: the scope is a compiled object, and asking it for an item raises.
+    """
+    return getattr(getattr(connection, "scope", None), "proto", "unknown")
 
 
 class LoggingMiddleware(Middleware):
-    """
-    Universal logging middleware that works for all protocols.
+    """Logs every connection and how long it was held, for every protocol."""
 
-    Uses __call__ to handle all connection types.
-    """
+    async def __call__(
+        self, connection: Any, call_next: Callable[[Any], Awaitable[Any]]
+    ) -> Any:
+        protocol = _protocol_of(connection)
+        path = getattr(connection, "path", "unknown")
 
-    async def __call__(self, connection, call_next):
-        """Log all requests/connections with timing."""
-        protocol = getattr(connection, "scope", {}).get("type", "unknown")
-        path = getattr(connection, "url", None) or getattr(
-            connection, "path", "unknown"
-        )
-
-        start_time = time.time()
-        logger.info(f"[{protocol.upper()}] Starting: {path}")
+        started = time.monotonic()
+        logger.info("%s started: %s", protocol, path)
 
         try:
             result = await call_next(connection)
-            duration = time.time() - start_time
-            logger.info(f"[{protocol.upper()}] Completed: {path} ({duration:.3f}s)")
-            return result
-        except Exception as e:
-            duration = time.time() - start_time
-            logger.error(f"[{protocol.upper()}] Failed: {path} ({duration:.3f}s) - {e}")
+        except Exception:
+            logger.exception(
+                "%s failed: %s (%.3fs)", protocol, path, time.monotonic() - started
+            )
             raise
+
+        logger.info(
+            "%s completed: %s (%.3fs)", protocol, path, time.monotonic() - started
+        )
+        return result
 
 
 class CORSMiddleware(Middleware):
-    """
-    CORS middleware for HTTP requests only.
+    """Cross-origin headers, including the preflight answer.
 
-    Adds CORS headers based on settings.CORS_* configuration.
+    Configured with the ``CORS_*`` settings.
     """
 
-    def __init__(self, app=None):
+    def __init__(self, app: Any | None = None) -> None:
         super().__init__(app)
 
-        # Load CORS settings
         from nitro.settings import settings
 
-        self.allow_origins = getattr(settings, "CORS_ALLOWED_ORIGINS", [])
-        self.allow_all = getattr(settings, "CORS_ALLOW_ALL_ORIGINS", False)
-        self.allow_credentials = getattr(settings, "CORS_ALLOW_CREDENTIALS", False)
-        self.allow_methods = getattr(settings, "CORS_ALLOW_METHODS", ["*"])
-        self.allow_headers = getattr(settings, "CORS_ALLOW_HEADERS", ["*"])
+        self.allow_origins: list[str] = list(settings.CORS_ALLOWED_ORIGINS)
+        self.allow_all: bool = bool(settings.CORS_ALLOW_ALL_ORIGINS)
+        self.allow_credentials: bool = bool(settings.CORS_ALLOW_CREDENTIALS)
+        self.allow_methods: list[str] = list(settings.CORS_ALLOW_METHODS)
+        self.allow_headers: list[str] = list(settings.CORS_ALLOW_HEADERS)
 
-    async def __http__(self, request: HttpRequest, call_next):
-        """Add CORS headers to HTTP responses."""
-        # Handle preflight requests
+    async def __http__(self, request: HttpRequest, call_next: HttpNext) -> Any:
         if request.method == "OPTIONS":
-            return self._build_preflight_response(request)
+            return self._preflight(request)
 
-        # Process normal request
         response = await call_next(request)
+        if not isinstance(response, HttpResponse):
+            # The handler answered through the protocol itself, so there are no
+            # headers left here to add to.
+            return response
 
-        # Add CORS headers
         origin = request.headers.get("origin")
-        if origin and self._is_allowed_origin(origin):
+        if origin and self._allows(origin):
             response.headers["Access-Control-Allow-Origin"] = origin
-
             if self.allow_credentials:
                 response.headers["Access-Control-Allow-Credentials"] = "true"
 
         return response
 
-    def _is_allowed_origin(self, origin: str) -> bool:
-        """Check if origin is allowed."""
-        if self.allow_all:
-            return True
-        return origin in self.allow_origins
+    def _allows(self, origin: str) -> bool:
+        return self.allow_all or origin in self.allow_origins
 
-    def _build_preflight_response(self, request: HttpRequest) -> HttpResponse:
-        """Build response for OPTIONS preflight request."""
-        headers = {}
+    def _preflight(self, request: HttpRequest) -> HttpResponse:
+        headers: dict[str, str] = {}
 
         origin = request.headers.get("origin")
-        if origin and self._is_allowed_origin(origin):
+        if origin and self._allows(origin):
             headers["Access-Control-Allow-Origin"] = origin
-
             if self.allow_credentials:
                 headers["Access-Control-Allow-Credentials"] = "true"
-
             headers["Access-Control-Allow-Methods"] = ", ".join(self.allow_methods)
             headers["Access-Control-Allow-Headers"] = ", ".join(self.allow_headers)
             headers["Access-Control-Max-Age"] = "600"
@@ -100,67 +118,50 @@ class CORSMiddleware(Middleware):
 
 
 class RateLimitMiddleware(Middleware):
-    """
-    Rate limiting middleware for HTTP and WebSocket.
+    """Refuses with 429 past a per-client limit.
 
-    Implements simple in-memory rate limiting per IP address.
+    The count is held in this process, so with several workers the effective
+    limit is this one multiplied by the number of them. It is a blunt guard
+    against one client flooding a worker, not a distributed quota.
     """
 
-    def __init__(self, app=None):
+    def __init__(self, app: Any | None = None) -> None:
         super().__init__(app)
-        self.requests: dict[str, list] = {}
-        self.max_requests = 100  # requests per window
-        self.window = 60  # seconds
+        self.requests: dict[str, list[float]] = {}
+        self.max_requests = 100
+        self.window = 60
 
-    async def __aenter__(self):
-        """Clean up old entries on each request."""
-        self._cleanup()
+    async def __aenter__(self) -> RateLimitMiddleware:
+        self._forget_expired()
         return self
 
-    def _cleanup(self):
-        """Remove expired entries."""
-        now = time.time()
-        for ip in list(self.requests.keys()):
-            self.requests[ip] = [
-                timestamp
-                for timestamp in self.requests[ip]
-                if now - timestamp < self.window
-            ]
-            if not self.requests[ip]:
-                del self.requests[ip]
+    def _forget_expired(self) -> None:
+        now = time.monotonic()
+        for client in list(self.requests):
+            recent = [stamp for stamp in self.requests[client] if now - stamp < self.window]
+            if recent:
+                self.requests[client] = recent
+            else:
+                del self.requests[client]
 
-    def _check_rate_limit(self, ip: str) -> bool:
-        """
-        Check if request is within rate limit.
-
-        Returns:
-            True if allowed, False if rate limited
-        """
-        now = time.time()
-
-        if ip not in self.requests:
-            self.requests[ip] = []
-
-        # Remove old requests
-        self.requests[ip] = [
-            timestamp
-            for timestamp in self.requests[ip]
-            if now - timestamp < self.window
+    def _within_limit(self, client: str) -> bool:
+        now = time.monotonic()
+        recent = [
+            stamp for stamp in self.requests.get(client, ()) if now - stamp < self.window
         ]
 
-        # Check limit
-        if len(self.requests[ip]) >= self.max_requests:
+        if len(recent) >= self.max_requests:
+            self.requests[client] = recent
             return False
 
-        # Add current request
-        self.requests[ip].append(now)
+        recent.append(now)
+        self.requests[client] = recent
         return True
 
-    async def __http__(self, request: HttpRequest, call_next):
-        """Rate limit HTTP requests."""
-        client_ip = request.client.host if request.client else "unknown"
+    async def __http__(self, request: HttpRequest, call_next: HttpNext) -> Any:
+        client = request.client.host if request.client else "unknown"
 
-        if not self._check_rate_limit(client_ip):
+        if not self._within_limit(client):
             return HttpResponse(
                 content={"error": "Rate limit exceeded"},
                 status_code=429,
@@ -169,11 +170,12 @@ class RateLimitMiddleware(Middleware):
 
         return await call_next(request)
 
-    async def __websocket__(self, websocket: WebSocket, call_next):
-        """Rate limit WebSocket connections."""
-        client_ip = websocket.client.host if websocket.client else "unknown"
+    async def __websocket__(
+        self, websocket: WebSocket, call_next: Callable[[WebSocket], Awaitable[None]]
+    ) -> None:
+        client = websocket.client.host if websocket.client else "unknown"
 
-        if not self._check_rate_limit(client_ip):
+        if not self._within_limit(client):
             await websocket.close(code=1008, reason="Rate limit exceeded")
             return
 
@@ -181,38 +183,36 @@ class RateLimitMiddleware(Middleware):
 
 
 class ExceptionMiddleware(Middleware):
-    """
-    Exception handling middleware for all protocols.
+    """Turns an exception into the answer the client is owed.
 
-    Catches exceptions and returns appropriate error responses.
+    An `HttpException` is an answer rather than a failure — raising `Http404`
+    gives a 404, not a 500 with a 404 buried in the log.
     """
 
-    async def __http__(self, request: HttpRequest, call_next):
-        """Handle HTTP exceptions."""
+    async def __http__(self, request: HttpRequest, call_next: HttpNext) -> Any:
         try:
             return await call_next(request)
-        except HttpException as e:
-            # Raising one of these is how a handler asks for a particular
-            # status, so it is an answer rather than a failure and must not be
-            # flattened into a 500.
-            handled, answer = await self._registered(request, e)
+        except HttpException as exception:
+            handled, answer = await self._registered(request, exception)
             if handled:
                 return answer
-            return self._debug_page(request, e.status_code, e) or e.as_response()
-        except Exception as e:
-            logger.exception(f"Unhandled exception in HTTP handler: {e}")
+            page = self._debug_page(request, exception.status_code, exception)
+            return page or exception.as_response()
+        except Exception as exception:
+            logger.exception("unhandled exception in the handler for %s", request.path)
 
-            handled, answer = await self._registered(request, e)
+            handled, answer = await self._registered(request, exception)
             if handled:
                 return answer
 
-            page = self._debug_page(request, 500, e)
+            page = self._debug_page(request, 500, exception)
             if page is not None:
                 return page
-
             return HttpResponse(content={"error": "Internal server error"}, status_code=500)
 
-    async def _registered(self, request: HttpRequest, exception: BaseException):
+    async def _registered(
+        self, request: HttpRequest, exception: BaseException
+    ) -> tuple[bool, Any]:
         """The application's own handler for `exception`, run here.
 
         This middleware catches before the application does, so without asking
@@ -249,13 +249,13 @@ class ExceptionMiddleware(Middleware):
             logger.exception("the debug page for %s could not be rendered", status_code)
             return None
 
-    async def __websocket__(self, websocket: WebSocket, call_next):
-        """Handle WebSocket exceptions."""
+    async def __websocket__(
+        self, websocket: WebSocket, call_next: Callable[[WebSocket], Awaitable[None]]
+    ) -> None:
         try:
             await call_next(websocket)
-        except Exception as e:
-            logger.exception(f"Unhandled exception in WebSocket handler: {e}")
-
+        except Exception:
+            logger.exception("unhandled exception in the handler for %s", websocket.path)
             try:
                 await websocket.close(code=1011, reason="Internal server error")
             except RuntimeError:
@@ -263,42 +263,32 @@ class ExceptionMiddleware(Middleware):
 
 
 class SecurityHeadersMiddleware(Middleware):
-    """
-    Security headers middleware for HTTP only.
+    """Adds the security headers named by the ``SECURE_*`` settings."""
 
-    Adds security-related headers based on settings.
-    """
-
-    def __init__(self, app=None):
+    def __init__(self, app: Any | None = None) -> None:
         super().__init__(app)
 
         from nitro.settings import settings
 
-        self.hsts_seconds = getattr(settings, "SECURE_HSTS_SECONDS", 0)
-        self.hsts_include_subdomains = getattr(
-            settings, "SECURE_HSTS_INCLUDE_SUBDOMAINS", False
-        )
-        self.content_type_nosniff = getattr(
-            settings, "SECURE_CONTENT_TYPE_NOSNIFF", True
-        )
-        self.frame_deny = getattr(settings, "SECURE_FRAME_DENY", True)
+        self.hsts_seconds: int = settings.SECURE_HSTS_SECONDS
+        self.hsts_include_subdomains: bool = settings.SECURE_HSTS_INCLUDE_SUBDOMAINS
+        self.content_type_nosniff: bool = settings.SECURE_CONTENT_TYPE_NOSNIFF
+        self.frame_deny: bool = settings.SECURE_FRAME_DENY
 
-    async def __http__(self, request: HttpRequest, call_next):
-        """Add security headers to response."""
+    async def __http__(self, request: HttpRequest, call_next: HttpNext) -> Any:
         response = await call_next(request)
+        if not isinstance(response, HttpResponse):
+            return response
 
-        # HSTS
         if self.hsts_seconds > 0:
-            hsts_value = f"max-age={self.hsts_seconds}"
+            value = f"max-age={self.hsts_seconds}"
             if self.hsts_include_subdomains:
-                hsts_value += "; includeSubDomains"
-            response.headers["Strict-Transport-Security"] = hsts_value
+                value += "; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = value
 
-        # X-Content-Type-Options
         if self.content_type_nosniff:
             response.headers["X-Content-Type-Options"] = "nosniff"
 
-        # X-Frame-Options
         if self.frame_deny:
             response.headers["X-Frame-Options"] = "DENY"
 

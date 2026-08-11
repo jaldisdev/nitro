@@ -11,6 +11,8 @@ use nitro_observability::ExporterConfig;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::hosts::AllowedHosts;
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
     #[error("{field} must be at least {minimum}, got {value}")]
@@ -223,6 +225,9 @@ impl Default for AccessLogConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
     pub bind: BindAddress,
+    /// The host names this server answers for. Checked before a request
+    /// reaches the application; an empty list answers for every name.
+    pub allowed_hosts: AllowedHosts,
     pub tls: Option<TlsSettings>,
     pub http: HttpVersion,
     pub websockets: bool,
@@ -254,6 +259,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             bind: BindAddress::tcp("localhost", 8000),
+            allowed_hosts: AllowedHosts::default(),
             tls: None,
             http: HttpVersion::default(),
             websockets: true,

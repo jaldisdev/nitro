@@ -24,7 +24,7 @@ use crate::headers::Headers;
 use crate::lifecycle::drain::DrainCoordinator;
 use crate::lifecycle::signals::ShutdownSignal;
 use crate::transport::accept::BindError;
-use crate::transport::connection::ConnectionContext;
+use crate::transport::connection::{self, ConnectionContext};
 use crate::transport::tls::{TlsError, TlsMaterial};
 use crate::transport::{
     BodyError, Dispatch, HttpRequest, HttpResponse, RequestBody, RequestParts, Scheme,
@@ -233,6 +233,23 @@ async fn serve_connection<D: Dispatch>(
 
         let parts = parts_from(&request, client, server);
 
+        // The same refusal a request over TCP gets, and for the same reason:
+        // nothing downstream should see a host name the deployment did not
+        // configure. A WebTransport session is refused here too — its CONNECT
+        // carries an authority like any other request.
+        if !context.config().allowed_hosts.permits(parts.authority()) {
+            tracing::debug!(
+                %client,
+                host = ?parts.authority(),
+                "refusing a request for an unconfigured host"
+            );
+            let refused = send_plain(stream, connection::host_refusal()).await;
+            if let Err(error) = refused {
+                tracing::debug!(%client, %error, "could not refuse an unconfigured host");
+            }
+            continue;
+        }
+
         if webtransport && is_webtransport(&request) {
             // The session takes over the whole connection, so nothing else can
             // be served on it afterwards.
@@ -274,6 +291,50 @@ async fn serve_connection<D: Dispatch>(
     // Letting the peer close avoids resetting a stream it has just been served
     // on; if it does not, the timeout ends the wait.
     let _closed = tokio::time::timeout(CLOSE_GRACE, closing.closed()).await;
+}
+
+/// Write a short response and finish the stream.
+///
+/// For answers the server produces without the application: no access log
+/// entry, no metrics, no body streaming — the whole thing is a status and a
+/// sentence.
+async fn send_plain(
+    stream: h3::server::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>,
+    response: HttpResponse,
+) -> Result<(), String> {
+    let HttpResponse {
+        status,
+        headers,
+        body,
+        route: _,
+    } = response;
+
+    let (mut sender, _receiver) = stream.split();
+    let mut head = Response::new(());
+    *head.status_mut() = status;
+    *head.headers_mut() = headers.into_map();
+
+    sender
+        .send_response(head)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut body = std::pin::pin!(body.into_boxed());
+    while let Some(frame) = std::future::poll_fn(|context| body.as_mut().poll_frame(context)).await
+    {
+        match frame {
+            Ok(frame) => {
+                if let Ok(chunk) = frame.into_data()
+                    && sender.send_data(chunk).await.is_err()
+                {
+                    break;
+                }
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    sender.finish().await.map_err(|error| error.to_string())
 }
 
 fn is_webtransport(request: &Request<()>) -> bool {

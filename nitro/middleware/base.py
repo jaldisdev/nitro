@@ -1,191 +1,134 @@
+"""The middleware contract.
+
+A middleware wraps a handler. It may implement one hook per protocol —
+``__http__``, ``__websocket__``, ``__webtransport__`` — or a single ``__call__``
+that answers for all three.
+
+Which hooks a middleware implements is read off its class by comparing the
+attribute with the one this class defines. A hook is never called to find out
+whether it exists: doing that makes an error raised *inside* a middleware
+indistinguishable from the middleware not being there, and the middleware is
+then skipped for every connection with nothing said about it.
+"""
+
+from __future__ import annotations
+
 from abc import ABC
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from types import TracebackType
+from typing import Any, Final
 
 from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket
 from nitro.protocols.webtransport import WebTransportSession
 
+__all__ = ["PROTOCOL_HOOKS", "UNIVERSAL_HOOK", "Middleware", "MiddlewareProtocol"]
+
+
+class MiddlewareProtocol:
+    """The protocols a middleware may answer for."""
+
+    HTTP: Final = "http"
+    WEBSOCKET: Final = "websocket"
+    WEBTRANSPORT: Final = "webtransport"
+
+
+#: The hook each protocol looks for. Named here rather than built from the
+#: protocol name, so the set of hooks is something that can be read.
+PROTOCOL_HOOKS: Final[dict[str, str]] = {
+    MiddlewareProtocol.HTTP: "__http__",
+    MiddlewareProtocol.WEBSOCKET: "__websocket__",
+    MiddlewareProtocol.WEBTRANSPORT: "__webtransport__",
+}
+
+#: The hook that answers for any protocol a middleware has no specific one for.
+UNIVERSAL_HOOK: Final = "__call__"
+
 
 class Middleware(ABC):
-    """
-    Base middleware class for Nitro framework.
+    """Base class for middleware.
 
-    Middleware can implement protocol-specific handlers that are called
-    based on the connection type. If a protocol-specific method is not
-    implemented, the middleware is skipped for that protocol.
+    Implement whichever of the protocol hooks apply. A middleware that does not
+    implement one is left out of that protocol's chain rather than having to
+    pass the connection through itself.
 
-    Example:
-        class LoggingMiddleware(Middleware):
-            async def __http__(self, request: HttpRequest, call_next):
-                start_time = time.time()
+        class TimingMiddleware(Middleware):
+            async def __http__(self, request, call_next):
+                started = time.perf_counter()
                 response = await call_next(request)
-                duration = time.time() - start_time
-                logger.info(f'HttpRequest to {request.url.path} took {duration}s')
+                elapsed = time.perf_counter() - started
+                logger.info("%s took %.3fs", request.path, elapsed)
                 return response
-
-            async def __websocket__(self, websocket: WebSocket, call_next):
-                logger.info(f'WebSocket connection to {websocket.url.path}')
-                await call_next(websocket)
     """
 
-    def __init__(self, app: Any | None = None):
-        """
-        Initialize middleware.
-
-        Args:
-            app: Optional application instance for accessing configuration
-        """
+    def __init__(self, app: Any | None = None) -> None:
         self.app = app
 
-    async def __aenter__(self):
-        """
-        Async context manager entry point.
-        Called before processing each request/connection.
-        """
+    async def __aenter__(self) -> Middleware:
+        """Entered once per connection, around this middleware's hook."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """
-        Async context manager exit point.
-        Called after processing each request/connection.
+    async def __aexit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Left when this middleware's hook has returned or raised.
 
-        Args:
-            exc_type: Exception type if an error occurred
-            exc_val: Exception value if an error occurred
-            exc_tb: Exception traceback if an error occurred
-
-        Returns:
-            None to propagate exceptions, True to suppress them
+        Returning `True` suppresses the exception, as it does for any context
+        manager; returning `None` lets it carry on to the layer outside.
         """
         return None
 
     async def __http__(
-        self, request: HttpRequest, call_next: Callable[[HttpRequest], Awaitable[HttpResponse]]
+        self,
+        request: HttpRequest,
+        call_next: Callable[[HttpRequest], Awaitable[HttpResponse]],
     ) -> HttpResponse:
-        """
-        Handle HTTP request/response cycle.
-
-        Args:
-            request: The incoming HTTP request
-            call_next: Callable to invoke the next middleware or route handler
-
-        Returns:
-            HTTP response
-
-        Note:
-            This method is optional. If not implemented, the middleware
-            will be skipped for HTTP requests.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not implement __http__"
-        )
+        """Handle one HTTP request. Optional."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement __http__")
 
     async def __websocket__(
-        self, websocket: WebSocket, call_next: Callable[[WebSocket], Awaitable[None]]
+        self,
+        websocket: WebSocket,
+        call_next: Callable[[WebSocket], Awaitable[None]],
     ) -> None:
-        """
-        Handle WebSocket connection lifecycle.
-
-        Args:
-            websocket: The WebSocket connection
-            call_next: Callable to invoke the next middleware or route handler
-
-        Note:
-            This method is optional. If not implemented, the middleware
-            will be skipped for WebSocket connections.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not implement __websocket__"
-        )
+        """Handle one WebSocket connection. Optional."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement __websocket__")
 
     async def __webtransport__(
         self,
         session: WebTransportSession,
         call_next: Callable[[WebTransportSession], Awaitable[None]],
     ) -> None:
-        """
-        Handle WebTransport session lifecycle.
-
-        Args:
-            session: The WebTransport session
-            call_next: Callable to invoke the next middleware or route handler
-
-        Note:
-            This method is optional. If not implemented, the middleware
-            will be skipped for WebTransport sessions.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not implement __webtransport__"
-        )
+        """Handle one WebTransport session. Optional."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement __webtransport__")
 
     async def __call__(
-        self, connection: Any, call_next: Callable[[Any], Awaitable[Any]]
+        self,
+        connection: Any,
+        call_next: Callable[[Any], Awaitable[Any]],
     ) -> Any:
+        """Handle a connection of any protocol. Optional.
+
+        Used for the protocols this middleware has no specific hook for, so one
+        implementation can cover all three.
         """
-        Universal handler for all protocols.
+        raise NotImplementedError(f"{type(self).__name__} does not implement __call__")
 
-        This method is used as a fallback if a protocol-specific method
-        is not implemented. It receives a generic connection object and
-        must handle it appropriately.
-
-        Args:
-            connection: The connection object (HttpRequest, WebSocket, or WebTransportSession)
-            call_next: Callable to invoke the next middleware or route handler
-
-        Returns:
-            The result of the next middleware/handler
-
-        Note:
-            This method is optional. If neither this nor a protocol-specific
-            method is implemented, the middleware will be skipped.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not implement __call__"
-        )
+    @classmethod
+    def implements(cls, hook: str) -> bool:
+        """Whether `cls` provides `hook` rather than inheriting the base one."""
+        return getattr(cls, hook, None) is not getattr(Middleware, hook, None)
 
     def has_protocol_support(self, protocol: str) -> bool:
-        """
-        Check if this middleware supports a specific protocol.
+        """Whether this middleware answers for `protocol`."""
+        try:
+            hook = PROTOCOL_HOOKS[protocol]
+        except KeyError:
+            known = ", ".join(sorted(PROTOCOL_HOOKS))
+            raise ValueError(f"{protocol!r} is not a protocol; expected one of {known}") from None
 
-        Args:
-            protocol: Protocol name ('http', 'websocket', 'webtransport')
-
-        Returns:
-            True if the middleware implements a handler for this protocol
-        """
-        method_name = f"__{protocol}__"
-
-        # Check if protocol-specific method is implemented
-        if hasattr(self, method_name):
-            method = getattr(self, method_name)
-            # Check if it's actually implemented (not just the base class version)
-            try:
-                # Get the implementation from the instance's class
-                impl = getattr(self.__class__, method_name, None)
-                if impl is not None and impl is not getattr(
-                    Middleware, method_name, None
-                ):
-                    return True
-            except AttributeError:
-                pass
-
-        # Check if universal __call__ is implemented
-        if hasattr(self, "__call__"):
-            try:
-                impl = getattr(self.__class__, "__call__", None)
-                if impl is not None and impl is not getattr(
-                    Middleware, "__call__", None
-                ):
-                    return True
-            except AttributeError:
-                pass
-
-        return False
-
-
-class MiddlewareProtocol:
-    """Protocol identifier for middleware handlers."""
-
-    HTTP = "http"
-    WEBSOCKET = "websocket"
-    WEBTRANSPORT = "webtransport"
+        middleware_class = type(self)
+        return middleware_class.implements(hook) or middleware_class.implements(UNIVERSAL_HOOK)

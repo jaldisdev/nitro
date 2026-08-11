@@ -98,9 +98,12 @@ class LazySettings:
 settings = LazySettings()
 
 
-# Configured as flat top-level settings rather than under SERVER, so they are
-# named here to keep the two from being confused for one another.
-OBSERVABILITY_OPTIONS: tuple[str, ...] = (
+# Server options configured as flat top-level settings rather than under
+# SERVER, so they are named here to keep the two from being confused for one
+# another. ALLOWED_HOSTS is one of them because it is a property of the site
+# rather than of the socket, even though the server is what enforces it.
+TOP_LEVEL_OPTIONS: tuple[str, ...] = (
+    "allowed_hosts",
     "observability_enabled",
     "observability_host",
     "observability_port",
@@ -118,6 +121,11 @@ class ServerOptions:
     host: str = "localhost"
     port: int = 8000
     uds: str | None = None
+
+    #: Host names the server answers for, from the ``ALLOWED_HOSTS`` setting.
+    #: Empty answers for every name; the server checks each request against
+    #: this before the application sees it.
+    allowed_hosts: list[str] = dataclasses.field(default_factory=list)
 
     tls_cert: str | None = None
     tls_key: str | None = None
@@ -170,7 +178,7 @@ class ServerOptions:
             configured = {}
 
         values: dict[str, Any] = {}
-        for name in OBSERVABILITY_OPTIONS:
+        for name in TOP_LEVEL_OPTIONS:
             try:
                 value = getattr(settings_source, name.upper())
             except (AttributeError, ImproperlyConfigured):
@@ -179,7 +187,7 @@ class ServerOptions:
 
         for key, value in configured.items():
             name = key.lower()
-            if name in OBSERVABILITY_OPTIONS:
+            if name in TOP_LEVEL_OPTIONS:
                 raise ImproperlyConfigured(
                     f"{key} is a top-level setting, not a SERVER key"
                 )

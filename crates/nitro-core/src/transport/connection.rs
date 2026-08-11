@@ -98,6 +98,33 @@ impl<D: Dispatch> ConnectionContext<D> {
         &self.dispatch
     }
 
+    /// Whether this server answers for the host the request names.
+    ///
+    /// The authority is read the same way [`RequestParts::authority`] reads it
+    /// — from the request target where the protocol carries one, and from the
+    /// `Host` header otherwise — but without building the parts, since a
+    /// refused request never needs them.
+    pub(crate) fn permits_host(&self, uri: &http::Uri, headers: &http::HeaderMap) -> bool {
+        if self.config.allowed_hosts.is_unrestricted() {
+            return true;
+        }
+
+        let authority = uri
+            .authority()
+            .map(|authority| authority.as_str())
+            .or_else(|| {
+                headers
+                    .get(http::header::HOST)
+                    .and_then(|value| value.to_str().ok())
+            });
+
+        if !self.config.allowed_hosts.permits(authority) {
+            tracing::debug!(host = ?authority, "refusing a request for an unconfigured host");
+            return false;
+        }
+        true
+    }
+
     /// The headers the server owns, added to a response on its way out.
     ///
     /// Every transport calls this, because a response should not depend on
@@ -348,6 +375,15 @@ impl<D: Dispatch> Service<Request<Incoming>> for RequestService<D> {
         let watcher =
             DisconnectWatcher::new(self.disconnect.clone(), self.context.server_drain.clone());
 
+        // Before anything else, including the upgrade path: a request for a
+        // host this server does not answer for is refused here rather than
+        // reaching the application, so nothing is built from a name a client
+        // chose.
+        if !context.permits_host(request.uri(), request.headers()) {
+            let refusal = finish(host_refusal(), &context);
+            return Box::pin(async move { Ok(refusal) });
+        }
+
         if context.config.websockets && websocket::is_upgrade_request(request.headers()) {
             let upgrading = start_upgrade(&mut request, addresses, scheme, watcher, context);
             return Box::pin(async move { Ok(upgrading.await) });
@@ -457,6 +493,17 @@ fn finish_plain(response: HttpResponse) -> Response<BoxBody<Bytes, StreamError>>
             .insert(http::header::CONTENT_LENGTH, HeaderValue::from(length));
     }
     built
+}
+
+/// The answer to a request naming a host this server does not serve.
+///
+/// Deliberately says nothing about which hosts would have worked: the list is
+/// deployment configuration, not something a client is entitled to enumerate.
+pub(crate) fn host_refusal() -> HttpResponse {
+    HttpResponse::text(
+        StatusCode::BAD_REQUEST,
+        "Bad Request: unrecognised Host header",
+    )
 }
 
 fn request_parts(

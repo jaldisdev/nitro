@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from nitro.middleware.base import Middleware
@@ -7,25 +9,58 @@ from nitro.protocols.http import HttpRequest, HttpResponse
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-class FakeHeaders(dict):
+class FakeHeaders:
+    """The compiled `Headers`: a `get`, and nothing a dict would also answer.
+
+    Not a `dict` subclass. The real object is a compiled class, so anything
+    written against a mapping — `scope["type"]`, `.items()`, `in` — fails
+    against the server and must fail here too.
+    """
+
+    def __init__(self, values=None):
+        self._values = {name.lower(): value for name, value in (values or {}).items()}
+
     def get(self, name, default=None):
-        return super().get(name.lower(), default)
+        return self._values.get(name.lower(), default)
 
 
 class FakeScope:
-    """Stands in for the compiled scope object."""
+    """Stands in for the compiled scope object.
 
-    def __init__(self, method="GET", path="/", headers=None, query_string=""):
-        self.method = method
-        self.path = path
-        self.query_string = query_string
-        self.scheme = "http"
-        self.authority = "localhost:8000"
-        self.http_version = "1.1"
-        self.headers = FakeHeaders({name.lower(): value for name, value in (headers or {}).items()})
-        self.client = ("127.0.0.1", 9000)
-        self.server = ("localhost", 8000)
-        self.path_params = {}
+    Attributes only, and frozen: the real scope is a PyO3 class with neither a
+    `get` nor a `__setattr__`, and a double that is more permissive lets code
+    through that the server would reject.
+    """
+
+    __slots__ = (
+        "authority",
+        "client",
+        "headers",
+        "http_version",
+        "method",
+        "path",
+        "path_params",
+        "proto",
+        "query_string",
+        "scheme",
+        "server",
+    )
+
+    def __init__(self, method="GET", path="/", headers=None, query_string="", proto="http"):
+        object.__setattr__(self, "method", method)
+        object.__setattr__(self, "path", path)
+        object.__setattr__(self, "query_string", query_string)
+        object.__setattr__(self, "proto", proto)
+        object.__setattr__(self, "scheme", "http")
+        object.__setattr__(self, "authority", "localhost:8000")
+        object.__setattr__(self, "http_version", "1.1")
+        object.__setattr__(self, "headers", FakeHeaders(headers))
+        object.__setattr__(self, "client", ("127.0.0.1", 9000))
+        object.__setattr__(self, "server", ("localhost", 8000))
+        object.__setattr__(self, "path_params", {})
+
+    def __setattr__(self, name, value):
+        raise AttributeError(f"{name!r} is read-only on a scope")
 
 
 class FakeProtocol:
@@ -197,13 +232,11 @@ async def async_empty_handler(r):
 
 class TestCORSMiddleware:
     def make_cors_middleware(self, allow_origins=None, allow_all=False):
-        import os
-
-        os.environ.setdefault("NITRO_CONFIG_MODULE", "")
         from nitro.middleware.common import CORSMiddleware
 
-        mw = CORSMiddleware.__new__(CORSMiddleware)
-        mw.app = None
+        # Built normally, so the settings it reads are exercised too; the
+        # values a case cares about are then set on the instance.
+        mw = CORSMiddleware()
         mw.allow_origins = allow_origins or ["https://example.com"]
         mw.allow_all = allow_all
         mw.allow_credentials = False
@@ -242,29 +275,26 @@ class TestRateLimitMiddleware:
     def make_rate_limit_middleware(self, max_requests=10):
         from nitro.middleware.common import RateLimitMiddleware
 
-        mw = RateLimitMiddleware.__new__(RateLimitMiddleware)
-        mw.app = None
-        mw.requests = {}
+        mw = RateLimitMiddleware()
         mw.max_requests = max_requests
-        mw.window = 60
         return mw
 
     def test_allows_requests_under_limit(self):
         mw = self.make_rate_limit_middleware(max_requests=5)
         for _ in range(5):
-            assert mw._check_rate_limit("127.0.0.1") is True
+            assert mw._within_limit("127.0.0.1") is True
 
     def test_blocks_requests_over_limit(self):
         mw = self.make_rate_limit_middleware(max_requests=3)
         for _ in range(3):
-            mw._check_rate_limit("127.0.0.1")
-        assert mw._check_rate_limit("127.0.0.1") is False
+            mw._within_limit("127.0.0.1")
+        assert mw._within_limit("127.0.0.1") is False
 
     def test_different_ips_independent(self):
         mw = self.make_rate_limit_middleware(max_requests=1)
-        assert mw._check_rate_limit("1.1.1.1") is True
-        assert mw._check_rate_limit("2.2.2.2") is True
-        assert mw._check_rate_limit("1.1.1.1") is False
+        assert mw._within_limit("1.1.1.1") is True
+        assert mw._within_limit("2.2.2.2") is True
+        assert mw._within_limit("1.1.1.1") is False
 
     @pytest.mark.asyncio
     async def test_rate_limited_returns_429(self):
@@ -278,8 +308,7 @@ class TestSecurityHeadersMiddleware:
     def make_security_middleware(self, hsts=0, nosniff=True, frame_deny=True):
         from nitro.middleware.common import SecurityHeadersMiddleware
 
-        mw = SecurityHeadersMiddleware.__new__(SecurityHeadersMiddleware)
-        mw.app = None
+        mw = SecurityHeadersMiddleware()
         mw.hsts_seconds = hsts
         mw.hsts_include_subdomains = False
         mw.content_type_nosniff = nosniff
@@ -333,3 +362,111 @@ class TestExceptionMiddlewareStatuses:
 
         response = await ExceptionMiddleware().__http__(make_request(), raises)
         assert response.status_code == 500
+
+
+class TestMiddlewareErrorsPropagate:
+    """A failure inside a middleware is a failure, not a reason to skip it.
+
+    Detecting "not implemented" by catching what a call raised made any
+    AttributeError or NotImplementedError from a middleware body look like the
+    middleware not being there, and the connection was then served as though it
+    had never been installed.
+    """
+
+    async def test_an_attribute_error_inside_a_hook_reaches_the_caller(self):
+        class Broken(Middleware):
+            async def __http__(self, request, call_next):
+                request.scope.no_such_attribute
+                return await call_next(request)
+
+        stack = MiddlewareStack(app=None, middleware_paths=[])
+        stack.add_middleware(Broken())
+
+        async def handler(request):
+            raise AssertionError("the handler must not be reached")
+
+        with pytest.raises(AttributeError):
+            await stack.execute_http(make_request(), handler)
+
+    async def test_a_not_implemented_error_inside_a_hook_reaches_the_caller(self):
+        class Partial(Middleware):
+            async def __http__(self, request, call_next):
+                raise NotImplementedError("this path is not written yet")
+
+        stack = MiddlewareStack(app=None, middleware_paths=[])
+        stack.add_middleware(Partial())
+
+        async def handler(request):
+            raise AssertionError("the handler must not be reached")
+
+        with pytest.raises(NotImplementedError, match="not written yet"):
+            await stack.execute_http(make_request(), handler)
+
+    async def test_a_middleware_that_implements_nothing_is_skipped(self):
+        class Empty(Middleware):
+            pass
+
+        stack = MiddlewareStack(app=None, middleware_paths=[])
+        stack.add_middleware(Empty())
+
+        async def handler(request):
+            return HttpResponse(content="handler")
+
+        response = await stack.execute_http(make_request(), handler)
+        assert response.body == b"handler"
+
+    def test_a_constructor_failure_is_not_reported_as_a_missing_import(self):
+        with pytest.raises(RuntimeError, match="deliberate"):
+            MiddlewareStack(
+                app=None,
+                middleware_paths=["test_middleware.RefusesToBuild"],
+            )
+
+
+class RefusesToBuild(Middleware):
+    """Used by the test above; it must be importable by path."""
+
+    def __init__(self, app=None):
+        raise RuntimeError("deliberate")
+
+
+class TestLoggingMiddleware:
+    """It reads the scope the server actually builds."""
+
+    async def test_it_logs_the_connection(self, caplog):
+        from nitro.middleware.common import LoggingMiddleware
+
+        stack = MiddlewareStack(app=None, middleware_paths=[])
+        stack.add_middleware(LoggingMiddleware())
+
+        async def handler(request):
+            return HttpResponse(content="ok")
+
+        with caplog.at_level(logging.INFO, logger="nitro.middleware"):
+            response = await stack.execute_http(make_request(path="/logged"), handler)
+
+        assert response.body == b"ok"
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("http started: /logged" in message for message in messages), messages
+        assert any("http completed: /logged" in message for message in messages), messages
+
+    async def test_it_reads_the_protocol_from_the_scope(self):
+        from nitro.middleware.common import _protocol_of
+
+        request = HttpRequest(FakeScope(proto="websocket"), FakeProtocol())
+        assert _protocol_of(request) == "websocket"
+
+    async def test_a_failure_is_logged_and_re_raised(self, caplog):
+        from nitro.middleware.common import LoggingMiddleware
+
+        stack = MiddlewareStack(app=None, middleware_paths=[])
+        stack.add_middleware(LoggingMiddleware())
+
+        async def handler(request):
+            raise RuntimeError("deliberate")
+
+        with caplog.at_level(logging.INFO, logger="nitro.middleware"):
+            with pytest.raises(RuntimeError, match="deliberate"):
+                await stack.execute_http(make_request(), handler)
+
+        assert any("failed" in record.getMessage() for record in caplog.records)
