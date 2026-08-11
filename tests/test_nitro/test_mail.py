@@ -398,7 +398,36 @@ class TestBaseEmailBackend:
         with pytest.raises(TypeError):
             BaseEmailBackend()
 
-    def test_concrete_subclass_stores_init_params(self):
+    def test_the_base_knows_nothing_about_transports(self):
+        # Host, port, credentials and TLS belong to SMTP, not to email: an API
+        # key is not a password and an endpoint is not a host. A backend that
+        # wants them declares them itself.
+        assert not hasattr(BaseEmailBackend, "host")
+        assert set(SMTPBackend.settings_map) >= {"host", "port", "username"}
+        assert "host" not in SendGridBackend.settings_map
+
+    def test_concrete_subclass_stores_its_own_params(self):
+        class Concrete(BaseEmailBackend):
+            def __init__(self, endpoint="", **kwargs):
+                super().__init__(**kwargs)
+                self.endpoint = endpoint
+
+            async def open(self):
+                return True
+
+            async def close(self):
+                pass
+
+            async def send_messages(self, messages, fail_silently=None):
+                return 0
+
+        backend = Concrete(endpoint="https://mail.example.com")
+        assert backend.endpoint == "https://mail.example.com"
+        assert backend.fail_silently is False
+
+    def test_fail_silently_is_not_rewritten_per_call(self):
+        # Writing the argument onto the instance let one caller's choice leak
+        # into another's, which with a shared connection is every other send.
         class Concrete(BaseEmailBackend):
             async def open(self):
                 return True
@@ -406,25 +435,14 @@ class TestBaseEmailBackend:
             async def close(self):
                 pass
 
-            async def send_messages(self, messages, fail_silently=False):
-                return 0
+            async def send_messages(self, messages, fail_silently=None):
+                return int(self._silence(fail_silently))
 
-        b = Concrete(
-            host="smtp.example.com",
-            port=587,
-            username="user",
-            password="pass",
-            use_tls=True,
-            use_ssl=False,
-            timeout=30,
-        )
-        assert b.host == "smtp.example.com"
-        assert b.port == 587
-        assert b.username == "user"
-        assert b.password == "pass"
-        assert b.use_tls is True
-        assert b.use_ssl is False
-        assert b.timeout == 30
+        backend = Concrete()
+        assert backend.fail_silently is False
+        assert backend._silence(True) is True
+        assert backend.fail_silently is False, "the instance must be untouched"
+        assert backend._silence(None) is False
 
     def test_extra_kwargs_stored_in_options(self):
         class Concrete(BaseEmailBackend):
@@ -434,10 +452,10 @@ class TestBaseEmailBackend:
             async def close(self):
                 pass
 
-            async def send_messages(self, messages, fail_silently=False):
+            async def send_messages(self, messages, fail_silently=None):
                 return 0
 
-        b = Concrete(host="h", custom_param="value")
+        b = Concrete(custom_param="value")
         assert b.options.get("custom_param") == "value"
 
     @pytest.mark.asyncio
@@ -733,7 +751,7 @@ class TestOAuth2SMTPBackend:
     @pytest.mark.asyncio
     async def test_get_token_raises_when_unconfigured(self):
         backend = OAuth2SMTPBackend(host="h")
-        with pytest.raises(ValueError, match="OAuth2 token not configured"):
+        with pytest.raises(ValueError, match="no OAuth2 token is configured"):
             await backend._get_oauth_token()
 
     @pytest.mark.asyncio
@@ -902,7 +920,7 @@ class TestSendGridBackend:
 
         mock_response = MagicMock()
         mock_response.status_code = 500
-        mock_response.json.side_effect = Exception("not json")
+        mock_response.json.side_effect = ValueError("not json")
         mock_response.text = "Server Error"
 
         mock_client = AsyncMock()
@@ -959,12 +977,29 @@ class TestGetConnection:
         assert isinstance(conn, ConsoleBackend)
 
     def test_explicit_kwarg_overrides_settings_value(self):
-        with patch("nitro.settings.settings", _SETTINGS):
+        settings = _MockSettings()
+        settings.EMAIL_HOST = "configured.host"
+
+        with patch("nitro.settings.settings", settings):
             conn = get_connection(
-                backend="nitro.mail.backends.console.ConsoleBackend",
+                backend="nitro.mail.backends.smtp.SMTPBackend",
                 host="custom.host",
             )
         assert conn.host == "custom.host"
+
+    def test_a_backend_is_given_only_the_settings_it_declares(self):
+        # The old dispatch matched on the import path, so anything containing
+        # "ses" was handed AWS credentials.
+        settings = _MockSettings()
+        settings.EMAIL_AWS_ACCESS_KEY_ID = "AKID"
+        settings.EMAIL_HOST = "smtp.example.com"
+
+        with patch("nitro.settings.settings", settings):
+            conn = get_connection(backend="nitro.mail.backends.smtp.SMTPBackend")
+
+        assert conn.host == "smtp.example.com"
+        assert not hasattr(conn, "aws_access_key_id")
+        assert "aws_access_key_id" not in conn.options
 
     def test_smtp_backend_receives_host_port_credentials(self):
         settings = _MockSettings()
@@ -1028,24 +1063,23 @@ class TestGetConnection:
         assert conn.oauth2_token_callback == "myapp.auth.get_token"
 
     def test_ses_backend_receives_region_and_credentials(self):
+        from nitro.mail.backends.ses import SESBackend
+
         settings = _MockSettings()
         settings.EMAIL_AWS_REGION = "eu-central-1"
         settings.EMAIL_AWS_ACCESS_KEY_ID = "AKID"
         settings.EMAIL_AWS_SECRET_ACCESS_KEY = "SECRET"
 
-        mock_ses_class = MagicMock()
-
         with (
             patch("nitro.settings.settings", settings),
             patch("nitro.mail.backends.ses.aioboto3", MagicMock()),
-            patch("nitro.mail.backends.ses.SESBackend", mock_ses_class),
         ):
-            get_connection(backend="nitro.mail.backends.ses.SESBackend")
+            conn = get_connection(backend="nitro.mail.backends.ses.SESBackend")
 
-        kwargs = mock_ses_class.call_args[1]
-        assert kwargs["region_name"] == "eu-central-1"
-        assert kwargs["aws_access_key_id"] == "AKID"
-        assert kwargs["aws_secret_access_key"] == "SECRET"
+        assert isinstance(conn, SESBackend)
+        assert conn.region_name == "eu-central-1"
+        assert conn.aws_access_key_id == "AKID"
+        assert conn.aws_secret_access_key == "SECRET"
 
 
 # ---------------------------------------------------------------------------

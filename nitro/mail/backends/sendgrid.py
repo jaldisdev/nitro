@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 try:
     import httpx
@@ -11,8 +11,17 @@ from nitro.mail.backends.base import BaseEmailBackend
 if TYPE_CHECKING:
     from nitro.mail.message import EmailMessage
 
+__all__ = ["SendGridBackend", "SendGridError"]
 
 logger = logging.getLogger(__name__)
+
+
+class SendGridError(RuntimeError):
+    """SendGrid refused a message.
+
+    Its own type rather than a bare `Exception`, so a caller can catch this
+    without also catching every other way sending can go wrong.
+    """
 
 
 class SendGridBackend(BaseEmailBackend):
@@ -27,8 +36,18 @@ class SendGridBackend(BaseEmailBackend):
         EMAIL_SENDGRID_SANDBOX_MODE = False  # Optional
     """
 
+    settings_map: ClassVar[dict[str, str]] = {
+        "api_key": "EMAIL_SENDGRID_API_KEY",
+        "sandbox_mode": "EMAIL_SENDGRID_SANDBOX_MODE",
+        "timeout": "EMAIL_TIMEOUT",
+    }
+
     def __init__(
-        self, api_key: str | None = None, sandbox_mode: bool = False, **kwargs
+        self,
+        api_key: str | None = None,
+        sandbox_mode: bool = False,
+        timeout: int | None = None,
+        **kwargs,
     ) -> None:
         if httpx is None:
             raise ImportError(
@@ -40,6 +59,7 @@ class SendGridBackend(BaseEmailBackend):
 
         self.api_key = api_key
         self.sandbox_mode = sandbox_mode
+        self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
 
     async def open(self) -> bool:
@@ -77,7 +97,7 @@ class SendGridBackend(BaseEmailBackend):
     async def send_messages(
         self,
         email_messages: list["EmailMessage"],
-        fail_silently: bool = False,
+        fail_silently: bool | None = None,
     ) -> int:
         """
         Send one or more EmailMessage objects via SendGrid.
@@ -85,28 +105,29 @@ class SendGridBackend(BaseEmailBackend):
         if not email_messages:
             return 0
 
-        self.fail_silently = fail_silently
+        silence = self._silence(fail_silently)
 
-        # Open client if not already open
-        await self.open()
-
-        if self._client is None:
-            if not fail_silently:
-                raise ConnectionError("Failed to initialize SendGrid client")
+        # Broad, but only ever reached when a caller asked for silence; every
+        # one of these re-raises otherwise.
+        try:
+            await self.open()
+        except Exception:
+            if not silence:
+                raise
+            logger.exception("the SendGrid client could not be built")
             return 0
 
-        num_sent = 0
-
+        sent = 0
         for message in email_messages:
             try:
                 await self._send(message)
-                num_sent += 1
-            except Exception as e:
-                if not fail_silently:
+                sent += 1
+            except Exception:
+                if not silence:
                     raise
-                logger.error(f"Failed to send email via SendGrid: {e}")
+                logger.exception("a message could not be sent via SendGrid")
 
-        return num_sent
+        return sent
 
     def _build_sendgrid_payload(self, email_message: "EmailMessage") -> dict:
         """
@@ -244,9 +265,10 @@ class SendGridBackend(BaseEmailBackend):
                 error_data = response.json()
                 if "errors" in error_data:
                     error_msg += f" - {error_data['errors']}"
-            except Exception:
+            except ValueError:
+                # Not JSON, which happens for a gateway error page.
                 error_msg += f" - {response.text}"
 
-            raise Exception(error_msg)
+            raise SendGridError(error_msg)
 
-        logger.debug(f"Email sent via SendGrid. Status: {response.status_code}")
+        logger.debug("a message was accepted by SendGrid with %s", response.status_code)

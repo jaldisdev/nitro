@@ -1,7 +1,90 @@
+import json
+import pickle
 from abc import ABC, abstractmethod
 from typing import Any
 
+__all__ = [
+    "DEFAULT_TIMEOUT",
+    "BaseCache",
+    "CacheSerializer",
+    "JsonSerializer",
+    "PickleSerializer",
+    "serializer_for",
+]
+
 DEFAULT_TIMEOUT = 300  # 5 minutes
+
+
+class CacheSerializer(ABC):
+    """How a value is turned into bytes for a store outside this process."""
+
+    @abstractmethod
+    def dumps(self, value: Any) -> bytes:
+        """The bytes to store for `value`."""
+
+    @abstractmethod
+    def loads(self, data: bytes) -> Any:
+        """The value `data` was made from."""
+
+
+class JsonSerializer(CacheSerializer):
+    """JSON. The default, because reading it cannot execute anything.
+
+    It carries what JSON carries: `None`, booleans, numbers, strings, lists and
+    dictionaries with string keys. A tuple comes back as a list, and `bytes`,
+    `set`, `datetime` or an arbitrary object is refused rather than silently
+    turned into something else — cache a representation you chose instead.
+    """
+
+    def dumps(self, value: Any) -> bytes:
+        try:
+            return json.dumps(value).encode("utf-8")
+        except TypeError as error:
+            raise TypeError(
+                f"{type(value).__name__} cannot be cached as JSON: {error}. "
+                "Cache a JSON-compatible representation, or configure "
+                "OPTIONS={'SERIALIZER': 'pickle'} for this cache."
+            ) from error
+
+    def loads(self, data: bytes) -> Any:
+        return json.loads(data)
+
+
+class PickleSerializer(CacheSerializer):
+    """Pickle. Carries almost any Python object, and trusts what it reads.
+
+    SECURITY WARNING: unpickling runs code contained in the data. Anyone who
+    can write to the cache store — a shared Redis, a Memcached on a network
+    somebody else can reach, an operator who can set a key — can therefore run
+    code in every process that reads it. Choose this only for a store nothing
+    else can write to.
+    """
+
+    def dumps(self, value: Any) -> bytes:
+        return pickle.dumps(value)
+
+    def loads(self, data: bytes) -> Any:
+        return pickle.loads(data)
+
+
+#: The serializers a cache may be configured with, by ``SERIALIZER`` option.
+SERIALIZERS: dict[str, type[CacheSerializer]] = {
+    "json": JsonSerializer,
+    "pickle": PickleSerializer,
+}
+
+DEFAULT_SERIALIZER = "json"
+
+
+def serializer_for(name: str) -> CacheSerializer:
+    """The serializer named by a cache's ``SERIALIZER`` option."""
+    try:
+        return SERIALIZERS[name]()
+    except KeyError:
+        known = ", ".join(sorted(SERIALIZERS))
+        raise ValueError(
+            f"{name!r} is not a cache serializer; expected one of {known}"
+        ) from None
 
 
 class BaseCache(ABC):
@@ -21,7 +104,7 @@ class BaseCache(ABC):
             location: Backend-specific location (host, path, etc.)
             params: Additional parameters including:
                 - TIMEOUT: Default timeout in seconds
-                - OPTIONS: Backend-specific options
+                - OPTIONS: Backend-specific options, including SERIALIZER
                 - KEY_PREFIX: Prefix for all cache keys
                 - VERSION: Default version number for keys
         """
@@ -30,6 +113,11 @@ class BaseCache(ABC):
         self.key_prefix = params.get("KEY_PREFIX", "")
         self.version = params.get("VERSION", 1)
         self.options = params.get("OPTIONS", {})
+        #: How values are encoded for a store outside this process. Backends
+        #: that keep Python objects in memory have no use for it.
+        self.serializer = serializer_for(
+            self.options.get("SERIALIZER", DEFAULT_SERIALIZER)
+        )
 
     def make_key(self, key: str, version: int | None = None) -> str:
         """

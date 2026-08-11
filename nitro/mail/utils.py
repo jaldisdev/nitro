@@ -1,106 +1,48 @@
-import importlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nitro.mail.backends.base import BaseEmailBackend
+from nitro.utils.modules import import_string
 
 if TYPE_CHECKING:
     from nitro.mail.message import EmailMessage
 
 
 def get_connection(
-    backend: str | None = None,
+    backend: str | type[BaseEmailBackend] | None = None,
     fail_silently: bool = False,
-    **kwargs,
+    **kwargs: Any,
 ) -> BaseEmailBackend:
-    """
-    Get an email backend connection.
+    """A backend built from the project's settings.
 
-    Args:
-        backend: Backend class path (uses EMAIL_BACKEND from settings if not provided)
-        fail_silently: If True, suppress connection errors
-        **kwargs: Additional backend-specific options
+    Which settings those are is declared by the backend itself, in its
+    ``settings_map``: a backend says what it wants rather than being guessed at
+    from the shape of its import path, which used to hand AWS credentials to
+    anything whose name happened to contain "ses".
 
-    Returns:
-        Instance of email backend
+    `kwargs` override whatever the settings say.
 
-    Example:
         async with get_connection() as connection:
-            await connection.send_messages([message1, message2])
+            await connection.send_messages([first, second])
     """
     from nitro.settings import settings
 
     if backend is None:
         backend = settings.EMAIL_BACKEND
 
-    # Import the backend class
-    if isinstance(backend, str):
-        module_path, class_name = backend.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        backend_class = getattr(module, class_name)
-    else:
-        backend_class = backend
+    backend_class = import_string(backend) if isinstance(backend, str) else backend
 
-    # Build connection parameters from settings
-    connection_params = {
-        "host": getattr(settings, "EMAIL_HOST", "localhost"),
-        "port": getattr(settings, "EMAIL_PORT", None),
-        "username": getattr(settings, "EMAIL_HOST_USER", ""),
-        "password": getattr(settings, "EMAIL_HOST_PASSWORD", ""),
-        "use_tls": getattr(settings, "EMAIL_USE_TLS", False),
-        "use_ssl": getattr(settings, "EMAIL_USE_SSL", False),
-        "timeout": getattr(settings, "EMAIL_TIMEOUT", None),
-        "fail_silently": fail_silently,
-    }
+    configured: dict[str, Any] = {}
+    for keyword, name in backend_class.settings_map.items():
+        try:
+            value = getattr(settings, name)
+        except AttributeError:
+            continue
+        # A setting left as None means "not configured", and passing it would
+        # override the backend's own default with nothing.
+        if value is not None:
+            configured[keyword] = value
 
-    # Add backend-specific parameters
-
-    # AWS SES parameters
-    if "ses" in backend.lower():
-        connection_params.update(
-            {
-                "region_name": getattr(settings, "EMAIL_AWS_REGION", "us-east-1"),
-                "aws_access_key_id": getattr(settings, "EMAIL_AWS_ACCESS_KEY_ID", None),
-                "aws_secret_access_key": getattr(
-                    settings, "EMAIL_AWS_SECRET_ACCESS_KEY", None
-                ),
-                "aws_session_token": getattr(settings, "EMAIL_AWS_SESSION_TOKEN", None),
-                "configuration_set_name": getattr(
-                    settings, "EMAIL_SES_CONFIGURATION_SET", None
-                ),
-            }
-        )
-
-    # SendGrid parameters
-    elif "sendgrid" in backend.lower():
-        connection_params.update(
-            {
-                "api_key": getattr(settings, "EMAIL_SENDGRID_API_KEY", None),
-                "sandbox_mode": getattr(settings, "EMAIL_SENDGRID_SANDBOX_MODE", False),
-            }
-        )
-
-    # OAuth SMTP parameters
-    elif "oauth" in backend.lower():
-        connection_params.update(
-            {
-                "oauth2_token": getattr(settings, "EMAIL_OAUTH2_TOKEN", None),
-                "oauth2_token_callback": getattr(
-                    settings, "EMAIL_OAUTH2_TOKEN_CALLBACK", None
-                ),
-            }
-        )
-
-    # Override with any explicitly provided kwargs
-    connection_params.update(kwargs)
-
-    # Remove None values and keys not relevant to this backend
-    connection_params = {
-        k: v
-        for k, v in connection_params.items()
-        if v is not None or k in ["fail_silently"]
-    }
-
-    return backend_class(**connection_params)
+    return backend_class(fail_silently=fail_silently, **{**configured, **kwargs})
 
 
 async def send_email(

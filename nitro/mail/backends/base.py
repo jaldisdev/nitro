@@ -1,94 +1,85 @@
+"""The email backend interface.
+
+A backend is a way of getting a message to somebody: an SMTP server, an HTTP
+API, a stream on the console. What they have in common is only that: open,
+send, close. Nothing about connections, hosts or credentials belongs here,
+because half of the backends have no such thing — an API key is not a password
+and an endpoint is not a host, and a base class that insisted otherwise would
+be describing SMTP rather than email.
+"""
+
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from nitro.mail.message import EmailMessage
 
+__all__ = ["BaseEmailBackend"]
+
 
 class BaseEmailBackend(ABC):
+    """What every email backend answers.
+
+    Usable as an async context manager, which opens on entry and closes on
+    exit — the way to send several messages over one connection.
+
+        async with get_connection() as connection:
+            await connection.send_messages([first, second])
     """
-    Abstract base class for all email backends.
 
-    Backends handle the actual sending of email messages through
-    various services (SMTP, AWS SES, SendGrid, etc.)
-    """
+    #: The settings this backend is built from, as constructor keyword to
+    #: setting name. `get_connection` reads it to decide what to pass, so a
+    #: backend declares what it wants rather than being guessed at by the
+    #: shape of its import path.
+    settings_map: ClassVar[dict[str, str]] = {}
 
-    def __init__(
-        self,
-        host: str = "",
-        port: int | None = None,
-        username: str = "",
-        password: str = "",
-        use_tls: bool = False,
-        use_ssl: bool = False,
-        timeout: int | None = None,
-        **kwargs,
-    ) -> None:
-        """
-        Initialize the email backend.
+    def __init__(self, *, fail_silently: bool = False, **options: Any) -> None:
+        #: Whether failures are logged rather than raised, when a caller does
+        #: not say. Only ever read: `send_messages` takes its own, and writing
+        #: this per call would let one caller's choice leak into another's.
+        self.fail_silently = fail_silently
+        self.options = options
 
-        Args:
-            host: Mail server hostname
-            port: Mail server port
-            username: Authentication username
-            password: Authentication password
-            use_tls: Whether to use TLS (STARTTLS)
-            use_ssl: Whether to use SSL
-            timeout: Connection timeout in seconds
-            **kwargs: Additional backend-specific options
-        """
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
-        self.use_tls = use_tls
-        self.use_ssl = use_ssl
-        self.timeout = timeout
-        self.fail_silently = False
+    def _silence(self, fail_silently: bool | None) -> bool:
+        """Whether to swallow failures for this call."""
+        return self.fail_silently if fail_silently is None else fail_silently
 
-        # Store additional options
-        self.options = kwargs
-
-    async def __aenter__(self):
-        """Async context manager entry."""
+    async def __aenter__(self) -> BaseEmailBackend:
         await self.open()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
+    async def __aexit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         await self.close()
 
     @abstractmethod
     async def open(self) -> bool:
-        """
-        Open a connection to the email server.
+        """Make the backend ready to send.
 
-        Returns:
-            True if connection was opened successfully
+        Returns whether this call is what opened it, so a caller knows whether
+        closing it again is its business. A backend that cannot open raises —
+        whether that is fatal is :meth:`send_messages`'s decision, not this
+        one's.
         """
-        pass
 
     @abstractmethod
     async def close(self) -> None:
-        """
-        Close the connection to the email server.
-        """
-        pass
+        """Release whatever :meth:`open` acquired. Safe to call twice."""
 
     @abstractmethod
     async def send_messages(
         self,
-        email_messages: list["EmailMessage"],
-        fail_silently: bool = False,
+        email_messages: list[EmailMessage],
+        fail_silently: bool | None = None,
     ) -> int:
-        """
-        Send one or more EmailMessage objects.
+        """Send `email_messages`, returning how many were sent.
 
-        Args:
-            email_messages: List of EmailMessage objects to send
-            fail_silently: If True, suppress exceptions during sending
-
-        Returns:
-            Number of messages sent successfully
+        `fail_silently` overrides the backend's own setting for this call.
         """
-        pass

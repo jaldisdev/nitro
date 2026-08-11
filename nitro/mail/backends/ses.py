@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 try:
     import aioboto3
@@ -32,6 +32,14 @@ class SESBackend(BaseEmailBackend):
     Note: If AWS credentials are not provided, boto3 will use the
     default credential chain (environment variables, ~/.aws/config, IAM role, etc.)
     """
+
+    settings_map: ClassVar[dict[str, str]] = {
+        "region_name": "EMAIL_AWS_REGION",
+        "aws_access_key_id": "EMAIL_AWS_ACCESS_KEY_ID",
+        "aws_secret_access_key": "EMAIL_AWS_SECRET_ACCESS_KEY",
+        "aws_session_token": "EMAIL_AWS_SESSION_TOKEN",
+        "configuration_set_name": "EMAIL_SES_CONFIGURATION_SET",
+    }
 
     def __init__(
         self,
@@ -91,7 +99,7 @@ class SESBackend(BaseEmailBackend):
     async def send_messages(
         self,
         email_messages: list["EmailMessage"],
-        fail_silently: bool = False,
+        fail_silently: bool | None = None,
     ) -> int:
         """
         Send one or more EmailMessage objects via AWS SES.
@@ -99,29 +107,27 @@ class SESBackend(BaseEmailBackend):
         if not email_messages:
             return 0
 
-        self.fail_silently = fail_silently
-
-        # Open session if not already open
+        silence = self._silence(fail_silently)
         await self.open()
 
         if self._session is None:
-            if not fail_silently:
-                raise ConnectionError("Failed to initialize AWS session")
+            if not silence:
+                raise ConnectionError("the AWS session could not be built")
             return 0
 
-        num_sent = 0
-
-        async with self._session.client("ses") as ses_client:
+        sent = 0
+        async with self._session.client("ses") as client:
             for message in email_messages:
                 try:
-                    await self._send(ses_client, message)
-                    num_sent += 1
-                except Exception as e:
-                    if not fail_silently:
+                    await self._send(client, message)
+                    sent += 1
+                except Exception:
+                    # Broad, but only reached when a caller asked for silence.
+                    if not silence:
                         raise
-                    logger.error(f"Failed to send email via SES: {e}")
+                    logger.exception("a message could not be sent via SES")
 
-        return num_sent
+        return sent
 
     async def _send(self, ses_client, email_message: "EmailMessage") -> None:
         """
@@ -147,4 +153,4 @@ class SESBackend(BaseEmailBackend):
         # Send via SES
         response = await ses_client.send_raw_email(**request)
 
-        logger.debug(f"Email sent via SES. MessageId: {response.get('MessageId')}")
+        logger.debug("a message was accepted by SES as %s", response.get("MessageId"))

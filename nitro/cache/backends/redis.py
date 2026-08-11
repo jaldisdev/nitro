@@ -2,7 +2,6 @@
 Redis cache backend.
 """
 
-import pickle
 from typing import Any
 
 try:
@@ -11,6 +10,9 @@ except ImportError:
     redis = None  # type: ignore
 
 from nitro.cache.base import BaseCache
+
+#: Options that configure this backend rather than the connection under it.
+_NOT_CONNECTION_OPTIONS = frozenset({"CLIENT_CLASS", "SERIALIZER"})
 
 
 class RedisCache(BaseCache):
@@ -25,11 +27,15 @@ class RedisCache(BaseCache):
                 'BACKEND': 'nitro.cache.backends.redis.RedisCache',
                 'LOCATION': 'redis://localhost:6379/0',
                 'OPTIONS': {
+                    'SERIALIZER': 'json',
                     'CLIENT_CLASS': 'redis.asyncio.Redis',
-                    'PARSER_CLASS': 'redis.asyncio.connection.PythonParser',
                 },
             }
         }
+
+    Values are encoded with the SERIALIZER option, which is JSON unless it
+    says otherwise. See `nitro.cache.base` for what that means and for why
+    'pickle' is a decision rather than a default.
     """
 
     def __init__(self, location: str, params: dict[str, Any]) -> None:
@@ -53,18 +59,22 @@ class RedisCache(BaseCache):
         self._client: redis.Redis = client_class.from_url(
             location,
             decode_responses=False,  # We handle serialization
-            **{k: v for k, v in self.options.items() if k not in ["CLIENT_CLASS"]},
+            **{
+                name: value
+                for name, value in self.options.items()
+                if name not in _NOT_CONNECTION_OPTIONS
+            },
         )
 
     def _serialize(self, value: Any) -> bytes:
-        """Serialize a value for storage."""
-        return pickle.dumps(value)
+        """Encode a value for the store, as SERIALIZER says to."""
+        return self.serializer.dumps(value)
 
     def _deserialize(self, value: bytes | None) -> Any:
-        """Deserialize a value from storage."""
+        """Decode a value from the store."""
         if value is None:
             return None
-        return pickle.loads(value)
+        return self.serializer.loads(value)
 
     async def get(
         self,
@@ -95,7 +105,7 @@ class RedisCache(BaseCache):
         if timeout is None:
             await self._client.set(cache_key, serialized)
         else:
-            await self._client.setex(cache_key, timeout, serialized)
+            await self._client.set(cache_key, serialized, ex=timeout)
 
         return True
 
@@ -111,15 +121,15 @@ class RedisCache(BaseCache):
 
         serialized = self._serialize(value)
 
+        # `set(nx=True)` answers None when the key was already there and True
+        # when it was not, so the result is coerced rather than returned: this
+        # method is declared to say whether it added, in a bool.
         if timeout is None:
-            return await self._client.setnx(cache_key, serialized)
+            stored = await self._client.set(cache_key, serialized, nx=True)
         else:
-            return await self._client.set(
-                cache_key,
-                serialized,
-                ex=timeout,
-                nx=True,
-            )
+            stored = await self._client.set(cache_key, serialized, ex=timeout, nx=True)
+
+        return bool(stored)
 
     async def get_many(
         self,
@@ -159,7 +169,7 @@ class RedisCache(BaseCache):
             if timeout is None:
                 pipeline.set(cache_key, serialized)
             else:
-                pipeline.setex(cache_key, timeout, serialized)
+                pipeline.set(cache_key, serialized, ex=timeout)
 
         await pipeline.execute()
         return []

@@ -34,10 +34,46 @@ never connected to.
 |---|---|
 | `nitro.cache.backends.MemoryCache` | nothing |
 | `nitro.cache.backends.RedisCache` | `nitro[redis]` |
-| `nitro.cache.backends.MemcachedCache` | `nitro[memcached]` |
+| `nitro.cache.backends.MemcachedCache` | `nitro[memcached]`, Python 3.13 |
 
 `MemoryCache` is per process. With more than one worker each has its own, so it
 suits caching that can differ between workers and not sessions.
+
+`MemcachedCache` needs emcache, which publishes nothing for Python 3.14 — the
+extra is marked accordingly and will not install there. Use `RedisCache` on
+3.14 until emcache catches up.
+
+## What is stored
+
+A value has to be turned into bytes for a store outside this process. The
+`SERIALIZER` option decides how.
+
+```python
+CACHES = {
+    "default": {
+        "BACKEND": "nitro.cache.backends.RedisCache",
+        "LOCATION": "redis://localhost:6379/0",
+        "OPTIONS": {"SERIALIZER": "json"},
+    }
+}
+```
+
+| `SERIALIZER` | Carries | |
+|---|---|---|
+| `"json"` *(default)* | `None`, booleans, numbers, strings, lists, dictionaries with string keys | A tuple comes back as a list. Anything else is refused rather than mangled. |
+| `"pickle"` | almost any Python object | **Reading it runs code contained in the data.** |
+
+JSON is the default because reading it cannot execute anything. Pickle is
+available, but it is a decision rather than a convenience:
+
+> **Unpickling runs code.** Anyone who can write to the cache store — a shared
+> Redis, a Memcached on a network somebody else can reach, an operator who can
+> set a key — can run code in every process that reads it. Choose `"pickle"`
+> only for a store nothing else can write to, and prefer caching a
+> JSON-compatible representation you chose.
+
+`MemoryCache` keeps Python objects as they are and does not serialize at all,
+so the option does not apply to it.
 
 ## What a cache does
 
