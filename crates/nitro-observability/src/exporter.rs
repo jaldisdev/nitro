@@ -374,22 +374,37 @@ mod tests {
 
     #[test]
     fn worker_ports_follow_on_from_the_configured_one() {
-        let first = bind(&enabled_on_ephemeral()).expect("binding must work");
-        let base = first.addresses()[0].port();
-        drop(first);
+        // Asking the kernel for a port, releasing it and then asking for that
+        // exact number is a race: anything else on the machine may take it in
+        // between, including another test in this binary. What is being tested
+        // is that the second worker lands one port above the first, so a few
+        // attempts with a fresh base each time is the honest way to get a base
+        // that is free rather than a flake once a run.
+        let mut last: Option<ExporterError> = None;
 
-        let bound = bind_workers(
-            &ExporterConfig {
-                enabled: true,
-                host: "localhost".to_owned(),
-                port: base,
-            },
-            2,
-        )
-        .expect("binding must work");
+        for _ in 0..16 {
+            let first = bind(&enabled_on_ephemeral()).expect("binding must work");
+            let base = first.addresses()[0].port();
+            drop(first);
 
-        assert_eq!(bound[0].addresses()[0].port(), base);
-        assert_eq!(bound[1].addresses()[0].port(), base + 1);
+            match bind_workers(
+                &ExporterConfig {
+                    enabled: true,
+                    host: "localhost".to_owned(),
+                    port: base,
+                },
+                2,
+            ) {
+                Ok(bound) => {
+                    assert_eq!(bound[0].addresses()[0].port(), base);
+                    assert_eq!(bound[1].addresses()[0].port(), base + 1);
+                    return;
+                }
+                Err(error) => last = Some(error),
+            }
+        }
+
+        panic!("no free consecutive pair of ports in 16 attempts: {last:?}");
     }
 
     #[test]

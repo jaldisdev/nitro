@@ -35,21 +35,45 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(collector: C) -> C
     collector
 }
 
-pub static REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(
+/// A metric, if it could be built.
+///
+/// Building one fails only on a malformed descriptor, which is a mistake in
+/// this file rather than a runtime condition — but a worker that cannot report
+/// a counter should still serve traffic. So the failure is logged and the
+/// metric is simply absent, which every recorder below already copes with,
+/// rather than a panic that takes the worker down over an observability
+/// detail.
+type Metric<T> = LazyLock<Option<T>>;
+
+fn build<C: prometheus::core::Collector + Clone + 'static>(
+    name: &'static str,
+    made: prometheus::Result<C>,
+) -> Option<C> {
+    match made {
+        Ok(collector) => Some(register(collector)),
+        Err(error) => {
+            tracing::error!(%error, metric = name, "a metric could not be built");
+            None
+        }
+    }
+}
+
+pub static REQUESTS: Metric<IntCounterVec> = LazyLock::new(|| {
+    build(
+        "nitro_http_requests_total",
         IntCounterVec::new(
             opts!(
                 "nitro_http_requests_total",
                 "HTTP requests served, by route, method and status class"
             ),
             &["route", "method", "status"],
-        )
-        .expect("the request counter descriptor is valid"),
+        ),
     )
 });
 
-pub static REQUEST_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(
+pub static REQUEST_DURATION: Metric<HistogramVec> = LazyLock::new(|| {
+    build(
+        "nitro_http_request_duration_seconds",
         HistogramVec::new(
             histogram_opts!(
                 "nitro_http_request_duration_seconds",
@@ -57,90 +81,89 @@ pub static REQUEST_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
                 LATENCY_BUCKETS.to_vec()
             ),
             &["route", "method"],
-        )
-        .expect("the request duration descriptor is valid"),
+        ),
     )
 });
 
-pub static REQUESTS_IN_FLIGHT: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(
+pub static REQUESTS_IN_FLIGHT: Metric<IntGauge> = LazyLock::new(|| {
+    build(
+        "nitro_http_requests_in_flight",
         IntGauge::with_opts(opts!(
             "nitro_http_requests_in_flight",
             "Requests being handled right now"
-        ))
-        .expect("the in-flight descriptor is valid"),
+        )),
     )
 });
 
-pub static CONNECTIONS: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(
+pub static CONNECTIONS: Metric<IntCounterVec> = LazyLock::new(|| {
+    build(
+        "nitro_connections_total",
         IntCounterVec::new(
             opts!(
                 "nitro_connections_total",
                 "Connections accepted, by transport"
             ),
             &["transport"],
-        )
-        .expect("the connection counter descriptor is valid"),
+        ),
     )
 });
 
-pub static CONNECTIONS_ACTIVE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(
+pub static CONNECTIONS_ACTIVE: Metric<IntGaugeVec> = LazyLock::new(|| {
+    build(
+        "nitro_connections_active",
         IntGaugeVec::new(
             opts!(
                 "nitro_connections_active",
                 "Connections open right now, by transport"
             ),
             &["transport"],
-        )
-        .expect("the active connection descriptor is valid"),
+        ),
     )
 });
 
-pub static SOCKETS: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(
+pub static SOCKETS: Metric<IntCounterVec> = LazyLock::new(|| {
+    build(
+        "nitro_sockets_total",
         IntCounterVec::new(
             opts!(
                 "nitro_sockets_total",
                 "WebSocket and WebTransport handshakes, by protocol and outcome"
             ),
             &["protocol", "outcome"],
-        )
-        .expect("the socket counter descriptor is valid"),
+        ),
     )
 });
 
-pub static SOCKETS_ACTIVE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register(
+pub static SOCKETS_ACTIVE: Metric<IntGaugeVec> = LazyLock::new(|| {
+    build(
+        "nitro_sockets_active",
         IntGaugeVec::new(
             opts!(
                 "nitro_sockets_active",
                 "WebSocket connections and WebTransport sessions open right now, by protocol"
             ),
             &["protocol"],
-        )
-        .expect("the active socket descriptor is valid"),
+        ),
     )
 });
 
-pub static WORKER_STARTED: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(
+pub static WORKER_STARTED: Metric<IntGauge> = LazyLock::new(|| {
+    build(
+        "nitro_worker_start_time_seconds",
         IntGauge::with_opts(opts!(
             "nitro_worker_start_time_seconds",
             "When this worker began serving, in seconds since the epoch"
-        ))
-        .expect("the start time descriptor is valid"),
+        )),
     )
 });
 
-pub static WORKER_DRAINING: LazyLock<IntGauge> = LazyLock::new(|| {
-    register(
+pub static WORKER_DRAINING: Metric<IntGauge> = LazyLock::new(|| {
+    build(
+        "nitro_worker_draining",
         IntGauge::with_opts(opts!(
             "nitro_worker_draining",
             "1 once this worker has begun shutting down, 0 while it is serving"
-        ))
-        .expect("the draining descriptor is valid"),
+        )),
     )
 });
 
@@ -195,10 +218,14 @@ pub fn record_request(route: Option<&str>, method: &str, status: u16, elapsed: D
     let route = route.unwrap_or("unmatched");
     let status = status_class(status);
 
-    REQUESTS.with_label_values(&[route, method, status]).inc();
-    REQUEST_DURATION
-        .with_label_values(&[route, method])
-        .observe(elapsed.as_secs_f64());
+    if let Some(requests) = &*REQUESTS {
+        requests.with_label_values(&[route, method, status]).inc();
+    }
+    if let Some(duration) = &*REQUEST_DURATION {
+        duration
+            .with_label_values(&[route, method])
+            .observe(elapsed.as_secs_f64());
+    }
 }
 
 /// The status class as a label value: `2xx`, `4xx` and so on.
@@ -218,39 +245,49 @@ fn status_class(status: u16) -> &'static str {
 }
 
 pub fn request_started() {
-    REQUESTS_IN_FLIGHT.inc();
+    if let Some(in_flight) = &*REQUESTS_IN_FLIGHT {
+        in_flight.inc();
+    }
 }
 
 pub fn request_finished() {
-    REQUESTS_IN_FLIGHT.dec();
+    if let Some(in_flight) = &*REQUESTS_IN_FLIGHT {
+        in_flight.dec();
+    }
 }
 
 pub fn connection_opened(transport: Transport) {
-    CONNECTIONS.with_label_values(&[transport.as_str()]).inc();
-    CONNECTIONS_ACTIVE
-        .with_label_values(&[transport.as_str()])
-        .inc();
+    if let Some(connections) = &*CONNECTIONS {
+        connections.with_label_values(&[transport.as_str()]).inc();
+    }
+    if let Some(active) = &*CONNECTIONS_ACTIVE {
+        active.with_label_values(&[transport.as_str()]).inc();
+    }
 }
 
 pub fn connection_closed(transport: Transport) {
-    CONNECTIONS_ACTIVE
-        .with_label_values(&[transport.as_str()])
-        .dec();
+    if let Some(active) = &*CONNECTIONS_ACTIVE {
+        active.with_label_values(&[transport.as_str()]).dec();
+    }
 }
 
 /// Record how a handshake was answered. `outcome` is `accepted` or `refused`.
 pub fn socket_handshake(protocol: SocketProtocol, accepted: bool) {
     let outcome = if accepted { "accepted" } else { "refused" };
-    SOCKETS
-        .with_label_values(&[protocol.as_str(), outcome])
-        .inc();
-    if accepted {
-        SOCKETS_ACTIVE.with_label_values(&[protocol.as_str()]).inc();
+    if let Some(sockets) = &*SOCKETS {
+        sockets
+            .with_label_values(&[protocol.as_str(), outcome])
+            .inc();
+    }
+    if accepted && let Some(active) = &*SOCKETS_ACTIVE {
+        active.with_label_values(&[protocol.as_str()]).inc();
     }
 }
 
 pub fn socket_closed(protocol: SocketProtocol) {
-    SOCKETS_ACTIVE.with_label_values(&[protocol.as_str()]).dec();
+    if let Some(active) = &*SOCKETS_ACTIVE {
+        active.with_label_values(&[protocol.as_str()]).dec();
+    }
 }
 
 /// Note that this worker has started serving.
@@ -259,8 +296,12 @@ pub fn worker_started() {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or(0);
-    WORKER_STARTED.set(epoch_seconds);
-    WORKER_DRAINING.set(0);
+    if let Some(started) = &*WORKER_STARTED {
+        started.set(epoch_seconds);
+    }
+    if let Some(draining) = &*WORKER_DRAINING {
+        draining.set(0);
+    }
     declare_known_series();
 }
 
@@ -278,29 +319,35 @@ pub fn worker_started() {
 /// of this idea.
 fn declare_known_series() {
     for transport in Transport::ALL {
-        CONNECTIONS
-            .with_label_values(&[transport.as_str()])
-            .inc_by(0);
-        CONNECTIONS_ACTIVE
-            .with_label_values(&[transport.as_str()])
-            .set(0);
+        if let Some(connections) = &*CONNECTIONS {
+            connections
+                .with_label_values(&[transport.as_str()])
+                .inc_by(0);
+        }
+        if let Some(active) = &*CONNECTIONS_ACTIVE {
+            active.with_label_values(&[transport.as_str()]).set(0);
+        }
     }
 
     for protocol in SocketProtocol::ALL {
         for outcome in ["accepted", "refused"] {
-            SOCKETS
-                .with_label_values(&[protocol.as_str(), outcome])
-                .inc_by(0);
+            if let Some(sockets) = &*SOCKETS {
+                sockets
+                    .with_label_values(&[protocol.as_str(), outcome])
+                    .inc_by(0);
+            }
         }
-        SOCKETS_ACTIVE
-            .with_label_values(&[protocol.as_str()])
-            .set(0);
+        if let Some(active) = &*SOCKETS_ACTIVE {
+            active.with_label_values(&[protocol.as_str()]).set(0);
+        }
     }
 }
 
 /// Note that this worker has begun shutting down.
 pub fn worker_draining() {
-    WORKER_DRAINING.set(1);
+    if let Some(draining) = &*WORKER_DRAINING {
+        draining.set(1);
+    }
 }
 
 /// Render everything registered in this process as Prometheus text exposition
@@ -322,10 +369,28 @@ pub fn render() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, MutexGuard};
+
     use super::*;
+
+    /// Held by every test that reads a gauge it also writes.
+    ///
+    /// The registry is process-global and Rust runs tests in parallel, so
+    /// `worker_started` resetting every known series to zero can land between
+    /// another test's read and its assertion. That is a property of the
+    /// registry rather than of the code under test, so the tests take turns
+    /// instead of the code taking a lock it does not otherwise need.
+    static SHARED_GAUGES: Mutex<()> = Mutex::new(());
+
+    fn exclusively() -> MutexGuard<'static, ()> {
+        SHARED_GAUGES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn a_worker_that_has_served_nothing_still_exposes_what_it_can() {
+        let _shared = exclusively();
         // A scrape a moment after startup has to carry every metric whose
         // labels are known, or a counter appears only once it is non-zero and
         // nothing can be queried against it in the meantime.
@@ -398,57 +463,57 @@ mod tests {
 
     #[test]
     fn in_flight_rises_and_falls() {
-        let before = REQUESTS_IN_FLIGHT.get();
+        let _shared = exclusively();
+        let in_flight = REQUESTS_IN_FLIGHT.as_ref().expect("the gauge must build");
+        let before = in_flight.get();
         request_started();
-        assert_eq!(REQUESTS_IN_FLIGHT.get(), before + 1);
+        assert_eq!(in_flight.get(), before + 1);
         request_finished();
-        assert_eq!(REQUESTS_IN_FLIGHT.get(), before);
+        assert_eq!(in_flight.get(), before);
     }
 
     #[test]
     fn connections_are_counted_per_transport() {
+        let _shared = exclusively();
         connection_opened(Transport::Tcp);
-        let active = CONNECTIONS_ACTIVE.with_label_values(&["tcp"]).get();
+        let connections = CONNECTIONS_ACTIVE.as_ref().expect("the gauge must build");
+        let active = connections.with_label_values(&["tcp"]).get();
         connection_closed(Transport::Tcp);
 
-        assert_eq!(
-            CONNECTIONS_ACTIVE.with_label_values(&["tcp"]).get(),
-            active - 1
-        );
+        assert_eq!(connections.with_label_values(&["tcp"]).get(), active - 1);
         assert!(render().contains("nitro_connections_total"));
     }
 
     #[test]
     fn a_refused_handshake_is_counted_but_not_held_open() {
-        let before = SOCKETS_ACTIVE.with_label_values(&["websocket"]).get();
+        let _shared = exclusively();
+        let sockets = SOCKETS_ACTIVE.as_ref().expect("the gauge must build");
+        let before = sockets.with_label_values(&["websocket"]).get();
 
         socket_handshake(SocketProtocol::WebSocket, false);
         assert_eq!(
-            SOCKETS_ACTIVE.with_label_values(&["websocket"]).get(),
+            sockets.with_label_values(&["websocket"]).get(),
             before,
             "a refused handshake never became an open connection"
         );
 
         socket_handshake(SocketProtocol::WebSocket, true);
-        assert_eq!(
-            SOCKETS_ACTIVE.with_label_values(&["websocket"]).get(),
-            before + 1
-        );
+        assert_eq!(sockets.with_label_values(&["websocket"]).get(), before + 1);
         socket_closed(SocketProtocol::WebSocket);
-        assert_eq!(
-            SOCKETS_ACTIVE.with_label_values(&["websocket"]).get(),
-            before
-        );
+        assert_eq!(sockets.with_label_values(&["websocket"]).get(), before);
     }
 
     #[test]
     fn worker_lifecycle_is_reported() {
+        let _shared = exclusively();
         worker_started();
-        assert!(WORKER_STARTED.get() > 0);
-        assert_eq!(WORKER_DRAINING.get(), 0);
+        let started = WORKER_STARTED.as_ref().expect("the gauge must build");
+        let draining = WORKER_DRAINING.as_ref().expect("the gauge must build");
+        assert!(started.get() > 0);
+        assert_eq!(draining.get(), 0);
 
         worker_draining();
-        assert_eq!(WORKER_DRAINING.get(), 1);
+        assert_eq!(draining.get(), 1);
         worker_started();
     }
 

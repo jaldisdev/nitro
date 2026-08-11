@@ -101,29 +101,16 @@ impl BoundSockets {
 pub fn bind(config: &ServerConfig) -> Result<BoundSockets, BindError> {
     match &config.bind {
         BindAddress::Tcp { host, port } => {
-            let tcp = bind_tcp(host, *port, config.backlog)?;
-
-            // Asking for port zero means "any free port", and the kernel picks
-            // one per socket. HTTP/3 is only useful on the same port as the TCP
-            // listener it is advertised from, so the UDP socket follows the
-            // port TCP was actually given.
-            let quic_port = match port {
-                0 => tcp
-                    .first()
-                    .and_then(|listener| listener.local_addr().ok())
-                    .map(|address| address.port())
-                    .unwrap_or(0),
-                explicit => *explicit,
+            let (tcp, quic) = if *port == 0 {
+                bind_ephemeral(config, host)?
+            } else {
+                bind_on_port(config, host, *port)?
             };
 
             Ok(BoundSockets {
                 #[cfg(unix)]
                 unix: None,
-                quic: if config.http.h3_enabled() {
-                    quic::bind_udp(host, quic_port)?
-                } else {
-                    Vec::new()
-                },
+                quic,
                 metrics: bind_metrics(config)?,
                 tcp,
             })
@@ -144,6 +131,91 @@ pub fn bind(config: &ServerConfig) -> Result<BoundSockets, BindError> {
             ),
         }),
     }
+}
+
+/// How many ephemeral ports are tried before giving up.
+///
+/// Each attempt fails only if something took the port between the kernel
+/// choosing it and the rest of the sockets being bound, so needing even a
+/// second attempt is rare and needing sixteen means the machine has no free
+/// ports rather than that this is unlucky.
+const EPHEMERAL_ATTEMPTS: usize = 16;
+
+/// Bind the listeners for a fixed port.
+fn bind_on_port(
+    config: &ServerConfig,
+    host: &str,
+    port: u16,
+) -> Result<(Vec<std::net::TcpListener>, Vec<std::net::UdpSocket>), BindError> {
+    let tcp = bind_tcp(host, port, config.backlog)?;
+    let quic = if config.http.h3_enabled() {
+        quic::bind_udp(host, port)?
+    } else {
+        Vec::new()
+    };
+    Ok((tcp, quic))
+}
+
+/// Bind the listeners on a port the kernel chooses.
+///
+/// One name usually resolves to several addresses, and HTTP/3 has to answer on
+/// the same port as the TCP listener that advertises it — so one port has to be
+/// free across every address and both protocols at once. The kernel only
+/// promises that for the single socket it picked the port for; anything else
+/// may hold it. That is a real gap rather than a test artefact: a server
+/// started on port zero could fail to bind for no reason the operator can see.
+///
+/// So the whole set is attempted together and retried on a fresh port when
+/// something else already holds one of them.
+fn bind_ephemeral(
+    config: &ServerConfig,
+    host: &str,
+) -> Result<(Vec<std::net::TcpListener>, Vec<std::net::UdpSocket>), BindError> {
+    let mut last: Option<BindError> = None;
+
+    for _ in 0..EPHEMERAL_ATTEMPTS {
+        let tcp = match bind_tcp(host, 0, config.backlog) {
+            Ok(tcp) => tcp,
+            Err(error) if is_taken(&error) => {
+                last = Some(error);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+
+        if !config.http.h3_enabled() {
+            return Ok((tcp, Vec::new()));
+        }
+
+        let chosen = tcp
+            .first()
+            .and_then(|listener| listener.local_addr().ok())
+            .map(|address| address.port())
+            .unwrap_or(0);
+
+        match quic::bind_udp(host, chosen) {
+            Ok(quic) => return Ok((tcp, quic)),
+            Err(error) if is_taken(&error) => {
+                // Dropping the TCP listeners releases the port before the next
+                // attempt, so a run of attempts cannot exhaust the range.
+                drop(tcp);
+                last = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last.unwrap_or_else(|| BindError::Unresolvable {
+        host: host.to_owned(),
+    }))
+}
+
+/// Whether a bind failed because something else already holds the address.
+fn is_taken(error: &BindError) -> bool {
+    matches!(
+        error,
+        BindError::Socket { source, .. } if source.kind() == io::ErrorKind::AddrInUse
+    )
 }
 
 fn bind_metrics(config: &ServerConfig) -> Result<Vec<BoundExporter>, BindError> {
@@ -585,6 +657,32 @@ mod tests {
             tcp_port, quic_port,
             "HTTP/3 must be reachable on the port it is advertised from"
         );
+    }
+
+    #[test]
+    fn an_ephemeral_bind_survives_a_port_taken_between_choosing_and_binding() {
+        // One name resolves to several addresses and HTTP/3 needs the same
+        // port as TCP, so the kernel's promise about the single socket it
+        // chose a port for is not enough: anything may hold that number on
+        // another address or on UDP. Binding repeatedly is the closest a test
+        // can get to the race without arranging it.
+        for _ in 0..24 {
+            let mut config = ephemeral_config();
+            config.bind = BindAddress::tcp("localhost", 0);
+            config.http = crate::config::HttpVersion::Http3;
+
+            let sockets = bind(&config).expect("an ephemeral bind must not fail");
+            let tcp_port = sockets.local_addresses()[0].port();
+
+            assert!(
+                sockets.quic.iter().all(|socket| socket
+                    .local_addr()
+                    .ok()
+                    .map(|address| address.port())
+                    == Some(tcp_port)),
+                "HTTP/3 must answer on the port TCP advertises"
+            );
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@ use nitro_core::config::{
 };
 use nitro_core::hosts::AllowedHosts;
 use nitro_core::observability::ExporterConfig;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyAttributeError, PyKeyError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
@@ -22,14 +22,32 @@ use pyo3::types::PyMapping;
 ///
 /// A value of `None` counts as absent so a caller can spell "use the default"
 /// either way.
+///
+/// Only "there is no such name" counts as absent. A settings object whose
+/// property *raised* is a broken configuration, and treating that as absent
+/// would start a server on defaults while its settings module says otherwise —
+/// the failure would then show up as behaviour nobody asked for rather than as
+/// the error it is.
 fn lookup<'py>(source: &Bound<'py, PyAny>, name: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+    let python = source.py();
+
     let found = match source.getattr(name) {
         Ok(value) => Some(value),
-        Err(_) => match source.cast::<PyMapping>() {
-            Ok(mapping) => mapping.get_item(name).ok(),
-            Err(_) => None,
-        },
+        Err(error) if error.is_instance_of::<PyAttributeError>(python) => {
+            // Not an attribute. A plain dictionary is accepted too, so that a
+            // caller can pass one instead of a settings object.
+            match source.cast::<PyMapping>() {
+                Ok(mapping) => match mapping.get_item(name) {
+                    Ok(value) => Some(value),
+                    Err(error) if error.is_instance_of::<PyKeyError>(python) => None,
+                    Err(error) => return Err(error),
+                },
+                Err(_) => None,
+            }
+        }
+        Err(error) => return Err(error),
     };
+
     Ok(found.filter(|value| !value.is_none()))
 }
 
