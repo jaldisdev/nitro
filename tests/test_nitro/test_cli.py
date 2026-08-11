@@ -116,7 +116,7 @@ class TestVersion:
 class TestCheck:
     def test_a_configured_project_passes(self, runner, full_cli, monkeypatch):
         monkeypatch.setattr(settings, "DEBUG", True, raising=False)
-        monkeypatch.setattr(settings, "SERVER", {"HTTP": "1"}, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
 
         result = runner.invoke(full_cli, ["check"])
 
@@ -125,7 +125,7 @@ class TestCheck:
 
     def test_http3_without_a_certificate_is_reported(self, runner, full_cli, monkeypatch):
         monkeypatch.setattr(settings, "DEBUG", True, raising=False)
-        monkeypatch.setattr(settings, "SERVER", {"HTTP": "3"}, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "3", raising=False)
 
         result = runner.invoke(full_cli, ["check"])
 
@@ -138,7 +138,7 @@ class TestCheck:
         monkeypatch.setattr(settings, "DEBUG", False, raising=False)
         monkeypatch.setattr(settings, "SECRET_KEY", "", raising=False)
         monkeypatch.setattr(settings, "ALLOWED_HOSTS", ["example.test"], raising=False)
-        monkeypatch.setattr(settings, "SERVER", {"HTTP": "1"}, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
 
         result = runner.invoke(full_cli, ["check"])
 
@@ -147,7 +147,7 @@ class TestCheck:
 
     def test_optional_packages_are_listed_when_asked(self, runner, full_cli, monkeypatch):
         monkeypatch.setattr(settings, "DEBUG", True, raising=False)
-        monkeypatch.setattr(settings, "SERVER", {"HTTP": "1"}, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
 
         result = runner.invoke(full_cli, ["check", "-v"])
 

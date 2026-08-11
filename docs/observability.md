@@ -31,7 +31,7 @@ a scraper running alongside the server and from nowhere else. Setting it to
 who can reach the port; do that only behind a network you control.
 
 These are flat settings rather than a dictionary because there is exactly one
-exporter to configure. They are read from the top level, not from `SERVER` —
+exporter to configure. They are read from the top level, as every server option is —
 putting them there is an error rather than a silent no-op.
 
 ## One endpoint per worker

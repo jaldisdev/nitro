@@ -36,7 +36,7 @@ def check(verbose: bool) -> None:
 
     click.echo(click.style("Settings", bold=True))
     try:
-        settings.SERVER
+        settings.DEBUG
         _report(True, f"settings load ({settings.SETTINGS_MODULE or 'defaults only'})")
     except ImproperlyConfigured as error:
         problems += not _report(False, f"settings: {error}")
@@ -60,22 +60,34 @@ def check(verbose: bool) -> None:
         if not settings.DEBUG and not settings.SECRET_KEY:
             problems += not _report(False, "SECRET_KEY is empty and DEBUG is off")
 
-        if not settings.DEBUG and not settings.ALLOWED_HOSTS:
-            problems += not _report(False, "ALLOWED_HOSTS is empty and DEBUG is off")
+        if not settings.DEBUG and not options.allowed_hosts:
+            problems += not _report(
+                False,
+                "ALLOWED_HOSTS is empty and DEBUG is off, so the server answers "
+                "to any Host header",
+            )
+        elif options.allowed_hosts:
+            _report(True, f"answering for {', '.join(options.allowed_hosts)}")
 
         if options.observability_enabled:
+            # Each of these is reported on its own: a configuration can be
+            # wrong in both ways, and hearing about one of them and fixing it
+            # only to be told about the other wastes a round trip.
+            healthy = True
             if options.observability_port == options.port:
+                healthy = False
                 problems += not _report(
                     False,
                     "the metrics exporter is configured on the application's port",
                 )
-            elif options.observability_host in {"0.0.0.0", "::"}:
+            if options.observability_host in {"0.0.0.0", "::"}:
+                healthy = False
                 problems += not _report(
                     False,
                     "OBSERVABILITY_HOST exposes metrics on every interface; "
                     "bind it to a loopback or internal address instead",
                 )
-            else:
+            if healthy:
                 _report(
                     True,
                     "metrics on "

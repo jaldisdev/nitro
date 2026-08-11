@@ -74,22 +74,20 @@ the same chain:
 3. open connections are asked to finish their current exchange and close;
 4. background tasks are awaited.
 
-Steps 3 and 4 share one deadline, `DRAIN_TIMEOUT`, defaulting to thirty
+Steps 3 and 4 share one deadline, `SERVER_DRAIN_TIMEOUT`, defaulting to thirty
 seconds. Whatever has not finished by then is abandoned — a shutdown one stuck
 handler can delay indefinitely is not a shutdown. The parent then waits that
 long plus a grace period before killing anything left.
 
-Set `DRAIN_TIMEOUT` to something a little under your orchestrator's own
+Set `SERVER_DRAIN_TIMEOUT` to something a little under your orchestrator's own
 termination grace period, so the server finishes on its own terms rather than
 being killed mid-drain.
 
 ## TLS
 
 ```python
-SERVER = {
-    "TLS_CERT": "/etc/tls/site.pem",
-    "TLS_KEY": "/etc/tls/site.key",
-}
+SERVER_TLS_CERT = "/etc/tls/site.pem"
+SERVER_TLS_KEY = "/etc/tls/site.key"
 ```
 
 The certificate file is watched and reloaded when it changes, so renewal does
@@ -98,41 +96,42 @@ negotiated; new handshakes use the new one. A replacement that cannot be read �
 a renewal caught mid-write, say — is logged and ignored, and the previous
 certificate stays in use.
 
-Set `TLS_RELOAD_INTERVAL` to `0` to switch reloading off.
+Set `SERVER_TLS_RELOAD_INTERVAL` to `0` to switch reloading off.
 
 ### Behind a proxy that terminates TLS
 
 ```python
-SERVER = {"TLS_TCP": False, "HTTP": "2"}
+SERVER_TLS_TCP = False
+SERVER_HTTP = "2"
 ```
 
-`TLS_TCP` turns off TLS on the TCP socket only. QUIC always carries its own,
+`SERVER_TLS_TCP` turns off TLS on the TCP socket only. QUIC always carries its own,
 because the protocol requires it — which is why HTTP/3 needs a certificate even
 when a proxy is terminating TLS for HTTP/1.1 and HTTP/2.
 
 ## HTTP/3
 
 HTTP/3 needs a UDP socket alongside the TCP one, on the same port, and a
-certificate. Both are bound when `HTTP` is `"auto"` or `"3"`.
+certificate. Both are bound when `SERVER_HTTP` is `"auto"` or `"3"`.
 
 Clients discover it through the `Alt-Svc` header, which is added automatically
 to responses served over TCP. If your public port differs from the bound port —
 behind a load balancer, usually — set the header yourself:
 
 ```python
-SERVER = {"ALT_SVC": 'h3=":443"; ma=86400'}
+SERVER_ALT_SVC = 'h3=":443"; ma=86400'
 ```
 
-Set `ALT_SVC` to `"off"` where a proxy advertises its own endpoint.
+Set `SERVER_ALT_SVC` to `"off"` where a proxy advertises its own endpoint.
 
 ## Backpressure
 
-`MAX_CONCURRENT_CONNECTIONS` caps how many connections a worker serves at once.
+`SERVER_MAX_CONCURRENT_CONNECTIONS` caps how many connections a worker serves at once.
 Beyond it, connections wait in the kernel's backlog rather than being accepted
 and left unserved — a waiting client sees a slow connect, which is honest,
 instead of a connection that opens and then does nothing.
 
-`STREAM_QUEUE_CAPACITY` sets how far ahead a streaming response may run. Sending
+`SERVER_STREAM_QUEUE_CAPACITY` sets how far ahead a streaming response may run. Sending
 waits once that many chunks are queued, so a producer faster than its client is
 slowed to the client's pace rather than filling memory.
 
@@ -142,16 +141,14 @@ The server log and the access log are configured separately and can go to
 different places in different formats.
 
 ```python
-SERVER = {
-    "LOG_LEVEL": "info",
-    "LOG_FORMAT": "json",
-    "ACCESS_LOG": True,
-    "ACCESS_LOG_DESTINATION": "/var/log/nitro/access.log",
-    "ACCESS_LOG_FORMAT": "combined",
-}
+SERVER_LOG_LEVEL = "info"
+SERVER_LOG_FORMAT = "json"
+SERVER_ACCESS_LOG = True
+SERVER_ACCESS_LOG_DESTINATION = "/var/log/nitro/access.log"
+SERVER_ACCESS_LOG_FORMAT = "combined"
 ```
 
-`RUST_LOG` overrides `LOG_LEVEL` when it is set, which is useful for turning up
+`RUST_LOG` overrides `SERVER_LOG_LEVEL` when it is set, which is useful for turning up
 detail on a running deployment without changing configuration.
 
 ## Metrics

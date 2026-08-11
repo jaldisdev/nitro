@@ -17,25 +17,15 @@ class TestResolution:
 
     def test_it_is_read_from_the_top_level(self):
         class Source:
-            SERVER = {}
             ALLOWED_HOSTS = ["example.test"]
 
         assert ServerOptions.resolve(Source()).allowed_hosts == ["example.test"]
 
     def test_it_defaults_to_answering_for_anything(self):
         class Source:
-            SERVER = {}
+            pass
 
         assert ServerOptions.resolve(Source()).allowed_hosts == []
-
-    def test_putting_it_under_server_is_an_error(self):
-        from nitro.settings import ImproperlyConfigured
-
-        class Source:
-            SERVER = {"ALLOWED_HOSTS": ["example.test"]}
-
-        with pytest.raises(ImproperlyConfigured, match="top-level setting"):
-            ServerOptions.resolve(Source())
 
 
 HOSTED_APP = """

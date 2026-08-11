@@ -27,15 +27,15 @@ without installing it.
 
 | Flag | Setting it overrides |
 |---|---|
-| `-H`, `--host` | `SERVER["HOST"]` |
-| `-p`, `--port` | `SERVER["PORT"]` |
-| `--uds` | `SERVER["UDS"]` |
-| `-w`, `--workers` | `SERVER["WORKERS"]` |
-| `--runtime-threads` | `SERVER["RUNTIME_THREADS"]` |
-| `--http` | `SERVER["HTTP"]` |
+| `-H`, `--host` | `SERVER_HOST` |
+| `-p`, `--port` | `SERVER_PORT` |
+| `--uds` | `SERVER_UDS` |
+| `-w`, `--workers` | `SERVER_WORKERS` |
+| `--runtime-threads` | `SERVER_RUNTIME_THREADS` |
+| `--http` | `SERVER_HTTP` |
 | `--tls-cert`, `--tls-key` | the TLS pair |
-| `--access-log` / `--no-access-log` | `SERVER["ACCESS_LOG"]` |
-| `-l`, `--log-level` | `SERVER["LOG_LEVEL"]` |
+| `--access-log` / `--no-access-log` | `SERVER_ACCESS_LOG` |
+| `-l`, `--log-level` | `SERVER_LOG_LEVEL` |
 
 A flag that is not given is dropped rather than applied, so it cannot erase
 something the application set for itself.

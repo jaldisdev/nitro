@@ -74,47 +74,70 @@ ROUTES: str | list[Any] = []
 MAX_UPLOAD_MEMORY: int = 1024 * 1024
 UPLOAD_DIR: str | os.PathLike[str] | None = None
 
-# The bundled server. Keys map onto the server's own configuration; anything
-# left out keeps the value below.
-SERVER: dict[str, Any] = {
-    # Network
-    "HOST": "localhost",
-    "PORT": 8000,
-    "UDS": None,
-    # TLS. QUIC always terminates its own TLS because the protocol requires it,
-    # so a certificate is mandatory whenever HTTP/3 is active.
-    "TLS_CERT": None,
-    "TLS_KEY": None,
-    "TLS_CA": None,
-    "TLS_CLIENT_AUTH": "none",
-    "TLS_TCP": True,
-    "TLS_RELOAD_INTERVAL": 10.0,
-    # Protocols. "auto" is the highest available, currently HTTP/3.
-    "HTTP": "auto",
-    "WEBSOCKETS": True,
-    "WEBTRANSPORT": True,
-    # Processes
-    "WORKERS": 1,
-    "RUNTIME_THREADS": 1,
-    # Backpressure
-    "BACKLOG": 1024,
-    "MAX_CONCURRENT_CONNECTIONS": None,
-    "DATAGRAM_QUEUE_CAPACITY": 64,
-    "STREAM_QUEUE_CAPACITY": 16,
-    # Advertising HTTP/3: "auto", "off", or a verbatim header value.
-    "ALT_SVC": "auto",
-    # Seconds in-flight work is given to finish once shutdown starts.
-    "DRAIN_TIMEOUT": 30.0,
-    "SERVER_HEADER": "nitro",
-    # Server log
-    "LOG_LEVEL": "info",
-    "LOG_DESTINATION": "stderr",
-    "LOG_FORMAT": "pretty",
-    # Access log
-    "ACCESS_LOG": False,
-    "ACCESS_LOG_DESTINATION": "stdout",
-    "ACCESS_LOG_FORMAT": "combined",
-}
+# ── The bundled server ───────────────────────────────────────────────────────
+#
+# Flat rather than nested under a SERVER mapping, for the same reason the
+# observability options are: there is exactly one server to configure, and a
+# mapping would suggest several named ones can be.
+#
+# Prefixed the way every other subsystem's flat settings are — EMAIL_HOST for
+# mail, SECURE_HSTS_SECONDS for the security headers — because a settings
+# module is one namespace shared with everything a project configures for
+# itself, and a bare PORT or WORKERS in it belongs to whoever thought of it
+# first.
+#
+# Each name is also the keyword argument `Nitro(...)` takes, without the prefix
+# and in lower case, and most are a command line flag as well; the three
+# override one another in that order.
+
+# Network
+SERVER_HOST: str = "localhost"
+SERVER_PORT: int = 8000
+SERVER_UDS: str | None = None
+
+# TLS. QUIC always terminates its own TLS because the protocol requires it, so
+# a certificate is mandatory whenever HTTP/3 is active.
+SERVER_TLS_CERT: str | None = None
+SERVER_TLS_KEY: str | None = None
+SERVER_TLS_CA: str | None = None
+SERVER_TLS_CLIENT_AUTH: str = "none"
+SERVER_TLS_TCP: bool = True
+SERVER_TLS_RELOAD_INTERVAL: float = 10.0
+
+# Protocols. "auto" is the highest available, currently HTTP/3.
+SERVER_HTTP: str = "auto"
+SERVER_WEBSOCKETS: bool = True
+SERVER_WEBTRANSPORT: bool = True
+
+# Processes
+SERVER_WORKERS: int = 1
+SERVER_RUNTIME_THREADS: int = 1
+
+# Backpressure
+SERVER_BACKLOG: int = 1024
+SERVER_MAX_CONCURRENT_CONNECTIONS: int | None = None
+SERVER_DATAGRAM_QUEUE_CAPACITY: int = 64
+SERVER_STREAM_QUEUE_CAPACITY: int = 16
+
+# Advertising HTTP/3: "auto", "off", or a verbatim header value.
+SERVER_ALT_SVC: str = "auto"
+
+# Seconds in-flight work is given to finish once shutdown starts.
+SERVER_DRAIN_TIMEOUT: float = 30.0
+
+# Value for the Server response header. None omits it. Not SERVER_SERVER_HEADER:
+# the name already reads as the server's setting for the Server header.
+SERVER_HEADER: str | None = "nitro"
+
+# Server log
+SERVER_LOG_LEVEL: str = "info"
+SERVER_LOG_DESTINATION: str = "stderr"
+SERVER_LOG_FORMAT: str = "pretty"
+
+# Access log
+SERVER_ACCESS_LOG: bool = False
+SERVER_ACCESS_LOG_DESTINATION: str = "stdout"
+SERVER_ACCESS_LOG_FORMAT: str = "combined"
 
 # Prometheus metrics. Flat rather than nested because there is exactly one
 # exporter to configure; a mapping would suggest several named ones.

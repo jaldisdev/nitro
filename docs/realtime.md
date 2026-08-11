@@ -86,7 +86,7 @@ async def duplex(socket: WebSocket) -> None:
 
 ## WebTransport
 
-WebTransport runs over HTTP/3, so it needs `HTTP` set to `"auto"` or `"3"` and a
+WebTransport runs over HTTP/3, so it needs `SERVER_HTTP` set to `"auto"` or `"3"` and a
 TLS certificate. It is switched off automatically when HTTP/3 is not available.
 
 ```python
@@ -114,7 +114,7 @@ payload: bytes = await session.receive_datagram()
 ```
 
 Datagrams arriving while nothing is reading are held in a ring of
-`DATAGRAM_QUEUE_CAPACITY`. When it is full the *oldest* is dropped: a receiver
+`SERVER_DATAGRAM_QUEUE_CAPACITY`. When it is full the *oldest* is dropped: a receiver
 that has fallen behind is better served by recent data than by a backlog, and
 unlike a stream a datagram carries no promise of delivery to break.
 

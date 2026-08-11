@@ -125,10 +125,12 @@ class TestSettings:
         assert options.observability_port != options.port
 
     def test_the_settings_are_flat_not_nested_under_server(self):
+        # SERVER is gone entirely; every server option is top level now, so
+        # there is no nesting left for these to be confused with.
         class Source:
             SERVER = {"OBSERVABILITY_ENABLED": True}
 
-        with pytest.raises(ImproperlyConfigured, match="top-level setting"):
+        with pytest.raises(ImproperlyConfigured, match="no longer a setting"):
             ServerOptions.resolve(Source())
 
     def test_a_settings_module_can_turn_it_on(self):
@@ -157,7 +159,7 @@ class TestChecking:
         settings_module = tmp_path / "clashing.py"
         settings_module.write_text(
             "DEBUG = True\n"
-            "SERVER = {'PORT': 9464}\n"
+            "SERVER_PORT = 9464\n"
             "OBSERVABILITY_ENABLED = True\n"
             "OBSERVABILITY_PORT = 9464\n"
         )

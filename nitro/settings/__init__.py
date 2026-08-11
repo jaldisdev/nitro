@@ -98,24 +98,44 @@ class LazySettings:
 settings = LazySettings()
 
 
-# Server options configured as flat top-level settings rather than under
-# SERVER, so they are named here to keep the two from being confused for one
-# another. ALLOWED_HOSTS is one of them because it is a property of the site
-# rather than of the socket, even though the server is what enforces it.
-TOP_LEVEL_OPTIONS: tuple[str, ...] = (
-    "allowed_hosts",
-    "observability_enabled",
-    "observability_host",
-    "observability_port",
-)
+#: The setting that used to hold the server's options as a mapping. Named here
+#: only to report its removal: a project that still defines it would otherwise
+#: be configuring nothing and never hear about it.
+RETIRED_MAPPING = "SERVER"
+
+#: Server options that keep a name of their own instead of taking the server's
+#: prefix. ``ALLOWED_HOSTS`` describes the site rather than the socket, and the
+#: observability options already carry a prefix naming their own subsystem.
+UNPREFIXED_OPTIONS: frozenset[str] = frozenset({"allowed_hosts"})
+
+
+def setting_name(field: str) -> str:
+    """The settings name a :class:`ServerOptions` field is configured under.
+
+    Server options are prefixed, the way every other subsystem's flat settings
+    are — ``EMAIL_HOST`` for mail, ``SECURE_HSTS_SECONDS`` for the security
+    headers, ``SERVER_PORT`` for the server. A settings module is one namespace
+    shared with everything a project configures for itself, and a bare ``PORT``
+    or ``WORKERS`` in it belongs to whoever thought of it first.
+    """
+    if field in UNPREFIXED_OPTIONS or field.startswith("observability_"):
+        return field.upper()
+    # `server_header` names the header it sets and already reads as a prefixed
+    # setting; prefixing again would give SERVER_SERVER_HEADER.
+    if field.startswith("server_"):
+        return field.upper()
+    return f"SERVER_{field.upper()}"
 
 
 @dataclass(slots=True)
 class ServerOptions:
     """The bundled server's configuration, in the shape the server reads.
 
-    Field names are lower case here and upper case in the ``SERVER`` setting;
-    the translation happens in :meth:`resolve`.
+    Every field is a flat top-level setting under the name
+    :func:`setting_name` gives it: ``host`` is ``SERVER_HOST``, ``tls_cert`` is
+    ``SERVER_TLS_CERT``. Flat rather than nested for the same reason the
+    observability options are — there is exactly one server to configure, and a
+    mapping would suggest several named ones can be.
     """
 
     host: str = "localhost"
@@ -169,32 +189,17 @@ class ServerOptions:
         An override of ``None`` means "not specified", so a command line flag
         that was not given does not erase a configured value.
         """
-        known = {field.name for field in dataclasses.fields(cls)}
+        known = [field.name for field in dataclasses.fields(cls)]
         settings_source = settings if source is None else source
 
-        try:
-            configured = getattr(settings_source, "SERVER", None) or {}
-        except ImproperlyConfigured:
-            configured = {}
+        cls._reject_retired_mapping(settings_source)
 
         values: dict[str, Any] = {}
-        for name in TOP_LEVEL_OPTIONS:
+        for name in known:
             try:
-                value = getattr(settings_source, name.upper())
+                value = getattr(settings_source, setting_name(name))
             except (AttributeError, ImproperlyConfigured):
                 continue
-            values[name] = value
-
-        for key, value in configured.items():
-            name = key.lower()
-            if name in TOP_LEVEL_OPTIONS:
-                raise ImproperlyConfigured(
-                    f"{key} is a top-level setting, not a SERVER key"
-                )
-            if name not in known:
-                raise ImproperlyConfigured(
-                    f"SERVER setting {key!r} is not a known server option"
-                )
             values[name] = value
 
         for name, value in overrides.items():
@@ -205,3 +210,30 @@ class ServerOptions:
             values[name] = value
 
         return cls(**values)
+
+    @classmethod
+    def _reject_retired_mapping(cls, source: Any) -> None:
+        """Report a project still configuring the server through ``SERVER``.
+
+        Silently ignoring it would leave a deployment running on defaults while
+        its settings file says otherwise, which is the worst of the three
+        possible behaviours.
+        """
+        try:
+            configured = getattr(source, RETIRED_MAPPING, None)
+        except ImproperlyConfigured:
+            return
+        if not configured:
+            return
+
+        known = {field.name for field in dataclasses.fields(cls)}
+        moved = sorted(
+            setting_name(str(key).lower())
+            for key in configured
+            if str(key).lower() in known
+        )
+        raise ImproperlyConfigured(
+            f"{RETIRED_MAPPING} is no longer a setting; its keys are now top-level "
+            f"settings of their own. Write {', '.join(moved) or 'them'} in the "
+            "settings module directly instead."
+        )
