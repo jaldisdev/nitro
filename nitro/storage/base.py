@@ -6,6 +6,17 @@ from typing import Any
 
 from nitro.utils.content import Content
 
+__all__ = ["BaseStorage", "StorageFile", "StorageOperationUnsupported"]
+
+
+class StorageOperationUnsupported(NotImplementedError):
+    """A backend cannot answer something the interface offers.
+
+    Not every store can do everything: an object store has no access time, for
+    instance. One exception for all of them means a caller that wants to cope
+    with it can, without knowing which backend it is talking to.
+    """
+
 
 class StorageFile(ABC):
     """
@@ -171,18 +182,27 @@ class BaseStorage(ABC):
         """
         pass
 
-    @abstractmethod
     async def get_accessed_time(self, name: str) -> datetime:
         """
         Get the last accessed time of a file.
+
+        Not abstract, unlike the other two timestamps: an object store has no
+        access time to report, and a backend that cannot answer should say so
+        rather than approximate it with the modification time — which would
+        quietly give a caller a different fact than the one it asked for.
 
         Args:
             name: The name/path of the file
 
         Returns:
             Last accessed datetime
+
+        Raises:
+            StorageOperationUnsupported: If the backend does not track it
         """
-        pass
+        raise StorageOperationUnsupported(
+            f"{type(self).__name__} does not track access time"
+        )
 
     @abstractmethod
     async def get_created_time(self, name: str) -> datetime:

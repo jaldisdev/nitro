@@ -1,14 +1,29 @@
+"""Deferred objects, for application code.
+
+`LazyObject` and `SimpleLazyObject` wrap something expensive so that building
+it is put off until the first time it is used, and `lazy` does the same for a
+function's result. They are here for projects built on Nitro; the framework
+itself does not use them.
+
+Not to be confused with :class:`nitro.settings.LazySettings`, which defers the
+same way but is not built on these. The two are deliberately separate:
+`LazySettings` resolves one specific thing from one specific place — the module
+named by ``NITRO_SETTINGS_MODULE`` — and offers `reset` and `configured` for
+tests that change the environment between cases, neither of which a
+general-purpose proxy models. Settings are also on the import path of nearly
+everything, and `LazyObject`'s ``__getattribute__`` and ``_mask_wrapped``
+machinery is a great deal of behaviour to put there for the sake of sharing a
+few lines.
+"""
+
 import copy
 import itertools
 import operator
 from functools import wraps
 from typing import Any
 
-# =============================================================================
-# Lazy Object Wrapper (for delayed object instantiation)
-# =============================================================================
-
-# Sentinel value to indicate an uninitialized wrapped object
+#: Marks a wrapper whose object has not been built yet. A sentinel rather than
+#: `None`, since `None` is a value a wrapped object may legitimately be.
 empty = object()
 
 

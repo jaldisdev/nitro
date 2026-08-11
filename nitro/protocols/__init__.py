@@ -1,9 +1,39 @@
-"""Requests, responses and the exceptions that become responses."""
+"""Requests, responses, sockets, sessions, and the exceptions that become
+responses.
+
+Everything a handler is given or hands back is reachable from here, so a
+project imports one name rather than remembering which module each lives in.
+"""
 
 from nitro.protocols.exceptions import (
+    ExceptionHandlerRegistry,
     Http404,
+    HttpBadGateway,
+    HttpBadRequest,
+    HttpConflict,
     HttpException,
+    HttpExpectationFailed,
     HttpForbidden,
+    HttpGatewayTimeout,
+    HttpGone,
+    HttpInternalServerError,
+    HttpLengthRequired,
+    HttpMethodNotAllowed,
+    HttpNotAcceptable,
+    HttpNotImplemented,
+    HttpPayloadTooLarge,
+    HttpPaymentRequired,
+    HttpPreconditionFailed,
+    HttpProxyAuthenticationRequired,
+    HttpRangeNotSatisfiable,
+    HttpRequestTimeout,
+    HttpServiceUnavailable,
+    HttpTooManyRequests,
+    HttpUnauthorized,
+    HttpUnprocessableEntity,
+    HttpUnsupportedMediaType,
+    HttpUriTooLong,
+    HttpVersionNotSupported,
 )
 from nitro.protocols.http import (
     URL,
@@ -22,18 +52,50 @@ from nitro.protocols.http import (
     TemplateResponse,
     UploadFile,
 )
+from nitro.protocols.websocket import WebSocket, WebSocketDisconnect, WebSocketState
+from nitro.protocols.webtransport import (
+    WebTransportDisconnect,
+    WebTransportSession,
+    WebTransportState,
+    WebTransportStream,
+)
 
 __all__ = [
     "URL",
     "Address",
+    "ExceptionHandlerRegistry",
     "FileResponse",
     "FormData",
     "HTMLResponse",
     "Http404",
+    "HttpBadGateway",
+    "HttpBadRequest",
+    "HttpConflict",
     "HttpException",
+    "HttpExpectationFailed",
     "HttpForbidden",
+    "HttpGatewayTimeout",
+    "HttpGone",
+    "HttpInternalServerError",
+    "HttpLengthRequired",
+    "HttpMethodNotAllowed",
+    "HttpNotAcceptable",
+    "HttpNotImplemented",
+    "HttpPayloadTooLarge",
+    "HttpPaymentRequired",
+    "HttpPreconditionFailed",
+    "HttpProxyAuthenticationRequired",
+    "HttpRangeNotSatisfiable",
     "HttpRequest",
+    "HttpRequestTimeout",
     "HttpResponse",
+    "HttpServiceUnavailable",
+    "HttpTooManyRequests",
+    "HttpUnauthorized",
+    "HttpUnprocessableEntity",
+    "HttpUnsupportedMediaType",
+    "HttpUriTooLong",
+    "HttpVersionNotSupported",
     "JSONResponse",
     "PlainTextResponse",
     "QueryParams",
@@ -42,4 +104,11 @@ __all__ = [
     "StreamingResponse",
     "TemplateResponse",
     "UploadFile",
+    "WebSocket",
+    "WebSocketDisconnect",
+    "WebSocketState",
+    "WebTransportDisconnect",
+    "WebTransportSession",
+    "WebTransportState",
+    "WebTransportStream",
 ]

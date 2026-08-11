@@ -202,10 +202,9 @@ class S3Storage(BaseStorage):
         
         return f'https://{self.bucket_name}.s3.{self.region_name}.amazonaws.com/{name}'
     
-    async def get_accessed_time(self, name: str) -> datetime:
-        # S3 doesn't track access time
-        raise NotImplementedError('S3 does not track access time')
-    
+    # `get_accessed_time` is left to the base class, which reports that this
+    # backend cannot answer it: S3 does not record when an object was read.
+
     async def get_created_time(self, name: str) -> datetime:
         async with self.session.client('s3', **self._get_client_kwargs()) as s3:
             try:

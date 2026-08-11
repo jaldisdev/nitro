@@ -25,7 +25,7 @@ def seeded_manager(*engines) -> Templates:
     """Return a fully initialised Templates instance with given engines."""
     mgr = Templates()
     mgr._engines = {e.name: e for e in engines}
-    mgr._initialized = True
+    mgr._built = True
     return mgr
 
 
@@ -38,7 +38,7 @@ def tdir(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _ensure_initialized
+# _build
 # ---------------------------------------------------------------------------
 
 
@@ -55,7 +55,7 @@ class TestEnsureInitialized:
         ]
         with patch("nitro.settings.settings", mock_settings):
             mgr = Templates()
-            mgr._ensure_initialized()
+            mgr._build()
         assert "web" in mgr.engines
 
     def test_initialises_multiple_engines(self, tmp_path):
@@ -81,7 +81,7 @@ class TestEnsureInitialized:
         ]
         with patch("nitro.settings.settings", mock_settings):
             mgr = Templates()
-            mgr._ensure_initialized()
+            mgr._build()
         assert set(mgr.engines.keys()) == {"web", "email"}
 
     def test_empty_settings_produces_no_engines(self):
@@ -89,17 +89,20 @@ class TestEnsureInitialized:
         mock_settings.TEMPLATES = []
         with patch("nitro.settings.settings", mock_settings):
             mgr = Templates()
-            mgr._ensure_initialized()
+            mgr._build()
         assert mgr.engines == {}
 
-    def test_missing_templates_setting_produces_no_engines(self):
+    def test_a_settings_object_without_templates_says_so(self):
+        # TEMPLATES is always in the defaults, so a settings object missing it
+        # is a broken one. Reporting the name beats reporting "no engines
+        # configured" from somewhere else much later.
         mock_settings = MagicMock(spec=[])  # no TEMPLATES attribute
         with patch("nitro.settings.settings", mock_settings):
             mgr = Templates()
-            mgr._ensure_initialized()
-        assert mgr.engines == {}
+            with pytest.raises(AttributeError, match="TEMPLATES"):
+                mgr._build()
 
-    def test_sets_initialized_flag(self, tdir):
+    def test_sets_the_built_flag(self, tdir):
         mock_settings = MagicMock()
         mock_settings.TEMPLATES = [
             {
@@ -111,15 +114,15 @@ class TestEnsureInitialized:
         ]
         with patch("nitro.settings.settings", mock_settings):
             mgr = Templates()
-            assert mgr._initialized is False
-            mgr._ensure_initialized()
-            assert mgr._initialized is True
+            assert mgr._built is False
+            mgr._build()
+            assert mgr._built is True
 
-    def test_is_idempotent_when_already_initialized(self, tdir):
+    def test_is_idempotent_once_built(self, tdir):
         engine = make_engine(tdir)
         mgr = seeded_manager(engine)
         original_engines = dict(mgr._engines)
-        mgr._ensure_initialized()
+        mgr._build()
         assert mgr._engines == original_engines
 
     def test_raises_for_unsupported_backend(self, tdir):
@@ -134,8 +137,10 @@ class TestEnsureInitialized:
         ]
         with patch("nitro.settings.settings", mock_settings):
             mgr = Templates()
-            with pytest.raises(ValueError, match="Unsupported template backend"):
-                mgr._ensure_initialized()
+            from nitro.settings import ImproperlyConfigured
+
+            with pytest.raises(ImproperlyConfigured, match="ships one template backend"):
+                mgr._build()
 
     def test_default_backend_assumed_when_omitted(self, tdir):
         mock_settings = MagicMock()
@@ -148,7 +153,7 @@ class TestEnsureInitialized:
         ]
         with patch("nitro.settings.settings", mock_settings):
             mgr = Templates()
-            mgr._ensure_initialized()
+            mgr._build()
         assert "web" in mgr.engines
 
 
@@ -209,8 +214,8 @@ class TestDefault:
     def test_raises_runtime_error_when_no_engines_configured(self):
         mgr = Templates()
         mgr._engines = {}
-        mgr._initialized = True
-        with pytest.raises(RuntimeError, match="No template engines configured"):
+        mgr._built = True
+        with pytest.raises(RuntimeError, match="no template engine is configured"):
             _ = mgr.default
 
 
@@ -230,7 +235,7 @@ class TestEnginesProperty:
     def test_returns_empty_dict_when_none_configured(self):
         mgr = Templates()
         mgr._engines = {}
-        mgr._initialized = True
+        mgr._built = True
         assert mgr.engines == {}
 
     def test_returns_all_named_engines(self, tmp_path):
@@ -356,6 +361,6 @@ class TestRenderToStringSync:
     def test_raises_runtime_error_when_no_engines(self):
         mgr = Templates()
         mgr._engines = {}
-        mgr._initialized = True
+        mgr._built = True
         with pytest.raises(RuntimeError):
             mgr.render_to_string_sync("any.html")

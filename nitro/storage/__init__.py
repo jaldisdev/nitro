@@ -10,13 +10,15 @@ Each backend is built the first time its alias is used, so a project that
 configures storage it never touches never connects to it.
 """
 
-from nitro.storage.base import BaseStorage
+from nitro.storage.base import BaseStorage, StorageFile, StorageOperationUnsupported
 from nitro.storage.handler import DEFAULT_STORAGE_ALIAS, StorageHandler
 
 __all__ = [
     "BaseStorage",
     "DEFAULT_STORAGE_ALIAS",
+    "StorageFile",
     "StorageHandler",
+    "StorageOperationUnsupported",
     "reset_storages",
     "storage",
     "storages",
