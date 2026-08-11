@@ -8,8 +8,10 @@ version = "0.1.0"
 description = "Publish/subscribe channels for Python services"
 readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "MIT OR Apache-2.0" }
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 authors = [{ name = "Mario Ritzerfeld", email = "oss@jaldis.com" }]
+keywords = ["pubsub", "redis", "messagepack", "channels", "async"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
@@ -19,8 +21,14 @@ classifiers = [
     "Programming Language :: Rust",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jaldis/nitro"
+Repository = "https://github.com/jaldis/nitro"
+Documentation = "https://github.com/jaldis/nitro/blob/canary/docs/intercom.md"
+Issues = "https://github.com/jaldis/nitro/issues"
+
 [project.optional-dependencies]
-dev = ["pytest>=9", "pytest-asyncio>=1.0"]
+dev = ["pytest>=9", "pytest-asyncio>=1.0", "ruff>=0.16"]
 
 [tool.maturin]
 module-name = "nitro_intercom._intercom"

@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest something Nitro should do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do that is hard or impossible today? Describe
+        the situation rather than the solution — it often has more than one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: If you have an idea of the shape it should take, sketch it.
+      render: python
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have tried instead
+      description: Workarounds, other frameworks, or why the existing surface does not fit.

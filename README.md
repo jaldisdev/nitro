@@ -106,6 +106,12 @@ pull in the clients particular backends need: `nitro[redis]`, `nitro[aws]`,
 `nitro[azure]`, `nitro[sendgrid]`, `nitro[memcached]`, `nitro[email-oauth]`, or
 `nitro[all]`.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get set up and what CI will
+check. Security issues go to [SECURITY.md](SECURITY.md) rather than the issue
+tracker. Changes worth knowing about are in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or the

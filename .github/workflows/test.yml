@@ -9,6 +9,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      # Reads the rules from pyproject.toml, so this and a local run agree.
+      - run: pip install ruff
+      - run: ruff check nitro tests
+      - run: ruff format --check nitro tests
+
   rust:
     name: Rust
     runs-on: ubuntu-latest

@@ -1,0 +1,61 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If this is a security issue, please do not file
+        it here — see [SECURITY.md](../blob/canary/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >
+        The smallest application and request that shows it. A handler and a
+        curl command is usually enough.
+      render: python
+    validations:
+      required: true
+
+  - type: input
+    id: nitro-version
+    attributes:
+      label: Nitro version
+      placeholder: "0.1.0, or a commit hash"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.13.2"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: "Ubuntu 24.04, macOS 15, ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: >
+        Server log, traceback, or `nitro check` output. Run with
+        `SERVER_LOG_LEVEL = "debug"` if there is nothing obvious.
+      render: shell
