@@ -6,6 +6,7 @@ except ImportError:
     aioboto3 = None  # type: ignore
 
 from nitro.storage.base import BaseStorage, StorageFile
+from nitro.utils.content import Content, file_object_for, read_content
 
 
 class S3File(StorageFile):
@@ -94,19 +95,28 @@ class S3Storage(BaseStorage):
             kwargs['endpoint_url'] = self.endpoint_url
         return kwargs
     
-    async def save(self, name: str, content: bytes) -> str:
+    async def save(self, name: str, content: Content) -> str:
+        # A file goes to the client as a file, which is what lets an upload
+        # already spooled to disk be read from there instead of being handed
+        # over as bytes this process holds. Anything without a file behind it —
+        # bytes, a chunk iterator — has to be collected first, because the
+        # request needs a length up front.
+        body = file_object_for(content)
+        if body is None:
+            body = await read_content(content)
+
         async with self.session.client('s3', **self._get_client_kwargs()) as s3:
             extra_args = {}
             if self.default_acl:
                 extra_args['ACL'] = self.default_acl
-            
+
             await s3.put_object(
                 Bucket=self.bucket_name,
                 Key=name,
-                Body=content,
+                Body=body,
                 **extra_args,
             )
-        
+
         return name
     
     def open(self, name: str, mode: str = 'rb') -> StorageFile:

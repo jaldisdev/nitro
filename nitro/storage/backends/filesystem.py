@@ -6,6 +6,7 @@ import aiofiles
 import aiofiles.os
 
 from nitro.storage.base import BaseStorage, StorageFile
+from nitro.utils.content import Content, iter_content
 
 
 class FileSystemFile(StorageFile):
@@ -53,15 +54,18 @@ class FileSystemStorage(BaseStorage):
         
         return path
     
-    async def save(self, name: str, content: bytes) -> str:
+    async def save(self, name: str, content: Content) -> str:
         path = self._get_path(name)
-        
+
         # Create parent directories if needed
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # Written as it is read, so saving an upload larger than memory is a
+        # copy between two files rather than a trip through this process.
         async with aiofiles.open(path, 'wb') as f:
-            await f.write(content)
-        
+            async for chunk in iter_content(content):
+                await f.write(chunk)
+
         return name
     
     def open(self, name: str, mode: str = 'rb') -> StorageFile:

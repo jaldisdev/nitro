@@ -29,6 +29,35 @@ await storage.delete(name)
 `storage` is shorthand for `storages["default"]`. Each backend is built the
 first time its alias is used, and rebuilt in each worker after a fork.
 
+## What can be saved
+
+`save()` takes bytes, anything with a `read()`, or an async iterator of chunks:
+
+```python
+await storage.save("one.jpg", data)                       # bytes
+await storage.save("two.jpg", open("photo.jpg", "rb"))    # an open file
+await storage.save("three.jpg", (await request.form())["photo"])   # an upload
+await storage.save("four.jpg", produce_chunks())          # an async iterator
+await storage.save("copy.jpg", storages["media"].open("one.jpg"))  # another backend's file
+```
+
+Anything but bytes is moved a chunk at a time where the backend can manage it,
+which is the point of accepting them: an upload past `MAX_UPLOAD_MEMORY` is
+already a file on disk, and saving it should not mean loading it back into this
+process first.
+
+What each backend does with that:
+
+| Backend | |
+|---|---|
+| `FileSystemStorage` | writes as it reads, so a save is a copy between two files |
+| `S3Storage`, `AzureStorage` | hand the file to their own client, which reads it |
+| `MemoryStorage` | reads it whole, having nowhere to stream it to |
+
+A file that has already been read is rewound first, so an upload a handler
+inspected before saving still arrives whole. A synchronous `read()` is handed to
+a thread rather than blocking the loop.
+
 ## Backends
 
 | Backend | Needs | `LOCATION` |

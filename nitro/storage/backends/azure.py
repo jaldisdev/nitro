@@ -7,6 +7,7 @@ except ImportError:
     ContainerClient = None  # type: ignore
 
 from nitro.storage.base import BaseStorage, StorageFile
+from nitro.utils.content import Content, file_object_for, read_content
 
 
 class AzureBlobFile(StorageFile):
@@ -105,9 +106,15 @@ class AzureBlobStorage(BaseStorage):
             self.blob_service_client.get_container_client(self.container_name)
         )
     
-    async def save(self, name: str, content: bytes) -> str:
+    async def save(self, name: str, content: Content) -> str:
+        # As in the S3 backend: a file is handed over as a file so the client
+        # reads it from disk itself, and anything else is collected first.
+        data = file_object_for(content)
+        if data is None:
+            data = await read_content(content)
+
         blob_client = self.container_client.get_blob_client(name)
-        await blob_client.upload_blob(content, overwrite=True)
+        await blob_client.upload_blob(data, overwrite=True)
         return name
     
     def open(self, name: str, mode: str = 'rb') -> StorageFile:

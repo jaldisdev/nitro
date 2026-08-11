@@ -1,8 +1,11 @@
+import io
 from datetime import datetime
 
 import pytest
 
+from nitro.protocols import UploadFile
 from nitro.storage.backends.filesystem import FileSystemStorage
+from nitro.utils.content import CHUNK_SIZE
 
 
 @pytest.fixture
@@ -454,3 +457,88 @@ async def test_close_is_noop_files_remain(storage):
 @pytest.mark.asyncio
 async def test_close_does_not_raise(storage):
     await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# save from something other than bytes
+# ---------------------------------------------------------------------------
+
+
+class CountingFile:
+    """A file that records how it was read, to show that a save streams rather
+    than asking for everything at once."""
+
+    def __init__(self, content: bytes):
+        self._file = io.BytesIO(content)
+        self.reads: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        self.reads.append(size)
+        return self._file.read(size)
+
+    def seek(self, offset: int) -> int:
+        return self._file.seek(offset)
+
+    def seekable(self) -> bool:
+        return True
+
+
+async def chunks_of(*chunks: bytes):
+    for chunk in chunks:
+        yield chunk
+
+
+@pytest.mark.asyncio
+async def test_save_from_a_file_object(storage):
+    await storage.save("from_file.txt", io.BytesIO(b"out of a file"))
+    assert await storage.read("from_file.txt") == b"out of a file"
+
+
+@pytest.mark.asyncio
+async def test_save_from_an_upload(storage):
+    upload = UploadFile(filename="notes.txt", file=io.BytesIO(b"uploaded bytes"), size=14)
+    await storage.save("upload.txt", upload)
+    assert await storage.read("upload.txt") == b"uploaded bytes"
+
+
+@pytest.mark.asyncio
+async def test_save_from_an_upload_already_read(storage):
+    upload = UploadFile(filename="notes.txt", file=io.BytesIO(b"uploaded bytes"), size=14)
+    assert await upload.read() == b"uploaded bytes"
+
+    # Left sitting at its end by the read above, and saved whole regardless.
+    await storage.save("upload.txt", upload)
+    assert await storage.read("upload.txt") == b"uploaded bytes"
+
+
+@pytest.mark.asyncio
+async def test_save_from_an_async_iterator(storage):
+    await storage.save("streamed.txt", chunks_of(b"one ", b"two ", b"three"))
+    assert await storage.read("streamed.txt") == b"one two three"
+
+
+@pytest.mark.asyncio
+async def test_save_from_another_backends_file(storage):
+    await storage.save("source.txt", b"copied across")
+    await storage.save("destination.txt", storage.open("source.txt"))
+    assert await storage.read("destination.txt") == b"copied across"
+
+
+@pytest.mark.asyncio
+async def test_a_large_file_is_read_in_chunks_rather_than_whole(storage):
+    content = b"x" * (CHUNK_SIZE * 3)
+    source = CountingFile(content)
+
+    await storage.save("large.bin", source)
+
+    assert await storage.read("large.bin") == content
+    # One read per chunk, plus the empty one that ends it — never a single
+    # read of the whole file.
+    assert source.reads == [CHUNK_SIZE] * 4
+    assert -1 not in source.reads
+
+
+@pytest.mark.asyncio
+async def test_saving_something_unreadable_says_so(storage):
+    with pytest.raises(TypeError, match="cannot read content from"):
+        await storage.save("nope.txt", 12345)

@@ -1,8 +1,10 @@
 import asyncio
+import io
 from datetime import datetime
 
 import pytest
 
+from nitro.protocols import UploadFile
 from nitro.storage.backends.memory import MemoryStorage
 
 pytestmark = pytest.mark.asyncio
@@ -359,3 +361,40 @@ async def test_close_allows_saving_new_files_after(storage):
     await storage.close()
     await storage.save("file.txt", b"new")
     assert await storage.read("file.txt") == b"new"
+
+
+# ---------------------------------------------------------------------------
+# save from something other than bytes
+# ---------------------------------------------------------------------------
+
+
+async def chunks_of(*chunks: bytes):
+    for chunk in chunks:
+        yield chunk
+
+
+@pytest.mark.asyncio
+async def test_save_from_a_file_object(storage):
+    await storage.save("from_file.txt", io.BytesIO(b"out of a file"))
+    assert await storage.read("from_file.txt") == b"out of a file"
+
+
+@pytest.mark.asyncio
+async def test_save_from_an_upload(storage):
+    upload = UploadFile(filename="notes.txt", file=io.BytesIO(b"uploaded bytes"), size=14)
+    await storage.save("upload.txt", upload)
+    assert await storage.read("upload.txt") == b"uploaded bytes"
+    assert await storage.size("upload.txt") == 14
+
+
+@pytest.mark.asyncio
+async def test_save_from_an_async_iterator(storage):
+    await storage.save("streamed.txt", chunks_of(b"one ", b"two ", b"three"))
+    assert await storage.read("streamed.txt") == b"one two three"
+
+
+@pytest.mark.asyncio
+async def test_save_from_another_backends_file(storage):
+    await storage.save("source.txt", b"copied across")
+    await storage.save("destination.txt", storage.open("source.txt"))
+    assert await storage.read("destination.txt") == b"copied across"

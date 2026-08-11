@@ -1,6 +1,10 @@
+"""The storage backend interface."""
+
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
+
+from nitro.utils.content import Content
 
 
 class StorageFile(ABC):
@@ -55,13 +59,16 @@ class BaseStorage(ABC):
         self.base_url = params.get("BASE_URL", None)
 
     @abstractmethod
-    async def save(self, name: str, content: bytes) -> str:
+    async def save(self, name: str, content: Content) -> str:
         """
         Save content to the storage.
 
         Args:
             name: The name/path for the file
-            content: The file content as bytes
+            content: Bytes, something with a read() — an open file, an
+                UploadFile, a StorageFile — or an async iterator of chunks.
+                Anything but bytes is moved a chunk at a time where the backend
+                can, so a large upload never has to be held whole.
 
         Returns:
             The name where the file was saved

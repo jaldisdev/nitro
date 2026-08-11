@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 
 from nitro.storage.base import BaseStorage, StorageFile
+from nitro.utils.content import Content, read_content
 
 
 class MemoryFile(StorageFile):
@@ -46,9 +47,12 @@ class MemoryStorage(BaseStorage):
             raise FileNotFoundError(f'File not found: {name}')
         return self._storage[name]
     
-    async def save(self, name: str, content: bytes) -> str:
+    async def save(self, name: str, content: Content) -> str:
+        # Read whole: this backend's files are the bytes themselves, so there
+        # is nowhere to stream them to.
+        content = await read_content(content)
         now = datetime.now()
-        
+
         async with self._lock:
             self._storage[name] = {
                 'content': content,
