@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from nitro.di import DependencyParam, extract_dependencies
 from nitro.routing.converters import Converter, converter_for
 
 __all__ = ["ParameterSpec", "Route", "Router", "RouteTable"]
@@ -51,6 +52,10 @@ class Route:
     methods: tuple[str, ...]
     name: str | None = None
     converters: dict[str, Converter] = field(default_factory=dict)
+    #: Parameters this handler wants supplied by a dependency, read once when
+    #: the route is registered so a cycle is reported at startup rather than
+    #: on the first request that would have hit it.
+    dependencies: dict[str, DependencyParam] = field(default_factory=dict)
 
     @property
     def parameters(self) -> list[ParameterSpec]:
@@ -178,6 +183,7 @@ class Router:
             methods=normalised,
             name=name,
             converters=converters,
+            dependencies=extract_dependencies(handler),
         )
         self._next_id += 1
         self._routes.append(route)

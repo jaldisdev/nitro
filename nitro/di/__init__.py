@@ -24,6 +24,7 @@ __all__ = [
     "DependencyCycle",
     "DependencyError",
     "Depends",
+    "dependencies_for",
     "extract_dependencies",
     "resolve_dependencies",
 ]
@@ -118,6 +119,35 @@ def extract_dependencies(function: Callable[..., Any]) -> dict[str, DependencyPa
     is found when routes are registered instead of when a request arrives.
     """
     return _extract(function, ())
+
+
+#: Graphs already read, keyed by the callable they were read from. Extraction
+#: walks signatures recursively, which is worth doing once per handler rather
+#: than once per request; the result depends only on the callable itself.
+_CACHED_GRAPHS: dict[Any, dict[str, DependencyParam]] = {}
+
+
+def dependencies_for(function: Callable[..., Any]) -> dict[str, DependencyParam]:
+    """:func:`extract_dependencies`, remembered per callable.
+
+    For a handler whose graph is read when its route is registered this is
+    already known; it exists for the ones that cannot be — an endpoint's verb
+    methods are reached through ``dispatch`` rather than being the registered
+    handler themselves.
+    """
+    key = getattr(function, "__func__", function)
+    try:
+        return _CACHED_GRAPHS[key]
+    except KeyError:
+        pass
+    except TypeError:
+        # Unhashable, so it cannot be remembered. Reading it every time is
+        # slower but still correct.
+        return extract_dependencies(function)
+
+    graph = extract_dependencies(function)
+    _CACHED_GRAPHS[key] = graph
+    return graph
 
 
 def _extract(

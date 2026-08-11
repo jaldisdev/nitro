@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from nitro.di import dependencies_for
 from nitro.endpoints import HTTP_METHODS
 from nitro.routing.router import (
     DEFAULT_METHODS,
@@ -69,6 +70,16 @@ def _dispatcher(endpoint: type) -> Callable[..., Any]:
             "subclass HTTPEndpoint, WebSocketEndpoint or WebTransportEndpoint, "
             "or pass an async function"
         )
+
+    # Read every hook's dependency graph now rather than on the first request
+    # that reaches it. `dispatch` is what the router registers, so without
+    # this a cycle inside an endpoint's own method would surface as a failed
+    # request instead of a failed startup — the opposite of what the graph is
+    # read eagerly for everywhere else.
+    for attribute in (*HTTP_METHODS, "on_connect", "on_receive", "on_datagram", "on_stream", "on_disconnect"):
+        hook = getattr(endpoint, attribute, None)
+        if hook is not None:
+            dependencies_for(hook)
 
     async def dispatch(target: Any, **parameters: Any) -> Any:
         return await endpoint().dispatch(target, **parameters)

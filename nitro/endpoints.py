@@ -1,10 +1,28 @@
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
+from nitro.di import DependencyCache, dependencies_for, resolve_dependencies
 from nitro.protocols.exceptions import HttpMethodNotAllowed
 from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket, WebSocketDisconnect
 from nitro.protocols.webtransport import WebTransportDisconnect, WebTransportSession
+
+
+async def _supplied(
+    function: Callable[..., Any],
+    context: Any,
+    cache: DependencyCache | None = None,
+) -> dict[str, Any]:
+    """Values for the parameters `function` wants injected, or nothing.
+
+    `cache` spans one request or one connection. Sharing it across the hooks
+    of a socket is what makes a dependency they have in common resolve once
+    for the connection rather than once per hook.
+    """
+    graph = dependencies_for(function)
+    if not graph:
+        return {}
+    return await resolve_dependencies(graph, context, cache or DependencyCache())
 
 
 #: The verbs an endpoint may implement, lower case as they are written on the
@@ -46,7 +64,11 @@ class HTTPEndpoint:
         if handler is None:
             return await self.method_not_allowed(request)
 
-        response = await handler(request, **params)
+        # A verb method is reached through here rather than being the
+        # registered handler, so its graph is read on first use instead of at
+        # registration; `dependencies_for` remembers it per method.
+        supplied = await _supplied(handler, request)
+        response = await handler(request, **supplied, **params)
 
         if request.method.upper() == "HEAD":
             if "content-length" not in response._headers:
@@ -84,17 +106,28 @@ class WebSocketEndpoint:
         return await self.dispatch(websocket, **params)
 
     async def dispatch(self, websocket: WebSocket, **params) -> None:
-        """Dispatch WebSocket events to lifecycle hooks."""
-        await self.on_connect(websocket, **params)
+        """Dispatch WebSocket events to lifecycle hooks.
+
+        Dependencies are resolved once for the connection and supplied to
+        every hook that asks for them, rather than per message: a socket is
+        one unit of work, and re-resolving per frame would give `on_receive`
+        a different value each time.
+        """
+        shared = DependencyCache()
+        connect = await _supplied(self.on_connect, websocket, shared)
+        receive = await _supplied(self.on_receive, websocket, shared)
+        disconnect = await _supplied(self.on_disconnect, websocket, shared)
+
+        await self.on_connect(websocket, **connect, **params)
 
         close_code = 1000
         try:
             async for data in websocket.iter(self.encoding):
-                await self.on_receive(websocket, data, **params)
+                await self.on_receive(websocket, data, **receive, **params)
         except WebSocketDisconnect as exc:
             close_code = exc.code
         finally:
-            await self.on_disconnect(websocket, close_code, **params)
+            await self.on_disconnect(websocket, close_code, **disconnect, **params)
 
     async def on_connect(self, websocket: WebSocket, **params) -> None:
         """Override to handle WebSocket connection."""
@@ -130,8 +163,18 @@ class WebTransportEndpoint:
         return await self.dispatch(session, **params)
 
     async def dispatch(self, session: WebTransportSession, **params) -> None:
-        """Dispatch WebTransport events to lifecycle hooks."""
-        await self.on_connect(session, **params)
+        """Dispatch WebTransport events to lifecycle hooks.
+
+        One cache for the session, as `WebSocketEndpoint.dispatch` does and
+        for the same reason.
+        """
+        shared = DependencyCache()
+        connect = await _supplied(self.on_connect, session, shared)
+        datagram = await _supplied(self.on_datagram, session, shared)
+        stream_supplied = await _supplied(self.on_stream, session, shared)
+        disconnect = await _supplied(self.on_disconnect, session, shared)
+
+        await self.on_connect(session, **connect, **params)
 
         close_code = 0
         try:
@@ -140,23 +183,23 @@ class WebTransportEndpoint:
 
                 async def handle_datagrams():
                     async for data in session.iter_datagrams(self.encoding):
-                        await self.on_datagram(session, data, **params)
+                        await self.on_datagram(session, data, **datagram, **params)
 
                 async def handle_streams():
                     while True:
                         stream = await session.receive_stream()
-                        asyncio.create_task(self.on_stream(session, stream, **params))
+                        asyncio.create_task(self.on_stream(session, stream, **stream_supplied, **params))
 
                 await asyncio.gather(
                     handle_datagrams(), handle_streams(), return_exceptions=True
                 )
             else:
                 async for data in session.iter_datagrams(self.encoding):
-                    await self.on_datagram(session, data, **params)
+                    await self.on_datagram(session, data, **datagram, **params)
         except WebTransportDisconnect as exc:
             close_code = exc.code
         finally:
-            await self.on_disconnect(session, close_code, **params)
+            await self.on_disconnect(session, close_code, **disconnect, **params)
 
     async def on_connect(self, session: WebTransportSession, **params) -> None:
         """Override to handle session connection."""

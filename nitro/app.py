@@ -19,6 +19,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
+from nitro.di import DependencyCache, resolve_dependencies
 from nitro.middleware.stack import MiddlewareStack
 from nitro.protocols.exceptions import (
     ExceptionHandlerRegistry,
@@ -91,6 +92,20 @@ def served_addresses(server: Any, options: ServerOptions) -> list[str]:
     """
     scheme = "https" if options.tls_cert and options.tls_tcp else "http"
     return [f"{scheme}://{host}:{port}" for host, port in server.addresses]
+
+
+async def _dependencies(route: Route, context: Any) -> dict[str, Any]:
+    """Values for the parameters `route`'s handler wants injected.
+
+    The graph was read when the route was registered, so nothing is inspected
+    here. A cache is created per call and passed down, which is what makes a
+    dependency named twice in one request resolve once — and, because it is
+    created here rather than held on the route, what stops one request seeing
+    another's values.
+    """
+    if not route.dependencies:
+        return {}
+    return await resolve_dependencies(route.dependencies, context, DependencyCache())
 
 
 def _is_async_callable(handler: Any) -> bool:
@@ -371,7 +386,8 @@ class Nitro:
         request = HttpRequest(scope, protocol, parameters)
 
         async def call_handler(request: HttpRequest) -> Any:
-            return await route.handler(request, **parameters)
+            supplied = await _dependencies(route, request)
+            return await route.handler(request, **supplied, **parameters)
 
         try:
             result = await self.middleware.execute_http(request, call_handler)
@@ -497,7 +513,8 @@ class Nitro:
         socket = WebSocket(scope, transport, parameters)
 
         async def call_handler(socket: WebSocket) -> None:
-            await route.handler(socket, **parameters)
+            supplied = await _dependencies(route, socket)
+            await route.handler(socket, **supplied, **parameters)
 
         try:
             await self.middleware.execute_websocket(socket, call_handler)
@@ -534,7 +551,8 @@ class Nitro:
         connection = WebTransportSession(scope, session, parameters)
 
         async def call_handler(connection: WebTransportSession) -> None:
-            await route.handler(connection, **parameters)
+            supplied = await _dependencies(route, connection)
+            await route.handler(connection, **supplied, **parameters)
 
         try:
             await self.middleware.execute_webtransport(connection, call_handler)
