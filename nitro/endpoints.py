@@ -1,3 +1,4 @@
+from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
 from nitro.protocols.exceptions import HttpMethodNotAllowed
@@ -23,6 +24,12 @@ class HTTPEndpoint:
     """
     Base class for HTTP endpoints with method-based dispatch.
     """
+
+    #: Decorators wrapped around this endpoint, outermost first, so the one
+    #: named first is the first to run. Applied once when the route table is
+    #: built, and around the whole request rather than one method of it — for a
+    #: single method, decorate it with `nitro.utils.decorators.method_decorator`.
+    decorators: Sequence[Callable[..., Any]] = ()
 
     async def __call__(self, request: HttpRequest, **params) -> HttpResponse:
         """Dispatch to method handler."""
@@ -64,6 +71,12 @@ class WebSocketEndpoint:
     Base class for WebSocket endpoints with automatic encoding.
     """
 
+    #: Decorators wrapped around this endpoint, outermost first, so the one
+    #: named first is the first to run. Applied once when the route table is
+    #: built, and around the whole connection rather than one method of it — for a
+    #: single method, decorate it with `nitro.utils.decorators.method_decorator`.
+    decorators: Sequence[Callable[..., Any]] = ()
+
     encoding: Literal["text", "bytes", "json"] = "text"
 
     async def __call__(self, websocket: WebSocket, **params):
@@ -102,6 +115,12 @@ class WebTransportEndpoint:
     """
     Base class for WebTransport endpoints with support for datagrams and streams.
     """
+
+    #: Decorators wrapped around this endpoint, outermost first, so the one
+    #: named first is the first to run. Applied once when the route table is
+    #: built, and around the whole session rather than one method of it — for a
+    #: single method, decorate it with `nitro.utils.decorators.method_decorator`.
+    decorators: Sequence[Callable[..., Any]] = ()
 
     encoding: Literal["bytes", "text", "json"] = "bytes"
     use_streams: bool = False

@@ -66,7 +66,40 @@ endpoint. Give `methods` explicitly to narrow that.
 An endpoint class is instantiated once per request, so it may keep state on
 `self` for the duration of a call without it leaking into the next one.
 
-## Decorators
+### Wrapping an endpoint
+
+`decorators` wraps everything the endpoint answers. They are listed outermost
+first, the way `MIDDLEWARE` is, so the one named first is the first to run:
+
+```python
+class UserEndpoint(HTTPEndpoint):
+    decorators = [login_required, audit]
+
+    async def get(self, request: HttpRequest, user_id: int) -> HttpResponse: ...
+```
+
+They are applied once, when the route table is built, rather than around each
+call. `WebSocketEndpoint` and `WebTransportEndpoint` read the same attribute.
+
+For one verb rather than all of them, or for a decorator written to wrap a plain
+function, `method_decorator` turns it into one that can wrap a method:
+
+```python
+from nitro.utils.decorators import method_decorator
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class UploadEndpoint(HTTPEndpoint):
+    @method_decorator(rate_limited)
+    async def post(self, request: HttpRequest) -> HttpResponse: ...
+```
+
+Naming a method on the class decorates that method; used on the method itself it
+needs no name. Either form takes a list, applied so that the first written is
+the first to run. A decorated coroutine still reports as one, so anything
+inspecting a handler before calling it is not misled.
+
+## Registering with decorators
 
 Handlers can also be registered on the application directly. This adds to the
 configured table rather than replacing it, and is meant for a small application

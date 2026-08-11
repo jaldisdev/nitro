@@ -75,6 +75,14 @@ def _dispatcher(endpoint: type) -> Callable[..., Any]:
 
     dispatch.__name__ = endpoint.__name__
     dispatch.__qualname__ = endpoint.__qualname__
+
+    # An endpoint's own `decorators`, wrapped around it here rather than around
+    # each call: the route table is built once at startup, so a decorator costs
+    # nothing per request beyond the call it adds. Outermost first, as the
+    # middleware setting is read, so the first named is the first to run.
+    for decorator in reversed(list(getattr(endpoint, "decorators", ()))):
+        dispatch = decorator(dispatch)
+
     return dispatch
 
 
