@@ -20,7 +20,7 @@ import pytest
 
 pytest.importorskip("emcache", reason="emcache is not installed (it has no 3.14 wheel)")
 
-from nitro.cache.backends.memcached import MemcachedCache, parse_servers  # noqa: E402
+from nitro.cache.backends.memcached import MemcachedCache, parse_servers
 
 LOCATION = os.environ.get("NITRO_TEST_MEMCACHED", "127.0.0.1:11211")
 
@@ -30,7 +30,7 @@ async def cache():
     backend = MemcachedCache(LOCATION, {"TIMEOUT": 300, "KEY_PREFIX": "nitro-test", "OPTIONS": {}})
     try:
         await backend._connect()
-    except Exception as error:  # noqa: BLE001 - any failure here means "no server"
+    except Exception as error:
         pytest.skip(f"no memcached at {LOCATION}: {error}")
 
     await backend.clear()
@@ -87,7 +87,7 @@ class TestValues:
         backend = MemcachedCache(LOCATION, {"OPTIONS": {"SERIALIZER": "pickle"}})
         try:
             await backend._connect()
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             pytest.skip(f"no memcached at {LOCATION}: {error}")
 
         try:

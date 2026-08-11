@@ -72,3 +72,27 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+
+[tool.ruff.lint]
+# Chosen to encode the project's own guidelines rather than taste: UP keeps the
+# modern type syntax, I keeps imports ordered, B and SIM catch the mistakes
+# review would otherwise have to, and F catches what is dead.
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF", "PIE"]
+ignore = [
+    # `Depends(...)` as a parameter default is the whole point of the DI
+    # surface, and `Query(...)`, `Header(...)` and the rest work the same way.
+    "B008",
+    # Long lines are reported by E501 already; this one fires on URLs and
+    # tables in docstrings where wrapping would read worse.
+    "E501",
+    # A ternary is not always clearer than the `if` it replaces, and where it
+    # is the author can reach for one.
+    "SIM108",
+    # Typography in prose meant for a person to read: an en dash in CLI output
+    # is deliberate, not a mistyped hyphen.
+    "RUF001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# A test's fixtures and doubles are allowed to be blunter than library code.
+"tests/**" = ["B018", "SIM117", "RUF012"]

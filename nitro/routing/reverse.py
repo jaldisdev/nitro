@@ -33,9 +33,7 @@ def set_active_router(router: Router | None) -> None:
 
 def active_router() -> Router:
     if _active is None:
-        raise LookupError(
-            "no application has been constructed, so there are no routes to reverse"
-        )
+        raise LookupError("no application has been constructed, so there are no routes to reverse")
     return _active
 
 

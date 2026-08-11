@@ -72,7 +72,7 @@ class CacheHandler:
 
         This will create any caches that haven't been instantiated yet.
         """
-        return {alias: self[alias] for alias in self._config.keys()}
+        return {alias: self[alias] for alias in self._config}
 
     async def close_all(self) -> None:
         """Close all cache connections."""

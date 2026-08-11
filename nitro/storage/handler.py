@@ -72,7 +72,7 @@ class StorageHandler:
 
         This will create any storages that haven't been instantiated yet.
         """
-        return {alias: self[alias] for alias in self._config.keys()}
+        return {alias: self[alias] for alias in self._config}
 
     async def close_all(self) -> None:
         """Close all storage connections."""

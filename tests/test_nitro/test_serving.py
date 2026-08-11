@@ -212,9 +212,7 @@ class TestRequestHandling:
         )
 
         assert response.status == 200
-        assert response.text == (
-            "POST /echo?a=1&b=2 http/1.1 http agent=probe body=payload"
-        )
+        assert response.text == ("POST /echo?a=1&b=2 http/1.1 http agent=probe body=payload")
         server.stop()
 
     def test_response_headers_reach_the_client(self, server_factory):
@@ -490,9 +488,7 @@ class TestConfiguration:
         import subprocess
         import sys
 
-        (tmp_path / "app.py").write_text(
-            "from nitro import Nitro\napp = Nitro(http='nonsense')\n"
-        )
+        (tmp_path / "app.py").write_text("from nitro import Nitro\napp = Nitro(http='nonsense')\n")
         finished = subprocess.run(
             [sys.executable, "-m", "nitro.cli", "app:app", "-p", "0"],
             cwd=tmp_path,
@@ -514,9 +510,7 @@ class TestConfiguration:
             occupied.listen(1)
             port = occupied.getsockname()[1]
 
-            (tmp_path / "app.py").write_text(
-                "from nitro import Nitro\napp = Nitro(http='1')\n"
-            )
+            (tmp_path / "app.py").write_text("from nitro import Nitro\napp = Nitro(http='1')\n")
             finished = subprocess.run(
                 [
                     sys.executable,

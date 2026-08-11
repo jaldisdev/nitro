@@ -44,9 +44,7 @@ class TestGetItem:
         with pytest.raises(KeyError, match="'missing'"):
             _ = handler["missing"]
 
-    def test_same_instance_returned_on_repeated_access(
-        self, handler: CacheHandler
-    ) -> None:
+    def test_same_instance_returned_on_repeated_access(self, handler: CacheHandler) -> None:
         first = handler["default"]
         second = handler["default"]
         assert first is second

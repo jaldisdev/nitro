@@ -62,7 +62,11 @@ class TestConverters:
             ("str", "anything", "anything"),
             ("int", "42", 42),
             ("slug", "a-slug_1", "a-slug_1"),
-            ("uuid", "3f2504e0-4f89-11d3-9a0c-0305e82c3301", uuid.UUID("3f2504e0-4f89-11d3-9a0c-0305e82c3301")),
+            (
+                "uuid",
+                "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+                uuid.UUID("3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
+            ),
             ("path", "deep/nested", "deep/nested"),
         ],
     )

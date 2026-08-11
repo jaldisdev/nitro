@@ -96,9 +96,7 @@ class LazyObject:
         """
         Must be implemented by subclasses to initialize the wrapped object.
         """
-        raise NotImplementedError(
-            "subclasses of LazyObject must provide a _setup() method"
-        )
+        raise NotImplementedError("subclasses of LazyObject must provide a _setup() method")
 
     # Because we have messed with __class__ below, we confuse pickle as to what
     # class we are pickling. We're going to have to initialize the wrapped
@@ -195,11 +193,8 @@ class SimpleLazyObject(LazyObject):
     # Return a meaningful representation of the lazy object for debugging
     # without evaluating the wrapped object.
     def __repr__(self):
-        if self._wrapped is empty:
-            repr_attr = self._setupfunc
-        else:
-            repr_attr = self._wrapped
-        return "<%s: %r>" % (type(self).__name__, repr_attr)
+        repr_attr = self._setupfunc if self._wrapped is empty else self._wrapped
+        return f"<{type(self).__name__}: {repr_attr!r}>"
 
     def __copy__(self):
         if self._wrapped is empty:
@@ -239,8 +234,6 @@ class Promise:
     This is primarily used for lazy translation strings where the actual
     translation is deferred until the string is actually used.
     """
-
-    pass
 
 
 def lazy(func, *resultclasses):
@@ -430,10 +423,7 @@ def keep_lazy(*resultclasses):
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if any(
-                isinstance(arg, Promise)
-                for arg in itertools.chain(args, kwargs.values())
-            ):
+            if any(isinstance(arg, Promise) for arg in itertools.chain(args, kwargs.values())):
                 return lazy_func(*args, **kwargs)
             return func(*args, **kwargs)
 
@@ -462,14 +452,14 @@ def keep_lazy_text(func):
 __all__ = [
     # Lazy object wrapper
     "LazyObject",
-    "SimpleLazyObject",
-    "empty",
-    "new_method_proxy",
-    "unpickle_lazyobject",
     # Lazy function evaluation
     "Promise",
-    "lazy",
-    "lazystr",
+    "SimpleLazyObject",
+    "empty",
     "keep_lazy",
     "keep_lazy_text",
+    "lazy",
+    "lazystr",
+    "new_method_proxy",
+    "unpickle_lazyobject",
 ]

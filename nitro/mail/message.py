@@ -225,9 +225,7 @@ class EmailMessage:
 
         return msg
 
-    def _attach_file(
-        self, msg: StdlibEmailMessage, attachment: EmailAttachment
-    ) -> None:
+    def _attach_file(self, msg: StdlibEmailMessage, attachment: EmailAttachment) -> None:
         """Attach a file to the message."""
         if attachment.mimetype:
             maintype, subtype = attachment.mimetype.split("/", 1)

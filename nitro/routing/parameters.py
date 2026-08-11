@@ -1,4 +1,5 @@
-from typing import Any, Pattern
+from re import Pattern
+from typing import Any
 
 import regex as re
 
@@ -62,11 +63,7 @@ class ParamBase:
         self.le = le
         self.min_length = min_length
         self.max_length = max_length
-        self.regex = (
-            regex
-            if isinstance(regex, Pattern)
-            else (re.compile(regex) if regex else None)
-        )
+        self.regex = regex if isinstance(regex, Pattern) else (re.compile(regex) if regex else None)
         self.example = example
         self._param_name: str | None = None
 
@@ -99,34 +96,22 @@ class ParamBase:
             if self.gt is not None and value <= self.gt:
                 raise ValidationError(param_name, f"must be greater than {self.gt}")
             if self.ge is not None and value < self.ge:
-                raise ValidationError(
-                    param_name, f"must be greater than or equal to {self.ge}"
-                )
+                raise ValidationError(param_name, f"must be greater than or equal to {self.ge}")
             if self.lt is not None and value >= self.lt:
                 raise ValidationError(param_name, f"must be less than {self.lt}")
             if self.le is not None and value > self.le:
-                raise ValidationError(
-                    param_name, f"must be less than or equal to {self.le}"
-                )
+                raise ValidationError(param_name, f"must be less than or equal to {self.le}")
 
         # String/list length validations
         if isinstance(value, (str, list, bytes)):
             length = len(value)
             if self.min_length is not None and length < self.min_length:
-                raise ValidationError(
-                    param_name, f"must be at least {self.min_length} characters"
-                )
+                raise ValidationError(param_name, f"must be at least {self.min_length} characters")
             if self.max_length is not None and length > self.max_length:
-                raise ValidationError(
-                    param_name, f"must be at most {self.max_length} characters"
-                )
+                raise ValidationError(param_name, f"must be at most {self.max_length} characters")
 
-        # Regex validation for strings
-        if isinstance(value, str) and self.regex is not None:
-            if not self.regex.match(value):
-                raise ValidationError(
-                    param_name, f"must match pattern {self.regex.pattern}"
-                )
+        if isinstance(value, str) and self.regex is not None and not self.regex.match(value):
+            raise ValidationError(param_name, f"must match pattern {self.regex.pattern}")
 
         return value
 
@@ -173,8 +158,8 @@ class Query(ParamBase):
                 # Handle multiple values for same param
                 value = request.query_params.getlist(key)
             # str stays as-is
-        except (ValueError, TypeError) as e:
-            raise ValidationError(param_name, f"invalid type: {e}")
+        except (ValueError, TypeError) as error:
+            raise ValidationError(param_name, f"invalid type: {error}") from error
 
         # Validate
         return self.validate(value, param_name)
@@ -315,9 +300,7 @@ class Body(ParamBase):
     async def extract(self, request, param_name: str, param_type: type) -> Any:
         """Extract field from request body."""
         if self.media_type != "application/json":
-            raise ValidationError(
-                param_name, f"unsupported media type: {self.media_type}"
-            )
+            raise ValidationError(param_name, f"unsupported media type: {self.media_type}")
 
         # The request parses its body once and remembers the result, so several
         # parameters drawn from one body cost one parse between them.
@@ -407,9 +390,7 @@ class File(ParamBase):
         # Checked against the size the parser recorded rather than against the
         # bytes, so an upload that is too large is refused without reading it.
         if self.max_length is not None and upload.size > self.max_length:
-            raise ValidationError(
-                param_name, f"must be at most {self.max_length} characters"
-            )
+            raise ValidationError(param_name, f"must be at most {self.max_length} characters")
 
         if isinstance(param_type, type) and issubclass(param_type, UploadFile):
             return upload
@@ -436,11 +417,11 @@ class File(ParamBase):
 
 # Convenience exports
 __all__ = [
-    "Query",
-    "Path",
-    "Header",
-    "Cookie",
     "Body",
+    "Cookie",
     "File",
+    "Header",
+    "Path",
+    "Query",
     "ValidationError",
 ]

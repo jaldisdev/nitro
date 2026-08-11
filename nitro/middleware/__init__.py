@@ -9,12 +9,12 @@ from nitro.middleware.common import (
 from nitro.middleware.stack import MiddlewareStack
 
 __all__ = [
-    "Middleware",
-    "MiddlewareProtocol",
-    "MiddlewareStack",
     "CORSMiddleware",
     "ExceptionMiddleware",
     "LoggingMiddleware",
+    "Middleware",
+    "MiddlewareProtocol",
+    "MiddlewareStack",
     "RateLimitMiddleware",
     "SecurityHeadersMiddleware",
 ]

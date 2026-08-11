@@ -62,7 +62,7 @@ class TestDiscovery:
         assert "\n  run" not in runner.invoke(full_cli, ["--help"]).output
 
     def test_an_unknown_package_is_reported(self):
-        with pytest.raises(ImportError, match="no.such.package"):
+        with pytest.raises(ImportError, match=r"no\.such\.package"):
             commands_in("no.such.package")
 
     def test_project_commands_are_registered(self, tmp_path, monkeypatch):
@@ -81,9 +81,7 @@ class TestDiscovery:
         assert "greet" in group.commands
 
     def test_a_broken_package_does_not_stop_the_others(self, monkeypatch, caplog):
-        monkeypatch.setattr(
-            settings, "COMMAND_MODULES", ["no.such.package"], raising=False
-        )
+        monkeypatch.setattr(settings, "COMMAND_MODULES", ["no.such.package"], raising=False)
         group = click.Group(name="nitro")
 
         load_project_commands(group)
@@ -132,9 +130,7 @@ class TestCheck:
         assert result.exit_code != 0
         assert "TLS certificate" in result.output
 
-    def test_a_production_project_without_a_secret_is_reported(
-        self, runner, full_cli, monkeypatch
-    ):
+    def test_a_production_project_without_a_secret_is_reported(self, runner, full_cli, monkeypatch):
         monkeypatch.setattr(settings, "DEBUG", False, raising=False)
         monkeypatch.setattr(settings, "SECRET_KEY", "", raising=False)
         monkeypatch.setattr(settings, "ALLOWED_HOSTS", ["example.test"], raising=False)
@@ -190,7 +186,9 @@ class TestServing:
         assert result.exit_code != 0
         assert "'chekc' is not a command" in result.output
 
-    def test_serving_options_come_before_the_application(self, runner, full_cli, tmp_path, monkeypatch):
+    def test_serving_options_come_before_the_application(
+        self, runner, full_cli, tmp_path, monkeypatch
+    ):
         (tmp_path / "empty_app.py").write_text("")
         monkeypatch.syspath_prepend(str(tmp_path))
         monkeypatch.chdir(tmp_path)

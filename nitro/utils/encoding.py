@@ -5,11 +5,7 @@ from types import NoneType
 
 class NitroUnicodeDecodeError(UnicodeDecodeError):
     def __str__(self):
-        return '%s. You passed in %r (%s)' % (
-            super().__str__(),
-            self.object,
-            type(self.object),
-        )
+        return f"{super().__str__()}. You passed in {self.object!r} ({type(self.object)})"
 
 
 _PROTECTED_TYPES = (
@@ -32,7 +28,7 @@ def is_protected_type(obj):
     return isinstance(obj, _PROTECTED_TYPES)
 
 
-def ensure_str(s, encoding='utf-8', strings_only=False, errors='strict'):
+def ensure_str(s, encoding="utf-8", strings_only=False, errors="strict"):
     """
     Return a string representing 's'. Treat bytestrings using the 'encoding'
     codec.
@@ -45,27 +41,24 @@ def ensure_str(s, encoding='utf-8', strings_only=False, errors='strict'):
     if strings_only and is_protected_type(s):
         return s
     try:
-        if isinstance(s, bytes):
-            s = str(s, encoding, errors)
-        else:
-            s = str(s)
+        s = str(s, encoding, errors) if isinstance(s, bytes) else str(s)
     except UnicodeDecodeError as e:
         raise NitroUnicodeDecodeError(*e.args) from None
     return s
 
 
-def ensure_bytes(s, encoding='utf-8', strings_only=False, errors='strict'):
+def ensure_bytes(s, encoding="utf-8", strings_only=False, errors="strict"):
     """
     Return a bytestring version of 's', encoded as specified in 'encoding'.
-    
+
     If strings_only is True, don't convert (some) non-string-like objects.
     """
     # Handle the common case first for performance reasons.
     if isinstance(s, bytes):
-        if encoding == 'utf-8':
+        if encoding == "utf-8":
             return s
         else:
-            return s.decode('utf-8', errors).encode(encoding, errors)
+            return s.decode("utf-8", errors).encode(encoding, errors)
     if strings_only and is_protected_type(s):
         return s
     if isinstance(s, memoryview):

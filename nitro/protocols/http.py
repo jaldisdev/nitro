@@ -13,6 +13,7 @@ is written rather than a missing key somewhere later.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import http.cookies as http_cookies
 import json as json_module
 import mimetypes
@@ -365,10 +366,8 @@ class HttpRequest:
                 jar = http_cookies.SimpleCookie()
                 # A malformed cookie header should not fail the request; the
                 # cookies that did parse are still worth having.
-                try:
+                with contextlib.suppress(http_cookies.CookieError):
                     jar.load(header)
-                except http_cookies.CookieError:
-                    pass
                 parsed = {name: morsel.value for name, morsel in jar.items()}
             self._cookies = parsed
         return self._cookies
@@ -704,9 +703,7 @@ class FileResponse(HttpResponse):
         name = filename or os.path.basename(self.path)
         if as_attachment or filename:
             disposition = "attachment" if as_attachment else "inline"
-            self._headers.setdefault(
-                "content-disposition", f'{disposition}; filename="{name}"'
-            )
+            self._headers.setdefault("content-disposition", f'{disposition}; filename="{name}"')
 
     async def __http__(self, protocol: Any) -> None:
         if self.range is None:
@@ -714,9 +711,7 @@ class FileResponse(HttpResponse):
             return
 
         start, end = self.range
-        protocol.response_file_range(
-            self.status_code, self.header_pairs(), self.path, start, end
-        )
+        protocol.response_file_range(self.status_code, self.header_pairs(), self.path, start, end)
 
 
 class StreamingResponse(HttpResponse):

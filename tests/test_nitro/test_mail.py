@@ -198,9 +198,7 @@ class TestEmailMessageRecipients:
     def test_normalize_tuple_format(self):
         # formataddr expects (realname, email), so the tuple format is (name, email)
         msg = self._msg()
-        assert msg._normalize_recipient(("Alice", "a@b.com")) == formataddr(
-            ("Alice", "a@b.com")
-        )
+        assert msg._normalize_recipient(("Alice", "a@b.com")) == formataddr(("Alice", "a@b.com"))
 
     def test_recipients_combines_to_cc_bcc(self):
         msg = self._msg(
@@ -260,9 +258,7 @@ class TestEmailMessageAttach:
     def test_multiple_attachments(self, tmp_path):
         msg = EmailMessage(subject="S", body="B", from_email="a@a.com", to=["b@b.com"])
         for i in range(3):
-            msg.attach(
-                EmailAttachment(f"file{i}.bin", bytes([i]), "application/octet-stream")
-            )
+            msg.attach(EmailAttachment(f"file{i}.bin", bytes([i]), "application/octet-stream"))
         assert len(msg.attachments) == 3
 
 
@@ -524,18 +520,14 @@ class TestConsoleBackend:
         stream = io.StringIO()
         backend = ConsoleBackend(stream=stream)
         messages = [
-            EmailMessage(
-                subject=f"Msg {i}", body="b", from_email="a@a.com", to=["b@b.com"]
-            )
+            EmailMessage(subject=f"Msg {i}", body="b", from_email="a@a.com", to=["b@b.com"])
             for i in range(3)
         ]
         assert await backend.send_messages(messages) == 3
 
     async def test_context_manager_sends_and_closes(self):
         stream = io.StringIO()
-        msg = EmailMessage(
-            subject="Hi", body="body", from_email="a@a.com", to=["b@b.com"]
-        )
+        msg = EmailMessage(subject="Hi", body="body", from_email="a@a.com", to=["b@b.com"])
 
         async with ConsoleBackend(stream=stream) as backend:
             result = await backend.send_messages([msg])
@@ -663,9 +655,7 @@ class TestSMTPBackend:
         backend._connection.send_message = AsyncMock(side_effect=Exception("refused"))
 
         messages = [
-            EmailMessage(
-                subject=f"M{i}", body="B", from_email="a@a.com", to=["b@b.com"]
-            )
+            EmailMessage(subject=f"M{i}", body="B", from_email="a@a.com", to=["b@b.com"])
             for i in range(2)
         ]
 
@@ -708,7 +698,7 @@ class TestOAuth2SMTPBackend:
         backend = OAuth2SMTPBackend(host="h", oauth2_token="tok")
         result = backend._build_oauth_string("user@example.com", "my-token")
         expected = base64.b64encode(
-            "user=user@example.com\x01auth=Bearer my-token\x01\x01".encode()
+            b"user=user@example.com\x01auth=Bearer my-token\x01\x01"
         ).decode()
         assert result == expected
 
@@ -836,9 +826,7 @@ class TestSendGridBackend:
 
     def test_payload_reply_to(self):
         backend = SendGridBackend(api_key="key")
-        payload = backend._build_sendgrid_payload(
-            self._msg(reply_to=["reply@example.com"])
-        )
+        payload = backend._build_sendgrid_payload(self._msg(reply_to=["reply@example.com"]))
         assert payload["reply_to"]["email"] == "reply@example.com"
 
     def test_payload_attachment_base64_encoded(self):
@@ -888,9 +876,7 @@ class TestSendGridBackend:
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.aclose = AsyncMock()
 
-        with patch(
-            "nitro.mail.backends.sendgrid.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch("nitro.mail.backends.sendgrid.httpx.AsyncClient", return_value=mock_client):
             result = await backend.send_messages([msg])
 
         assert result == 1
@@ -927,9 +913,7 @@ class TestSendGridBackend:
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client.aclose = AsyncMock()
 
-        with patch(
-            "nitro.mail.backends.sendgrid.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch("nitro.mail.backends.sendgrid.httpx.AsyncClient", return_value=mock_client):
             result = await backend.send_messages([msg], fail_silently=True)
 
         assert result == 0

@@ -17,7 +17,7 @@ from typing import Any
 from nitro.di import DependencyParam, extract_dependencies
 from nitro.routing.converters import Converter, converter_for
 
-__all__ = ["ParameterSpec", "Route", "Router", "RouteTable"]
+__all__ = ["ParameterSpec", "Route", "RouteTable", "Router"]
 
 #: A parameter declaration, written ``<converter:name>`` or just ``<name>``.
 _PARAMETER = re.compile(r"<([^>]*)>")
@@ -260,9 +260,7 @@ class Router:
                 continue
             clashing = sorted(set(existing.methods) & set(methods))
             if clashing:
-                raise ValueError(
-                    f"{', '.join(clashing)} {path} is already registered"
-                )
+                raise ValueError(f"{', '.join(clashing)} {path} is already registered")
 
     @staticmethod
     def _reject_misplaced_greedy(path: str, converters: dict[str, Converter]) -> None:

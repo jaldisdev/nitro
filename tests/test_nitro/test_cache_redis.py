@@ -22,7 +22,7 @@ async def cache():
     backend = RedisCache(URL, {"TIMEOUT": 300, "KEY_PREFIX": "nitro-test", "OPTIONS": {}})
     try:
         await backend._client.ping()
-    except Exception as error:  # noqa: BLE001 - any failure here means "no Redis"
+    except Exception as error:
         pytest.skip(f"no Redis at {URL}: {error}")
 
     await backend.clear()
@@ -61,7 +61,7 @@ class TestValues:
         )
         try:
             await backend._client.ping()
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             pytest.skip(f"no Redis at {URL}: {error}")
 
         try:

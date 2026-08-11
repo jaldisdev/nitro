@@ -109,33 +109,35 @@ class TestJinja2Init:
         assert engine.context_processors == []
 
     def test_registers_callable_filter(self, tdir):
-        my_filter = lambda v: v.upper()
+        def my_filter(v):
+            return v.upper()
+
         engine = Jinja2({"DIRS": [tdir], "OPTIONS": {"filters": {"shout": my_filter}}})
         assert engine.env.filters["shout"] is my_filter
 
     def test_registers_string_filter_path(self, tdir):
         import os.path
 
-        engine = Jinja2(
-            {"DIRS": [tdir], "OPTIONS": {"filters": {"join": "os.path.join"}}}
-        )
+        engine = Jinja2({"DIRS": [tdir], "OPTIONS": {"filters": {"join": "os.path.join"}}})
         assert engine.env.filters["join"] is os.path.join
 
     def test_registers_callable_global(self, tdir):
-        helper = lambda: "ok"
+        def helper():
+            return "ok"
+
         engine = Jinja2({"DIRS": [tdir], "OPTIONS": {"globals": {"helper": helper}}})
         assert engine.env.globals["helper"] is helper
 
     def test_registers_string_global_path(self, tdir):
         import os
 
-        engine = Jinja2(
-            {"DIRS": [tdir], "OPTIONS": {"globals": {"getpid": "os.getpid"}}}
-        )
+        engine = Jinja2({"DIRS": [tdir], "OPTIONS": {"globals": {"getpid": "os.getpid"}}})
         assert engine.env.globals["getpid"] is os.getpid
 
     def test_registers_callable_context_processor(self, tdir):
-        proc = lambda ctx: {}
+        def proc(ctx):
+            return {}
+
         engine = Jinja2({"DIRS": [tdir], "OPTIONS": {"context_processors": [proc]}})
         assert proc in engine.context_processors
 
@@ -368,9 +370,7 @@ class TestTemplateAsyncRendering:
                 "OPTIONS": {"filters": {"shout": lambda v: v.upper() + "!"}},
             }
         )
-        result = await engine.get_template("filtered.html").render_to_string(
-            {"name": "nitro"}
-        )
+        result = await engine.get_template("filtered.html").render_to_string({"name": "nitro"})
         assert result == "NITRO!"
 
     async def test_global_function_accessible_in_template(self, tdir):

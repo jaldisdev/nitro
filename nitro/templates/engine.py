@@ -59,11 +59,7 @@ class Jinja2:
         if self.dirs:
             loaders.append(FileSystemLoader([str(d) for d in self.dirs]))
 
-        loader = (
-            ChoiceLoader(loaders)
-            if len(loaders) > 1
-            else (loaders[0] if loaders else None)
-        )
+        loader = ChoiceLoader(loaders) if len(loaders) > 1 else (loaders[0] if loaders else None)
 
         # Get bytecode cache if specified
         bytecode_cache = None
@@ -127,10 +123,7 @@ class Jinja2:
         Returns:
             Processed context dictionary
         """
-        if context is None:
-            context = {}
-        else:
-            context = dict(context)
+        context = {} if context is None else dict(context)
 
         # Run context processors
         for processor in self.context_processors:
@@ -140,9 +133,7 @@ class Jinja2:
             # Handle async context processors
             if asyncio.iscoroutine(result):
                 # We can't await here in sync method, will be handled by render_to_string
-                context["_async_processor_results"] = context.get(
-                    "_async_processor_results", []
-                )
+                context["_async_processor_results"] = context.get("_async_processor_results", [])
                 context["_async_processor_results"].append(result)
             else:
                 context.update(result)

@@ -13,12 +13,8 @@ class TemplateError(Exception):
     Base exception for template rendering errors.
     """
 
-    pass
-
 
 class TemplateSyntaxError(TemplateError):
     """
     Raised when template has a syntax error.
     """
-
-    pass

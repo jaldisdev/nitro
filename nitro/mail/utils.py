@@ -4,7 +4,7 @@ from nitro.mail.backends.base import BaseEmailBackend
 from nitro.utils.modules import import_string
 
 if TYPE_CHECKING:
-    from nitro.mail.message import EmailMessage
+    pass
 
 
 def get_connection(

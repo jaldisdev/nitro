@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 
 import pytest
 
@@ -327,7 +328,9 @@ class TestTeardown:
                 outcome.append("committed")
 
         cache = DependencyCache()
-        await resolve_dependencies({"t": DependencyParam("t", Depends(get_transaction))}, None, cache)
+        await resolve_dependencies(
+            {"t": DependencyParam("t", Depends(get_transaction))}, None, cache
+        )
         await cache.aclose()
 
         assert outcome == ["committed"]
@@ -343,17 +346,19 @@ class TestTeardown:
                 raise
 
         cache = DependencyCache()
-        await resolve_dependencies({"t": DependencyParam("t", Depends(get_transaction))}, None, cache)
+        await resolve_dependencies(
+            {"t": DependencyParam("t", Depends(get_transaction))}, None, cache
+        )
         await cache.aclose(RuntimeError("the handler failed"))
 
         assert outcome == ["rolled back"]
 
     async def test_a_dependency_may_swallow_the_failure(self):
         async def get_thing():
-            try:
+            # Swallowing it is what is under test: a dependency that handles
+            # the failure it is told about stops it there.
+            with contextlib.suppress(RuntimeError):
                 yield "value"
-            except RuntimeError:
-                pass  # handled, and not re-raised
 
         cache = DependencyCache()
         await resolve_dependencies({"t": DependencyParam("t", Depends(get_thing))}, None, cache)
@@ -373,7 +378,9 @@ class TestTeardown:
             trail.append("inner released")
 
         cache = DependencyCache()
-        await resolve_dependencies(extract_dependencies(lambda thing=Depends(inner): None), None, cache)
+        await resolve_dependencies(
+            extract_dependencies(lambda thing=Depends(inner): None), None, cache
+        )
         await cache.aclose()
 
         assert trail == [
@@ -412,7 +419,9 @@ class TestTeardown:
             trail.append("released")
 
         cache = DependencyCache()
-        values = await resolve_dependencies({"t": DependencyParam("t", Depends(get_thing))}, None, cache)
+        values = await resolve_dependencies(
+            {"t": DependencyParam("t", Depends(get_thing))}, None, cache
+        )
         assert values == {"t": "value"}
 
         await cache.aclose()
@@ -425,7 +434,9 @@ class TestTeardown:
 
         cache = DependencyCache()
         with pytest.raises(DependencyError, match="yielded nothing"):
-            await resolve_dependencies({"t": DependencyParam("t", Depends(get_nothing))}, None, cache)
+            await resolve_dependencies(
+                {"t": DependencyParam("t", Depends(get_nothing))}, None, cache
+            )
 
     async def test_a_dependency_that_yields_twice_is_reported(self, caplog):
         async def get_two():

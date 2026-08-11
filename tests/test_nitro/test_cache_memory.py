@@ -13,9 +13,7 @@ def make_memory_cache(
     version: int = 1,
     timeout: int = 300,
 ) -> MemoryCache:
-    return MemoryCache(
-        "", {"KEY_PREFIX": prefix, "VERSION": version, "TIMEOUT": timeout}
-    )
+    return MemoryCache("", {"KEY_PREFIX": prefix, "VERSION": version, "TIMEOUT": timeout})
 
 
 @pytest.fixture
@@ -36,9 +34,7 @@ class TestGetSet:
     async def test_get_missing_key_returns_none(self, cache: MemoryCache) -> None:
         assert await cache.get("nonexistent") is None
 
-    async def test_get_missing_key_returns_custom_default(
-        self, cache: MemoryCache
-    ) -> None:
+    async def test_get_missing_key_returns_custom_default(self, cache: MemoryCache) -> None:
         assert await cache.get("nonexistent", default="fallback") == "fallback"
 
     async def test_set_returns_true(self, cache: MemoryCache) -> None:
@@ -124,9 +120,7 @@ class TestGetOrSet:
         await cache.set("key", "existing")
         assert await cache.get_or_set("key", "default") == "existing"
 
-    async def test_sets_and_returns_default_when_missing(
-        self, cache: MemoryCache
-    ) -> None:
+    async def test_sets_and_returns_default_when_missing(self, cache: MemoryCache) -> None:
         result = await cache.get_or_set("key", "default")
         assert result == "default"
         assert await cache.get("key") == "default"
@@ -136,9 +130,7 @@ class TestGetOrSet:
         assert result == "computed"
         assert await cache.get("key") == "computed"
 
-    async def test_callable_not_called_when_key_exists(
-        self, cache: MemoryCache
-    ) -> None:
+    async def test_callable_not_called_when_key_exists(self, cache: MemoryCache) -> None:
         await cache.set("key", "existing")
         called = []
         await cache.get_or_set("key", lambda: called.append(True) or "computed")

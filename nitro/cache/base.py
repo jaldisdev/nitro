@@ -82,9 +82,7 @@ def serializer_for(name: str) -> CacheSerializer:
         return SERIALIZERS[name]()
     except KeyError:
         known = ", ".join(sorted(SERIALIZERS))
-        raise ValueError(
-            f"{name!r} is not a cache serializer; expected one of {known}"
-        ) from None
+        raise ValueError(f"{name!r} is not a cache serializer; expected one of {known}") from None
 
 
 class BaseCache(ABC):
@@ -115,9 +113,7 @@ class BaseCache(ABC):
         self.options = params.get("OPTIONS", {})
         #: How values are encoded for a store outside this process. Backends
         #: that keep Python objects in memory have no use for it.
-        self.serializer = serializer_for(
-            self.options.get("SERIALIZER", DEFAULT_SERIALIZER)
-        )
+        self.serializer = serializer_for(self.options.get("SERIALIZER", DEFAULT_SERIALIZER))
 
     def make_key(self, key: str, version: int | None = None) -> str:
         """
@@ -151,7 +147,6 @@ class BaseCache(ABC):
 
         Returns default if the key is not found.
         """
-        pass
 
     @abstractmethod
     async def set(
@@ -166,7 +161,6 @@ class BaseCache(ABC):
 
         Returns True if successful.
         """
-        pass
 
     @abstractmethod
     async def add(
@@ -181,7 +175,6 @@ class BaseCache(ABC):
 
         Returns True if the key was added.
         """
-        pass
 
     async def get_or_set(
         self,
@@ -214,7 +207,6 @@ class BaseCache(ABC):
 
         Returns a dict of key/value pairs.
         """
-        pass
 
     @abstractmethod
     async def set_many(
@@ -228,7 +220,6 @@ class BaseCache(ABC):
 
         Returns a list of keys that failed to be inserted.
         """
-        pass
 
     @abstractmethod
     async def delete(
@@ -241,7 +232,6 @@ class BaseCache(ABC):
 
         Returns True if the key existed and was deleted.
         """
-        pass
 
     @abstractmethod
     async def delete_many(
@@ -254,7 +244,6 @@ class BaseCache(ABC):
 
         Returns the number of keys deleted.
         """
-        pass
 
     @abstractmethod
     async def clear(self) -> bool:
@@ -263,7 +252,6 @@ class BaseCache(ABC):
 
         Returns True if successful.
         """
-        pass
 
     @abstractmethod
     async def touch(
@@ -277,7 +265,6 @@ class BaseCache(ABC):
 
         Returns True if the key was touched.
         """
-        pass
 
     @abstractmethod
     async def incr(
@@ -291,7 +278,6 @@ class BaseCache(ABC):
 
         Returns the new value.
         """
-        pass
 
     @abstractmethod
     async def decr(
@@ -305,7 +291,6 @@ class BaseCache(ABC):
 
         Returns the new value.
         """
-        pass
 
     @abstractmethod
     async def has_key(
@@ -316,11 +301,9 @@ class BaseCache(ABC):
         """
         Check if a key exists in the cache.
         """
-        pass
 
     @abstractmethod
     async def close(self) -> None:
         """
         Close any connections to the cache backend.
         """
-        pass

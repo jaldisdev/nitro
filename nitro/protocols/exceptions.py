@@ -1,5 +1,5 @@
-import typing
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 
 class ExceptionHandlerRegistry:
@@ -26,9 +26,7 @@ class ExceptionHandlerRegistry:
         """
         self._handlers[exc_class_or_status] = handler
 
-    def get_handler(
-        self, exc: Exception
-    ) -> Callable[[Any, Exception], Awaitable[Any]] | None:
+    def get_handler(self, exc: Exception) -> Callable[[Any, Exception], Awaitable[Any]] | None:
         """
         Get the appropriate handler for an exception.
 
@@ -99,8 +97,8 @@ class HttpException(Exception):
 
     def __init__(
         self,
-        detail: typing.Optional[typing.Union[str, dict]] = None,
-        headers: typing.Optional[typing.Dict[str, str]] = None,
+        detail: str | dict | None = None,
+        headers: dict[str, str] | None = None,
     ):
         if detail is None:
             detail = self.default_detail
@@ -122,9 +120,7 @@ class HttpException(Exception):
             return PlainTextResponse(
                 self.detail, status_code=self.status_code, headers=dict(self.headers)
             )
-        return JSONResponse(
-            self.detail, status_code=self.status_code, headers=dict(self.headers)
-        )
+        return JSONResponse(self.detail, status_code=self.status_code, headers=dict(self.headers))
 
     def __repr__(self):
         return f"{self.__class__.__name__}(status_code={self.status_code}, detail={self.detail!r})"

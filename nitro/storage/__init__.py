@@ -14,8 +14,8 @@ from nitro.storage.base import BaseStorage, StorageFile, StorageOperationUnsuppo
 from nitro.storage.handler import DEFAULT_STORAGE_ALIAS, StorageHandler
 
 __all__ = [
-    "BaseStorage",
     "DEFAULT_STORAGE_ALIAS",
+    "BaseStorage",
     "StorageFile",
     "StorageHandler",
     "StorageOperationUnsupported",

@@ -21,7 +21,9 @@ OPTIONAL_PACKAGES: dict[str, str] = {
 
 
 def _report(passed: bool, message: str) -> bool:
-    click.echo(f"  {click.style('✓', fg='green') if passed else click.style('✗', fg='red')} {message}")
+    click.echo(
+        f"  {click.style('✓', fg='green') if passed else click.style('✗', fg='red')} {message}"
+    )
     return passed
 
 
@@ -36,14 +38,17 @@ def check(verbose: bool) -> None:
 
     click.echo(click.style("Settings", bold=True))
     try:
-        settings.DEBUG
+        # Reading one settles the whole module, which is what is being checked.
+        _resolved = settings.DEBUG
         _report(True, f"settings load ({settings.SETTINGS_MODULE or 'defaults only'})")
     except ImproperlyConfigured as error:
         problems += not _report(False, f"settings: {error}")
 
     try:
         options = ServerOptions.resolve()
-        _report(True, f"server options ({options.host}:{options.port}, {options.workers} worker(s))")
+        _report(
+            True, f"server options ({options.host}:{options.port}, {options.workers} worker(s))"
+        )
     except ImproperlyConfigured as error:
         problems += not _report(False, f"server options: {error}")
         options = None
@@ -63,8 +68,7 @@ def check(verbose: bool) -> None:
         if not settings.DEBUG and not options.allowed_hosts:
             problems += not _report(
                 False,
-                "ALLOWED_HOSTS is empty and DEBUG is off, so the server answers "
-                "to any Host header",
+                "ALLOWED_HOSTS is empty and DEBUG is off, so the server answers to any Host header",
             )
         elif options.allowed_hosts:
             _report(True, f"answering for {', '.join(options.allowed_hosts)}")
@@ -90,8 +94,7 @@ def check(verbose: bool) -> None:
             if healthy:
                 _report(
                     True,
-                    "metrics on "
-                    f"{options.observability_host}:{options.observability_port}",
+                    f"metrics on {options.observability_host}:{options.observability_port}",
                 )
 
     click.echo()

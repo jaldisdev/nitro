@@ -6,9 +6,8 @@ import pytest
 
 from nitro import Nitro
 from nitro.di import Depends, reset_worker_dependencies, worker_scoped
+from nitro.endpoints import HTTPEndpoint
 from nitro.middleware.base import Middleware
-from nitro.endpoints import HTTPEndpoint
-from nitro.endpoints import HTTPEndpoint
 from nitro.protocols import Http404, HttpForbidden, PlainTextResponse
 from nitro.routing import HTTPRoute
 from nitro.settings import ImproperlyConfigured, settings
@@ -189,7 +188,7 @@ class TestDispatch:
 
         @app.route("/users/<int:user_id>/<slug:tab>")
         async def show(request, user_id, tab):
-            scope, protocol = request.scope, request.protocol
+            _scope, protocol = request.scope, request.protocol
             seen["user_id"] = user_id
             seen["tab"] = tab
             protocol.response_empty(204)
@@ -205,7 +204,7 @@ class TestDispatch:
 
         @app.route("/items/<uuid:identifier>")
         async def show(request, identifier):
-            scope, protocol = request.scope, request.protocol
+            _scope, protocol = request.scope, request.protocol
             protocol.response_empty(204)
 
         scope = scope_for(app, "GET", "/items/<uuid:identifier>", identifier="not-a-uuid")
@@ -235,7 +234,7 @@ class TestDispatch:
 
         @app.route("/boom")
         async def boom(request):
-            scope, protocol = request.scope, request.protocol
+            _scope, _protocol = request.scope, request.protocol
             raise RuntimeError("handler exploded")
 
         protocol = RecordingProtocol()
@@ -249,7 +248,7 @@ class TestDispatch:
 
         @app.route("/echo", methods=["POST"])
         async def echo(request):
-            scope, protocol = request.scope, request.protocol
+            _scope, protocol = request.scope, request.protocol
             protocol.response_bytes(200, [], await protocol())
 
         protocol = RecordingProtocol(body=b"payload")

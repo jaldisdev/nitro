@@ -41,9 +41,7 @@ def _protocol_of(connection: Any) -> str:
 class LoggingMiddleware(Middleware):
     """Logs every connection and how long it was held, for every protocol."""
 
-    async def __call__(
-        self, connection: Any, call_next: Callable[[Any], Awaitable[Any]]
-    ) -> Any:
+    async def __call__(self, connection: Any, call_next: Callable[[Any], Awaitable[Any]]) -> Any:
         protocol = _protocol_of(connection)
         path = getattr(connection, "path", "unknown")
 
@@ -53,14 +51,10 @@ class LoggingMiddleware(Middleware):
         try:
             result = await call_next(connection)
         except Exception:
-            logger.exception(
-                "%s failed: %s (%.3fs)", protocol, path, time.monotonic() - started
-            )
+            logger.exception("%s failed: %s (%.3fs)", protocol, path, time.monotonic() - started)
             raise
 
-        logger.info(
-            "%s completed: %s (%.3fs)", protocol, path, time.monotonic() - started
-        )
+        logger.info("%s completed: %s (%.3fs)", protocol, path, time.monotonic() - started)
         return result
 
 
@@ -146,9 +140,7 @@ class RateLimitMiddleware(Middleware):
 
     def _within_limit(self, client: str) -> bool:
         now = time.monotonic()
-        recent = [
-            stamp for stamp in self.requests.get(client, ()) if now - stamp < self.window
-        ]
+        recent = [stamp for stamp in self.requests.get(client, ()) if now - stamp < self.window]
 
         if len(recent) >= self.max_requests:
             self.requests[client] = recent
@@ -210,9 +202,7 @@ class ExceptionMiddleware(Middleware):
                 return page
             return HttpResponse(content={"error": "Internal server error"}, status_code=500)
 
-    async def _registered(
-        self, request: HttpRequest, exception: BaseException
-    ) -> tuple[bool, Any]:
+    async def _registered(self, request: HttpRequest, exception: BaseException) -> tuple[bool, Any]:
         """The application's own handler for `exception`, run here.
 
         This middleware catches before the application does, so without asking

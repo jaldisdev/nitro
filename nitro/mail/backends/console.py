@@ -18,7 +18,7 @@ RULE = "-" * 79
 class ConsoleBackend(BaseEmailBackend):
     """Write each message to a stream. The default while developing.
 
-        EMAIL_BACKEND = "nitro.mail.backends.console.ConsoleBackend"
+    EMAIL_BACKEND = "nitro.mail.backends.console.ConsoleBackend"
     """
 
     def __init__(self, stream: TextIO | None = None, **kwargs) -> None:

@@ -106,9 +106,7 @@ class FakeStream:
 
 
 def make_request(**overrides):
-    protocol = FakeProtocol(
-        body=overrides.pop("body", b""), chunks=overrides.pop("chunks", None)
-    )
+    protocol = FakeProtocol(body=overrides.pop("body", b""), chunks=overrides.pop("chunks", None))
     return HttpRequest(FakeScope(**overrides), protocol), protocol
 
 
@@ -196,7 +194,7 @@ class TestRequest:
         assert isinstance(request.cookies, dict)
 
     async def test_the_body_is_read_once_and_remembered(self):
-        request, protocol = make_request(body=b"payload")
+        request, _protocol = make_request(body=b"payload")
         assert await request.body() == b"payload"
         assert await request.body() == b"payload"
 
@@ -450,7 +448,9 @@ class TestMultipartForm:
         assert len(form) == 1
 
     async def test_a_malformed_body_is_answered_with_a_400(self):
-        request, _ = make_request(chunks=[b"nothing like a multipart body"], headers=MULTIPART_HEADERS)
+        request, _ = make_request(
+            chunks=[b"nothing like a multipart body"], headers=MULTIPART_HEADERS
+        )
 
         with pytest.raises(HttpException) as raised:
             await request.form()

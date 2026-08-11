@@ -1,93 +1,147 @@
+"""Time zones and aware/naive datetimes, for application code.
+
+The current time zone is held in a context variable rather than a thread local:
+a Nitro application serves many connections on one thread, so a thread local
+would let one request's time zone be read by another.
+"""
+
+from __future__ import annotations
+
 import zoneinfo
-from datetime import UTC, datetime
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import UTC, datetime, tzinfo
 
 from nitro.settings import settings
 
+__all__ = [
+    "activate",
+    "deactivate",
+    "get_current_timezone",
+    "get_current_timezone_name",
+    "get_default_timezone",
+    "is_aware",
+    "is_naive",
+    "localtime",
+    "make_aware",
+    "make_naive",
+    "now",
+    "override",
+]
 
-###
-# Time zones
-###
+#: The time zone in force for the current task, when one has been activated.
+#: A context variable rather than a thread local, because the thread is shared
+#: by every connection this worker is serving.
+_active: ContextVar[tzinfo | None] = ContextVar("nitro_timezone", default=None)
 
-def get_default_timezone() -> str:
-    """
-    Return the default time zone as a tzinfo instance.
-    
-    This is the time zone defined by settings.TIME_ZONE.
-    """
+
+# ── time zones ───────────────────────────────────────────────────────────────
+
+
+def get_default_timezone() -> tzinfo:
+    """The time zone named by ``TIME_ZONE``."""
     return zoneinfo.ZoneInfo(settings.TIME_ZONE)
 
 
-def get_current_timezone() -> str:
-    """Return the currently active time zone as a tzinfo instance."""
-    return getattr(_active, 'value', get_default_timezone())
+def get_current_timezone() -> tzinfo:
+    """The time zone in force here, or the default when none was activated."""
+    active = _active.get()
+    return active if active is not None else get_default_timezone()
 
 
 def get_current_timezone_name() -> str:
-    """Return the name of the currently active time zone."""
-    return _get_timezone_name(get_current_timezone())
+    """The name of the time zone in force here."""
+    return _timezone_name(get_current_timezone())
 
 
-def _get_timezone_name(timezone: str) -> str:
+def activate(timezone: tzinfo | str) -> None:
+    """Use `timezone` from here on, for this task."""
+    _active.set(zoneinfo.ZoneInfo(timezone) if isinstance(timezone, str) else timezone)
+
+
+def deactivate() -> None:
+    """Go back to the default time zone."""
+    _active.set(None)
+
+
+@contextmanager
+def override(timezone: tzinfo | str | None) -> Iterator[None]:
+    """Use `timezone` for the body, then restore what was in force.
+
+        with override("Europe/Zurich"):
+            ...
+
+    `None` deactivates for the body, so the default applies.
     """
-    Return the offset for fixed offset timezones, or the name of timezone if
-    not set.
-    """
+    token = _active.set(
+        None
+        if timezone is None
+        else zoneinfo.ZoneInfo(timezone)
+        if isinstance(timezone, str)
+        else timezone
+    )
+    try:
+        yield
+    finally:
+        _active.reset(token)
+
+
+def _timezone_name(timezone: tzinfo) -> str:
+    """The offset for a fixed-offset zone, or the zone's name."""
     return timezone.tzname(None) or str(timezone)
 
 
-###
-# Local time
-###
+# ── local time ───────────────────────────────────────────────────────────────
+
 
 def now() -> datetime:
-    """
-    Return an aware or naive datetime.datetime, depending on settings.USE_TZ.
-    """
+    """The current moment, aware or naive as ``USE_TZ`` says."""
     return datetime.now(tz=UTC if settings.USE_TZ else None)
 
 
 def is_aware(value: datetime) -> bool:
-    """
-    Determine if a given datetime.datetime is aware.
-    
-    The concept is defined in Python's docs:
-    https://docs.python.org/library/datetime.html#datetime.tzinfo
-    
-    Assuming value.tzinfo is either None or a proper datetime.tzinfo,
-    value.utcoffset() implements the appropriate logic.
+    """Whether `value` carries a time zone.
+
+    Defined in Python's own terms: an aware datetime is one whose `utcoffset`
+    answers something.
     """
     return value.utcoffset() is not None
 
 
 def is_naive(value: datetime) -> bool:
-    """
-    Determine if a given datetime.datetime is naive.
-    
-    The concept is defined in Python's docs:
-    https://docs.python.org/library/datetime.html#datetime.tzinfo
-    
-    Assuming value.tzinfo is either None or a proper datetime.tzinfo,
-    value.utcoffset() implements the appropriate logic.
-    """
+    """Whether `value` carries no time zone."""
     return value.utcoffset() is None
 
 
-def make_aware(value: datetime, timezone: str|None = None) -> datetime:
-    """Make a naive datetime.datetime in a given time zone aware."""
+def make_aware(value: datetime, timezone: tzinfo | None = None) -> datetime:
+    """Attach a time zone to a naive datetime.
+
+    Uses `fold` to resolve a time that occurs twice, which is what the standard
+    library does for an ambiguous local time around a DST change.
+    """
     if timezone is None:
         timezone = get_current_timezone()
-    # Check that we won't overwrite the timezone of an aware datetime.
     if is_aware(value):
-        raise ValueError(f'make_aware expects a naive datetime, got {value}')
-    # This may be wrong around DST changes!
+        raise ValueError(f"make_aware expects a naive datetime, got {value}")
     return value.replace(tzinfo=timezone)
 
 
-def make_naive(value: datetime, timezone: str|None = None) -> datetime:
-    """Make an aware datetime.datetime naive in a given time zone."""
+def make_naive(value: datetime, timezone: tzinfo | None = None) -> datetime:
+    """Move an aware datetime into `timezone` and drop the zone."""
     if timezone is None:
         timezone = get_current_timezone()
-    # Emulate the behavior of astimezone() on Python < 3.6.
     if is_naive(value):
-        raise ValueError("make_naive() cannot be applied to a naive datetime")
+        raise ValueError("make_naive expects an aware datetime")
     return value.astimezone(timezone).replace(tzinfo=None)
+
+
+def localtime(value: datetime | None = None, timezone: tzinfo | None = None) -> datetime:
+    """`value` as it reads in `timezone`, defaulting to now and to the current one."""
+    if timezone is None:
+        timezone = get_current_timezone()
+    if value is None:
+        value = now()
+    if is_naive(value):
+        raise ValueError("localtime expects an aware datetime")
+    return value.astimezone(timezone)

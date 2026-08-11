@@ -264,9 +264,7 @@ class TestGetTemplate:
         web_dir.mkdir()
         email_dir.mkdir()
         (email_dir / "welcome.html").write_text("Welcome!")
-        mgr = seeded_manager(
-            make_engine(web_dir, "web"), make_engine(email_dir, "email")
-        )
+        mgr = seeded_manager(make_engine(web_dir, "web"), make_engine(email_dir, "email"))
         tmpl = mgr.get_template("welcome.html", using="email")
         assert isinstance(tmpl, Template)
 
@@ -301,12 +299,8 @@ class TestRenderToString:
         web_dir.mkdir()
         email_dir.mkdir()
         (email_dir / "mail.html").write_text("Subject: {{ subject }}")
-        mgr = seeded_manager(
-            make_engine(web_dir, "web"), make_engine(email_dir, "email")
-        )
-        result = await mgr.render_to_string(
-            "mail.html", {"subject": "Hi"}, using="email"
-        )
+        mgr = seeded_manager(make_engine(web_dir, "web"), make_engine(email_dir, "email"))
+        result = await mgr.render_to_string("mail.html", {"subject": "Hi"}, using="email")
         assert result == "Subject: Hi"
 
     async def test_renders_with_none_context(self, tdir):
@@ -340,9 +334,7 @@ class TestRenderToStringSync:
         web_dir.mkdir()
         email_dir.mkdir()
         (email_dir / "msg.html").write_text("Body: {{ body }}")
-        mgr = seeded_manager(
-            make_engine(web_dir, "web"), make_engine(email_dir, "email")
-        )
+        mgr = seeded_manager(make_engine(web_dir, "web"), make_engine(email_dir, "email"))
         result = mgr.render_to_string_sync("msg.html", {"body": "test"}, using="email")
         assert result == "Body: test"
 

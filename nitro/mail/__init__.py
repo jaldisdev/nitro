@@ -8,15 +8,15 @@ from nitro.mail.message import (
 from nitro.mail.utils import get_connection, send_email, send_mass_email
 
 __all__ = [
-    # Core classes
-    "EmailMessage",
-    "EmailAttachment",
-    "EmailRecipient",
-    "EmailHeader",
     # Backend base
     "BaseEmailBackend",
+    "EmailAttachment",
+    "EmailHeader",
+    # Core classes
+    "EmailMessage",
+    "EmailRecipient",
+    "get_connection",
     # Convenience functions
     "send_email",
     "send_mass_email",
-    "get_connection",
 ]

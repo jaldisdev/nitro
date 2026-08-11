@@ -182,9 +182,7 @@ class TestHTTPEndpoint:
         got = await Endpoint()(HttpRequest(FakeScope(proto="http"), Protocol()))
         assert got.body == b"got"
 
-        posted = await Endpoint()(
-            HttpRequest(FakeScope(proto="http", method="POST"), Protocol())
-        )
+        posted = await Endpoint()(HttpRequest(FakeScope(proto="http", method="POST"), Protocol()))
         assert posted.body == b"posted"
 
 

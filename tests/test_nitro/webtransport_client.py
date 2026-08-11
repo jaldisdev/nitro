@@ -17,8 +17,8 @@ from aioquic.asyncio.client import connect
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.h3.connection import H3_ALPN, H3Connection
 from aioquic.h3.events import (
-    DataReceived,
     DatagramReceived,
+    DataReceived,
     HeadersReceived,
     WebTransportStreamDataReceived,
 )
@@ -118,9 +118,7 @@ class WebTransportClient(QuicConnectionProtocol):
         buffer = self._stream_data.setdefault(stream_id, bytearray())
         buffer.extend(data)
         if ended:
-            self._finished_streams.put_nowait(
-                (stream_id, bytes(self._stream_data.pop(stream_id)))
-            )
+            self._finished_streams.put_nowait((stream_id, bytes(self._stream_data.pop(stream_id))))
 
     def _handle(self, event: Any) -> None:
         if isinstance(event, HeadersReceived) and not self._established.done():
@@ -209,9 +207,7 @@ class Http3Client(QuicConnectionProtocol):
 @asynccontextmanager
 async def http3(host: str, port: int) -> AsyncIterator[Http3Client]:
     """Connect an HTTP/3 client to a server using a self-signed certificate."""
-    configuration = QuicConfiguration(
-        is_client=True, alpn_protocols=H3_ALPN, verify_mode=False
-    )
+    configuration = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN, verify_mode=False)
     async with connect(
         host,
         port,

@@ -13,7 +13,6 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import pytest
 
@@ -70,7 +69,7 @@ class RunningServer:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait(timeout=SHUTDOWN_TIMEOUT)
-            raise AssertionError("the server did not stop when asked")
+            raise AssertionError("the server did not stop when asked") from None
         self._drain_output()
         return self.process.returncode
 

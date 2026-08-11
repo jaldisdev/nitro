@@ -51,8 +51,7 @@ class SendGridBackend(BaseEmailBackend):
     ) -> None:
         if httpx is None:
             raise ImportError(
-                "SendGridBackend requires httpx package. "
-                "Install it with: pip install httpx"
+                "SendGridBackend requires httpx package. Install it with: pip install httpx"
             )
 
         super().__init__(**kwargs)
@@ -71,8 +70,7 @@ class SendGridBackend(BaseEmailBackend):
 
         if not self.api_key:
             raise ValueError(
-                "SendGrid API key not configured. Set EMAIL_SENDGRID_API_KEY "
-                "in settings."
+                "SendGrid API key not configured. Set EMAIL_SENDGRID_API_KEY in settings."
             )
 
         self._client = httpx.AsyncClient(

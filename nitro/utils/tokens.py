@@ -10,13 +10,13 @@ class TokenGenerator:
     reset mechanism.
     """
 
-    key_salt = 'nitro.utils.tokens.TokenGenerator'
+    key_salt = "nitro.utils.tokens.TokenGenerator"
     algorithm = None
     _secret = None
     _secret_fallbacks = None
 
     def __init__(self):
-        self.algorithm = self.algorithm or 'sha256'
+        self.algorithm = self.algorithm or "sha256"
 
     def _get_secret(self):
         return self._secret or settings.SECRET_KEY
@@ -55,7 +55,7 @@ class TokenGenerator:
             return False
         # Parse the token
         try:
-            ts_b36, _ = token.split('-')
+            ts_b36, _ = token.split("-")
         except ValueError:
             return False
 
@@ -75,10 +75,7 @@ class TokenGenerator:
             return False
 
         # Check the timestamp is within limit.
-        if (self._num_seconds(self._now()) - ts) > settings.PASSWORD_RESET_TIMEOUT:
-            return False
-
-        return True
+        return not self._num_seconds(self._now()) - ts > settings.PASSWORD_RESET_TIMEOUT
 
     def _make_token_with_timestamp(self, user, timestamp, secret):
         # timestamp is number of seconds since 2001-1-1. Converted to base 36,
@@ -89,10 +86,8 @@ class TokenGenerator:
             self._make_hash_value(user, timestamp),
             secret=secret,
             algorithm=self.algorithm,
-        ).hexdigest()[
-            ::2
-        ]  # Limit to shorten the URL.
-        return f'{ts_b36}-{hash_string}'
+        ).hexdigest()[::2]  # Limit to shorten the URL.
+        return f"{ts_b36}-{hash_string}"
 
     def _make_hash_value(self, user, timestamp):
         """
@@ -112,13 +107,11 @@ class TokenGenerator:
         # Truncate microseconds so that tokens are consistent even if the
         # database doesn't support microseconds.
         login_timestamp = (
-            ''
-            if user.last_login is None
-            else user.last_login.replace(microsecond=0, tzinfo=None)
+            "" if user.last_login is None else user.last_login.replace(microsecond=0, tzinfo=None)
         )
         email_field = user.get_email_field_name()
         email = getattr(user, email_field, "") or ""
-        return f'{user.id}{user.password}{login_timestamp}{timestamp}{email}'
+        return f"{user.id}{user.password}{login_timestamp}{timestamp}{email}"
 
     def _num_seconds(self, dt):
         return int((dt - datetime(2001, 1, 1)).total_seconds())
@@ -137,19 +130,19 @@ def base36_to_int(s: str) -> int:
     # base36 string that is longer than 13 base36 digits (13 digits
     # is sufficient to base36-encode any 64-bit integer)
     if len(s) > 13:
-        raise ValueError('Base36 input too large')
+        raise ValueError("Base36 input too large")
     return int(s, 36)
 
 
 def int_to_base36(i: int) -> str:
     """Convert an integer to a base36 string."""
-    char_set = '0123456789abcdefghijklmnopqrstuvwxyz'
+    char_set = "0123456789abcdefghijklmnopqrstuvwxyz"
     if i < 0:
-        raise ValueError('Negative base36 conversion input.')
+        raise ValueError("Negative base36 conversion input.")
     if i < 36:
         return char_set[i]
     b36_parts = []
     while i != 0:
         i, n = divmod(i, 36)
         b36_parts.append(char_set[n])
-    return ''.join(reversed(b36_parts))
+    return "".join(reversed(b36_parts))

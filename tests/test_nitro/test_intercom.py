@@ -69,9 +69,7 @@ class TestConfiguration:
         with pytest.raises(ImproperlyConfigured, match="nowhere"):
             await connect("nowhere")
 
-    async def test_a_missing_location_is_reported_for_a_backend_that_needs_one(
-        self, monkeypatch
-    ):
+    async def test_a_missing_location_is_reported_for_a_backend_that_needs_one(self, monkeypatch):
         monkeypatch.setattr(
             settings,
             "INTERCOMS",
@@ -86,12 +84,8 @@ class TestConfiguration:
         with pytest.raises(ImproperlyConfigured, match="LOCATION"):
             await connect()
 
-    async def test_a_backend_that_needs_no_location_connects_without_one(
-        self, monkeypatch
-    ):
-        monkeypatch.setattr(
-            settings, "INTERCOMS", {"default": {"LOCATION": ""}}, raising=False
-        )
+    async def test_a_backend_that_needs_no_location_connects_without_one(self, monkeypatch):
+        monkeypatch.setattr(settings, "INTERCOMS", {"default": {"LOCATION": ""}}, raising=False)
         client = await connect()
         assert type(client).__name__ == "MemoryIntercom"
 
@@ -139,8 +133,10 @@ class TestMessaging:
             await asyncio.sleep(0.1)
             await intercom.send("room", "late")
 
-        asyncio.create_task(deliver())
+        # Held so it is not collected before it has run.
+        delivery = asyncio.create_task(deliver())
         assert await reader.receive(timeout=5) == "late"
+        await delivery
 
     async def test_group_messaging_reaches_members(self, intercom):
         await intercom.group_add("room", "alice")

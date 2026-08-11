@@ -58,9 +58,7 @@ def debug_response(
     else:
         return None
 
-    return HttpResponse(
-        html, status_code=status_code, content_type="text/html; charset=utf-8"
-    )
+    return HttpResponse(html, status_code=status_code, content_type="text/html; charset=utf-8")
 
 
 def _extract_frames(exc: BaseException) -> list[dict]:

@@ -13,7 +13,6 @@ then skipped for every connection with nothing said about it.
 
 from __future__ import annotations
 
-from abc import ABC
 from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import Any, Final
@@ -45,8 +44,11 @@ PROTOCOL_HOOKS: Final[dict[str, str]] = {
 UNIVERSAL_HOOK: Final = "__call__"
 
 
-class Middleware(ABC):
+class Middleware:
     """Base class for middleware.
+
+    Not abstract: a middleware implements whichever hooks apply to it, and one
+    that implements none is legal — it simply never runs.
 
     Implement whichever of the protocol hooks apply. A middleware that does not
     implement one is left out of that protocol's chain rather than having to

@@ -213,7 +213,9 @@ class TestFileParam:
     BOUNDARY = b"boundary"
     HEADERS = {"content-type": "multipart/form-data; boundary=boundary"}
 
-    def make_upload_request(self, name="avatar", filename="avatar.png", content_type="image/png", value=b"pixels"):
+    def make_upload_request(
+        self, name="avatar", filename="avatar.png", content_type="image/png", value=b"pixels"
+    ):
         disposition = f'form-data; name="{name}"; filename="{filename}"'
         headers = f"Content-Disposition: {disposition}\r\n"
         if content_type is not None:

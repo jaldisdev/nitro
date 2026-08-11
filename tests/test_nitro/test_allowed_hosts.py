@@ -7,8 +7,6 @@ server, which is where it happens: a refused request never reaches a handler.
 
 from __future__ import annotations
 
-import pytest
-
 from nitro.settings import ServerOptions
 
 

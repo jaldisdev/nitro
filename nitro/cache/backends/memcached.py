@@ -86,8 +86,7 @@ class MemcachedCache(BaseCache):
     def __init__(self, location: str, params: dict[str, Any]) -> None:
         if emcache is None:
             raise ImportError(
-                "MemcachedCache requires the emcache package. "
-                "Install it with: pip install emcache"
+                "MemcachedCache requires the emcache package. Install it with: pip install emcache"
             )
 
         super().__init__(location, params)

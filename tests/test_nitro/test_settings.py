@@ -41,9 +41,7 @@ class TestSettings:
         assert resolved.TIME_ZONE == "Europe/Zurich"
 
     def test_lowercase_names_are_ignored(self, tmp_path, monkeypatch):
-        name = write_settings_module(
-            tmp_path, monkeypatch, "lowercase_settings", "debug = True\n"
-        )
+        name = write_settings_module(tmp_path, monkeypatch, "lowercase_settings", "debug = True\n")
         assert Settings(name).DEBUG is False
 
     def test_a_missing_module_is_reported_clearly(self):
@@ -63,9 +61,7 @@ class TestLazySettings:
         assert repr(lazy) == "<LazySettings [defaults]>"
 
     def test_the_environment_variable_selects_the_module(self, tmp_path, monkeypatch):
-        name = write_settings_module(
-            tmp_path, monkeypatch, "env_settings", "DEBUG = True\n"
-        )
+        name = write_settings_module(tmp_path, monkeypatch, "env_settings", "DEBUG = True\n")
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, name)
 
         lazy = LazySettings()
@@ -90,9 +86,7 @@ class TestLazySettings:
         lazy = LazySettings()
         assert lazy.DEBUG is False
 
-        name = write_settings_module(
-            tmp_path, monkeypatch, "reset_settings", "DEBUG = True\n"
-        )
+        name = write_settings_module(tmp_path, monkeypatch, "reset_settings", "DEBUG = True\n")
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, name)
         lazy.reset()
         assert lazy.DEBUG is True
@@ -144,9 +138,7 @@ class TestServerOptions:
 
     def test_the_site_wide_names_keep_their_own_spelling(self):
         options = ServerOptions.resolve(
-            FakeSettings(
-                {"ALLOWED_HOSTS": ["example.test"], "OBSERVABILITY_PORT": 9999}
-            )
+            FakeSettings({"ALLOWED_HOSTS": ["example.test"], "OBSERVABILITY_PORT": 9999})
         )
         assert options.allowed_hosts == ["example.test"]
         assert options.observability_port == 9999

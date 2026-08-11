@@ -146,9 +146,7 @@ class TestMiddlewareStack:
 
     def test_invalid_path_raises(self):
         with pytest.raises(ImportError):
-            MiddlewareStack(
-                app=None, middleware_paths=["nitro.does.not.exist.Middleware"]
-            )
+            MiddlewareStack(app=None, middleware_paths=["nitro.does.not.exist.Middleware"])
 
     @pytest.mark.asyncio
     async def test_execute_http_passes_through_empty_stack(self):
@@ -250,9 +248,7 @@ class TestCORSMiddleware:
 
         request = make_request(headers={"origin": "https://example.com"})
         response = await mw.__http__(request, async_ok_handler)
-        assert (
-            response.headers.get("Access-Control-Allow-Origin") == "https://example.com"
-        )
+        assert response.headers.get("Access-Control-Allow-Origin") == "https://example.com"
 
     @pytest.mark.asyncio
     async def test_no_cors_header_for_disallowed_origin(self):

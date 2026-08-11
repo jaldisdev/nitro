@@ -237,4 +237,3 @@ class MemoryCache(BaseCache):
 
     async def close(self) -> None:
         """No-op for memory cache."""
-        pass

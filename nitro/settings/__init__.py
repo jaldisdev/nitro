@@ -235,9 +235,7 @@ class ServerOptions:
 
         known = {field.name for field in dataclasses.fields(cls)}
         moved = sorted(
-            setting_name(str(key).lower())
-            for key in configured
-            if str(key).lower() in known
+            setting_name(str(key).lower()) for key in configured if str(key).lower() in known
         )
         raise ImproperlyConfigured(
             f"{RETIRED_MAPPING} is no longer a setting; its keys are now top-level "

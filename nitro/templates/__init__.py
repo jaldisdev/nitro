@@ -7,11 +7,11 @@ from nitro.templates.exceptions import (
 from nitro.templates.templates import templates
 
 __all__ = [
-    "templates",
     "Jinja2",
-    "Template",
     "MemcachedBytecodeCache",
+    "Template",
     "TemplateDoesNotExist",
     "TemplateError",
     "TemplateSyntaxError",
+    "templates",
 ]

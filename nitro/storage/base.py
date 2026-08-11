@@ -36,7 +36,6 @@ class StorageFile(ABC):
         Returns:
             File content as bytes
         """
-        pass
 
     async def __aenter__(self) -> "StorageFile":
         """Enter async context manager."""
@@ -45,7 +44,6 @@ class StorageFile(ABC):
     @abstractmethod
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context manager."""
-        pass
 
 
 class BaseStorage(ABC):
@@ -67,7 +65,7 @@ class BaseStorage(ABC):
         """
         self.location = location
         self.options = params.get("OPTIONS", {})
-        self.base_url = params.get("BASE_URL", None)
+        self.base_url = params.get("BASE_URL")
 
     @abstractmethod
     async def save(self, name: str, content: Content) -> str:
@@ -84,7 +82,6 @@ class BaseStorage(ABC):
         Returns:
             The name where the file was saved
         """
-        pass
 
     @abstractmethod
     def open(self, name: str, mode: str = "rb") -> "StorageFile":
@@ -102,7 +99,6 @@ class BaseStorage(ABC):
             async with storage.open('file.txt') as f:
                 content = await f.read()
         """
-        pass
 
     @abstractmethod
     async def read(self, name: str) -> bytes:
@@ -115,7 +111,6 @@ class BaseStorage(ABC):
         Returns:
             Complete file content as bytes
         """
-        pass
 
     @abstractmethod
     async def delete(self, name: str) -> bool:
@@ -128,7 +123,6 @@ class BaseStorage(ABC):
         Returns:
             True if the file was deleted, False if it didn't exist
         """
-        pass
 
     @abstractmethod
     async def exists(self, name: str) -> bool:
@@ -141,7 +135,6 @@ class BaseStorage(ABC):
         Returns:
             True if the file exists
         """
-        pass
 
     @abstractmethod
     async def listdir(self, path: str = "") -> tuple[list[str], list[str]]:
@@ -154,7 +147,6 @@ class BaseStorage(ABC):
         Returns:
             Tuple of (directories, files) lists
         """
-        pass
 
     @abstractmethod
     async def size(self, name: str) -> int:
@@ -167,7 +159,6 @@ class BaseStorage(ABC):
         Returns:
             File size in bytes
         """
-        pass
 
     @abstractmethod
     async def url(self, name: str) -> str:
@@ -180,7 +171,6 @@ class BaseStorage(ABC):
         Returns:
             URL string to access the file
         """
-        pass
 
     async def get_accessed_time(self, name: str) -> datetime:
         """
@@ -200,9 +190,7 @@ class BaseStorage(ABC):
         Raises:
             StorageOperationUnsupported: If the backend does not track it
         """
-        raise StorageOperationUnsupported(
-            f"{type(self).__name__} does not track access time"
-        )
+        raise StorageOperationUnsupported(f"{type(self).__name__} does not track access time")
 
     @abstractmethod
     async def get_created_time(self, name: str) -> datetime:
@@ -215,7 +203,6 @@ class BaseStorage(ABC):
         Returns:
             Creation datetime
         """
-        pass
 
     @abstractmethod
     async def get_modified_time(self, name: str) -> datetime:
@@ -228,7 +215,6 @@ class BaseStorage(ABC):
         Returns:
             Last modified datetime
         """
-        pass
 
     async def copy(self, source: str, destination: str) -> str:
         """
@@ -270,4 +256,3 @@ class BaseStorage(ABC):
         """
         Close any connections to the storage backend.
         """
-        pass

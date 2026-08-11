@@ -143,7 +143,7 @@ class RedisCache(BaseCache):
         values = await self._client.mget(cache_keys)
 
         result = {}
-        for key, value in zip(keys, values):
+        for key, value in zip(keys, values, strict=False):
             if value is not None:
                 result[key] = self._deserialize(value)
 

@@ -33,9 +33,7 @@ async def _supplied(
     # `is None` rather than `or`: an empty cache is falsy, so a cache that has
     # resolved nothing yet would be thrown away and replaced here — which is
     # every cache, the first time it is used.
-    return await resolve_dependencies(
-        graph, context, DependencyCache() if cache is None else cache
-    )
+    return await resolve_dependencies(graph, context, DependencyCache() if cache is None else cache)
 
 
 async def _decoded(websocket: WebSocket, encoding: Encoding) -> AsyncIterator[Any]:
@@ -191,13 +189,9 @@ class WebSocketEndpoint:
 
     async def on_receive(self, websocket: WebSocket, data: Any, **params) -> None:
         """Override to handle incoming messages."""
-        pass
 
-    async def on_disconnect(
-        self, websocket: WebSocket, close_code: int, **params
-    ) -> None:
+    async def on_disconnect(self, websocket: WebSocket, close_code: int, **params) -> None:
         """Override to handle disconnection."""
-        pass
 
 
 class WebTransportEndpoint:
@@ -275,20 +269,11 @@ class WebTransportEndpoint:
         """Override to handle session connection."""
         await session.accept()
 
-    async def on_datagram(
-        self, session: WebTransportSession, data: Any, **params
-    ) -> None:
+    async def on_datagram(self, session: WebTransportSession, data: Any, **params) -> None:
         """Override to handle incoming datagrams."""
-        pass
 
-    async def on_stream(
-        self, session: WebTransportSession, stream: Any, **params
-    ) -> None:
+    async def on_stream(self, session: WebTransportSession, stream: Any, **params) -> None:
         """Override to handle incoming streams (only called if use_streams=True)."""
-        pass
 
-    async def on_disconnect(
-        self, session: WebTransportSession, close_code: int, **params
-    ) -> None:
+    async def on_disconnect(self, session: WebTransportSession, close_code: int, **params) -> None:
         """Override to handle disconnection."""
-        pass

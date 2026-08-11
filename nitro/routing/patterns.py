@@ -35,7 +35,7 @@ from nitro.routing.router import (
 )
 
 if TYPE_CHECKING:
-    from nitro.routing.mount import Mount
+    pass
 
 __all__ = [
     "HTTPRoute",
@@ -76,7 +76,14 @@ def _dispatcher(endpoint: type) -> Callable[..., Any]:
     # this a cycle inside an endpoint's own method would surface as a failed
     # request instead of a failed startup — the opposite of what the graph is
     # read eagerly for everywhere else.
-    for attribute in (*HTTP_METHODS, "on_connect", "on_receive", "on_datagram", "on_stream", "on_disconnect"):
+    for attribute in (
+        *HTTP_METHODS,
+        "on_connect",
+        "on_receive",
+        "on_datagram",
+        "on_stream",
+        "on_disconnect",
+    ):
         hook = getattr(endpoint, attribute, None)
         if hook is not None:
             dependencies_for(hook)
@@ -205,9 +212,7 @@ def load_patterns(source: str | Iterable[Any]) -> list[Any]:
     module = _routes_module(source)
     patterns = getattr(module, "patterns", None)
     if patterns is None:
-        raise ImproperlyConfigured(
-            f"the route module {source!r} does not define `patterns`"
-        )
+        raise ImproperlyConfigured(f"the route module {source!r} does not define `patterns`")
     return list(patterns)
 
 
@@ -267,12 +272,12 @@ def _resolve_handler(handler: Any, key: Any, origin: str) -> Callable[..., Any]:
                 f"{origin} names {handler!r} for {name}, which could not be imported: {error}"
             ) from error
 
-    call = getattr(handler, "__call__", None)
+    # Not `callable()`: what matters is whether the *bound* `__call__` is a
+    # coroutine function, which `callable` cannot tell you.
+    call = getattr(handler, "__call__", None)  # noqa: B004
     if not (
         inspect.iscoroutinefunction(handler)
         or (call is not None and inspect.iscoroutinefunction(call))
     ):
-        raise ImproperlyConfigured(
-            f"{origin} gives {name} a handler that is not an async function"
-        )
+        raise ImproperlyConfigured(f"{origin} gives {name} a handler that is not an async function")
     return handler

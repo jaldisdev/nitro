@@ -83,8 +83,7 @@ class OAuth2SMTPBackend(SMTPBackend):
             return callback()
 
         raise ValueError(
-            "no OAuth2 token is configured; set EMAIL_OAUTH2_TOKEN or "
-            "EMAIL_OAUTH2_TOKEN_CALLBACK"
+            "no OAuth2 token is configured; set EMAIL_OAUTH2_TOKEN or EMAIL_OAUTH2_TOKEN_CALLBACK"
         )
 
     def _build_oauth_string(self, user: str, token: str) -> str:

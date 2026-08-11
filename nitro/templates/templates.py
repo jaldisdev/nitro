@@ -86,9 +86,7 @@ class Templates:
         """The first configured engine."""
         self._build()
         if not self._engines:
-            raise RuntimeError(
-                "no template engine is configured; add one to the TEMPLATES setting"
-            )
+            raise RuntimeError("no template engine is configured; add one to the TEMPLATES setting")
         return next(iter(self._engines.values()))
 
     def _engine(self, using: str | None) -> Jinja2:

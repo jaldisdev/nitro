@@ -1,5 +1,3 @@
-import pytest
-
 from nitro.cache.backends.memory import MemoryCache
 from nitro.cache.base import DEFAULT_TIMEOUT
 
@@ -9,9 +7,7 @@ def make_memory_cache(
     version: int = 1,
     timeout: int = 300,
 ) -> MemoryCache:
-    return MemoryCache(
-        "", {"KEY_PREFIX": prefix, "VERSION": version, "TIMEOUT": timeout}
-    )
+    return MemoryCache("", {"KEY_PREFIX": prefix, "VERSION": version, "TIMEOUT": timeout})
 
 
 # ---------------------------------------------------------------------------

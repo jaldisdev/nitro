@@ -137,7 +137,9 @@ def _is_async_callable(handler: Any) -> bool:
     """
     if inspect.iscoroutinefunction(handler):
         return True
-    call = getattr(handler, "__call__", None)
+    # Not `callable()`: what matters is whether the *bound* `__call__` is a
+    # coroutine function, which `callable` cannot tell you.
+    call = getattr(handler, "__call__", None)  # noqa: B004
     return call is not None and inspect.iscoroutinefunction(call)
 
 
@@ -264,9 +266,7 @@ class Nitro:
 
         return register
 
-    def websocket(
-        self, path: str, *, name: str | None = None
-    ) -> Callable[[Handler], Handler]:
+    def websocket(self, path: str, *, name: str | None = None) -> Callable[[Handler], Handler]:
         """Register a WebSocket handler for `path`.
 
         The handler is called with the connection scope and a transport it must
@@ -279,16 +279,12 @@ class Nitro:
 
         return register
 
-    def add_websocket_route(
-        self, path: str, handler: Handler, *, name: str | None = None
-    ) -> Route:
+    def add_websocket_route(self, path: str, handler: Handler, *, name: str | None = None) -> Route:
         if not _is_async_callable(handler):
             raise TypeError(f"WebSocket handler for {path!r} must be an async function")
         return self.router.add(path, handler, methods=[WEBSOCKET_METHOD], name=name)
 
-    def webtransport(
-        self, path: str, *, name: str | None = None
-    ) -> Callable[[Handler], Handler]:
+    def webtransport(self, path: str, *, name: str | None = None) -> Callable[[Handler], Handler]:
         """Register a WebTransport handler for `path`.
 
         The handler is called with the session scope and a session it must
@@ -458,9 +454,7 @@ class Nitro:
             await self._write(answer, protocol)
         return handled
 
-    async def _dispatch_exception(
-        self, target: Any, exception: BaseException
-    ) -> tuple[bool, Any]:
+    async def _dispatch_exception(self, target: Any, exception: BaseException) -> tuple[bool, Any]:
         """Run the handler registered for `exception`, if there is one.
 
         A handler that fails is logged and reported as absent, so the client
@@ -477,9 +471,7 @@ class Nitro:
         try:
             return True, await handler(target, exception)
         except Exception:
-            logger.exception(
-                "the handler for %s failed", type(exception).__name__
-            )
+            logger.exception("the handler for %s failed", type(exception).__name__)
             return False, None
 
     def _debug_page(

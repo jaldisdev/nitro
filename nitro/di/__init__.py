@@ -31,9 +31,9 @@ __all__ = [
     "Depends",
     "cache_for",
     "close_worker_dependencies",
-    "open_worker_dependencies",
     "dependencies_for",
     "extract_dependencies",
+    "open_worker_dependencies",
     "reset_worker_dependencies",
     "resolve_dependencies",
     "worker_scoped",
@@ -86,7 +86,6 @@ def worker_scoped(provider: Callable[..., Any]) -> Callable[..., Any]:
 
 def is_worker_scoped(provider: Callable[..., Any]) -> bool:
     return bool(getattr(provider, WORKER_SCOPED, False))
-
 
 
 class Depends:

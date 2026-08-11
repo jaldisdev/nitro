@@ -52,8 +52,7 @@ class SESBackend(BaseEmailBackend):
     ) -> None:
         if aioboto3 is None:
             raise ImportError(
-                "SESBackend requires aioboto3 package. "
-                "Install it with: pip install aioboto3"
+                "SESBackend requires aioboto3 package. Install it with: pip install aioboto3"
             )
 
         super().__init__(**kwargs)

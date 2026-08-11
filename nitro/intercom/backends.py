@@ -68,7 +68,7 @@ def _sendable(value: Any) -> Any:
 class _Entry:
     """One channel's queue, or one group's membership, and when it expires."""
 
-    __slots__ = ("expires_at", "messages", "members")
+    __slots__ = ("expires_at", "members", "messages")
 
     def __init__(self) -> None:
         self.messages: deque[Any] = deque()

@@ -8,8 +8,8 @@ from nitro.mail.backends.smtp import SMTPBackend
 __all__ = [
     "BaseEmailBackend",
     "ConsoleBackend",
-    "SMTPBackend",
     "OAuth2SMTPBackend",
     "SESBackend",
+    "SMTPBackend",
     "SendGridBackend",
 ]

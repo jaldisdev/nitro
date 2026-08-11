@@ -14,10 +14,10 @@ from nitro.cache.base import DEFAULT_TIMEOUT, BaseCache
 from nitro.cache.handler import DEFAULT_CACHE_ALIAS, CacheHandler
 
 __all__ = [
-    "BaseCache",
-    "CacheHandler",
     "DEFAULT_CACHE_ALIAS",
     "DEFAULT_TIMEOUT",
+    "BaseCache",
+    "CacheHandler",
     "cache",
     "caches",
     "reset_caches",

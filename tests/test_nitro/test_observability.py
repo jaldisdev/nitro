@@ -11,7 +11,6 @@ import pytest
 
 from nitro.settings import ImproperlyConfigured, ServerOptions, settings
 
-
 # Metrics ports are chosen from below the ephemeral range. The application is
 # started on a kernel-chosen port, and the kernel hands those out in ascending
 # order — a metrics port taken from the same range is liable to be the very one
@@ -179,9 +178,7 @@ class TestChecking:
 
         settings_module = tmp_path / "exposed.py"
         settings_module.write_text(
-            "DEBUG = True\n"
-            "OBSERVABILITY_ENABLED = True\n"
-            "OBSERVABILITY_HOST = '0.0.0.0'\n"
+            "DEBUG = True\nOBSERVABILITY_ENABLED = True\nOBSERVABILITY_HOST = '0.0.0.0'\n"
         )
         monkeypatch.syspath_prepend(str(tmp_path))
         monkeypatch.setenv("NITRO_SETTINGS_MODULE", "exposed")
@@ -296,9 +293,7 @@ class TestScraping:
         server = server_factory(application(metrics_port))
 
         async def exchange() -> str:
-            async with websockets.connect(
-                f"ws://localhost:{server.port}/socket"
-            ) as connection:
+            async with websockets.connect(f"ws://localhost:{server.port}/socket") as connection:
                 return await connection.recv()
 
         assert asyncio.run(asyncio.wait_for(exchange(), timeout=20)) == "open"

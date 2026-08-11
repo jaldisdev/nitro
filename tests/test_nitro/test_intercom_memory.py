@@ -120,8 +120,10 @@ class TestQueuedDelivery:
             await asyncio.sleep(0.02)
             await intercom.send("jobs", "late")
 
-        asyncio.create_task(send_shortly())
+        # Held so it is not collected before it has run.
+        delivery = asyncio.create_task(send_shortly())
         assert await reader.receive(timeout=2) == "late"
+        await delivery
 
     async def test_a_reader_gives_up_at_its_timeout(self, intercom):
         reader = await intercom.reader("jobs")

@@ -119,7 +119,9 @@ def converter_for(name: str) -> Converter:
         return _CONVERTERS[name]()
     except KeyError:
         known = ", ".join(sorted(_CONVERTERS))
-        raise LookupError(f"unknown path converter {name!r}; known converters are {known}") from None
+        raise LookupError(
+            f"unknown path converter {name!r}; known converters are {known}"
+        ) from None
 
 
 def _inline_expression(name: str) -> str | None:

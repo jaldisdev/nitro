@@ -81,8 +81,7 @@ def _backend(alias: str, entry: dict[str, Any]) -> Any:
         return import_string(path)
     except ImportError as error:
         raise ImproperlyConfigured(
-            f"INTERCOMS[{alias!r}] names the backend {path!r}, "
-            f"which could not be imported: {error}"
+            f"INTERCOMS[{alias!r}] names the backend {path!r}, which could not be imported: {error}"
         ) from error
 
 

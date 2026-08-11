@@ -8,6 +8,7 @@ exercised over the wire.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 import pytest
 
@@ -91,7 +92,7 @@ SESSION_APP = """
 def certificate(tmp_path):
     """A self-signed certificate for the server under test."""
     cryptography = pytest.importorskip("cryptography")
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -100,7 +101,7 @@ def certificate(tmp_path):
 
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     certificate = (
         x509.CertificateBuilder()
@@ -112,7 +113,10 @@ def certificate(tmp_path):
         .not_valid_after(now + timedelta(days=1))
         .add_extension(
             x509.SubjectAlternativeName(
-                [x509.DNSName("localhost"), x509.IPAddress(__import__("ipaddress").ip_address("127.0.0.1"))]
+                [
+                    x509.DNSName("localhost"),
+                    x509.IPAddress(__import__("ipaddress").ip_address("127.0.0.1")),
+                ]
             ),
             critical=False,
         )
@@ -138,9 +142,7 @@ def session_server(server_factory, certificate):
     certificate_path, key_path = certificate
     # Plain substitution rather than `format`, because the application source
     # contains braces of its own.
-    source = SESSION_APP.replace("__CERTIFICATE__", certificate_path).replace(
-        "__KEY__", key_path
-    )
+    source = SESSION_APP.replace("__CERTIFICATE__", certificate_path).replace("__KEY__", key_path)
     return server_factory(source)
 
 
@@ -202,9 +204,7 @@ class TestDatagrams:
         import json
 
         async def exchange() -> dict:
-            async with webtransport(
-                "localhost", session_server.port, "/rooms/lobby"
-            ) as client:
+            async with webtransport("localhost", session_server.port, "/rooms/lobby") as client:
                 return json.loads(await client.receive_datagram())
 
         assert run(exchange()) == {"room": "lobby", "path": "/rooms/lobby"}
@@ -253,9 +253,7 @@ class TestHttp3Requests:
     def test_a_get_carries_its_body(self, session_server):
         async def exchange():
             async with http3("localhost", session_server.port) as client:
-                return await client.request(
-                    "GET", f"localhost:{session_server.port}", "/plain"
-                )
+                return await client.request("GET", f"localhost:{session_server.port}", "/plain")
 
         response = run(exchange())
         assert response.status == 200
@@ -268,9 +266,7 @@ class TestHttp3Requests:
         # resets the stream, which is what this looked like from curl.
         async def exchange():
             async with http3("localhost", session_server.port) as client:
-                return await client.request(
-                    "HEAD", f"localhost:{session_server.port}", "/plain"
-                )
+                return await client.request("HEAD", f"localhost:{session_server.port}", "/plain")
 
         response = run(exchange())
         assert response.status == 200
@@ -283,9 +279,7 @@ class TestHttp3Requests:
         # the server owns have to be added there too rather than only by hyper.
         async def exchange():
             async with http3("localhost", session_server.port) as client:
-                return await client.request(
-                    "GET", f"localhost:{session_server.port}", "/plain"
-                )
+                return await client.request("GET", f"localhost:{session_server.port}", "/plain")
 
         response = run(exchange())
         assert response.headers["server"] == "nitro"
