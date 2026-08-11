@@ -5,6 +5,8 @@ import types
 import pytest
 
 from nitro import Nitro
+from nitro.di import Depends
+from nitro.endpoints import HTTPEndpoint
 from nitro.endpoints import HTTPEndpoint
 from nitro.protocols import Http404, HttpForbidden, PlainTextResponse
 from nitro.routing import HTTPRoute
@@ -729,3 +731,66 @@ class TestDebugFlag:
 
         assert protocol.status == 404
         assert protocol.body == b"Not Found"
+
+
+class TestDependencyRelease:
+    """The release wired into dispatch, rather than the cache on its own."""
+
+    async def test_a_dependency_is_released_after_the_response(self):
+        app = Nitro()
+        trail = []
+
+        async def get_connection():
+            trail.append("acquired")
+            yield "connection"
+            trail.append("released")
+
+        @app.route("/thing")
+        async def handler(request, connection=Depends(get_connection)):
+            trail.append(f"handler saw {connection}")
+            request.protocol.response_empty(204)
+
+        await app.__handle_http__(scope_for(app, "GET", "/thing"), RecordingProtocol())
+
+        assert trail == ["acquired", "handler saw connection", "released"]
+
+    async def test_a_failing_handler_reports_the_failure_to_its_dependency(self):
+        app = Nitro()
+        outcome = []
+
+        async def get_transaction():
+            try:
+                yield "transaction"
+            except RuntimeError:
+                outcome.append("rolled back")
+                raise
+
+        @app.route("/boom")
+        async def handler(request, transaction=Depends(get_transaction)):
+            raise RuntimeError("the handler failed")
+
+        await app.__handle_http__(scope_for(app, "GET", "/boom"), protocol := RecordingProtocol())
+
+        assert outcome == ["rolled back"]
+        assert protocol.status == 500
+
+    async def test_an_endpoint_releases_what_its_method_opened(self):
+        app = Nitro()
+        trail = []
+
+        async def get_connection():
+            yield "connection"
+            trail.append("released")
+
+        class Endpoint(HTTPEndpoint):
+            async def get(self, request, connection=Depends(get_connection)):
+                trail.append(f"handler saw {connection}")
+                request.protocol.response_empty(204)
+
+        # Through the route table rather than `add_route`, which registers a
+        # handler as it is given and so never wraps an endpoint class.
+        app = Nitro(routes=[HTTPRoute("/endpoint", Endpoint)])
+
+        await app.__handle_http__(scope_for(app, "GET", "/endpoint"), RecordingProtocol())
+
+        assert trail == ["handler saw connection", "released"]

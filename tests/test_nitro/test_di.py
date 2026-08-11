@@ -6,6 +6,7 @@ from nitro.di import (
     DependencyCache,
     DependencyCycle,
     DependencyError,
+    DependencyParam,
     Depends,
     extract_dependencies,
     resolve_dependencies,
@@ -277,3 +278,244 @@ class TestDependencyCache:
 
         cache.clear()
         assert len(cache) == 0
+
+
+class TestTeardown:
+    async def test_a_yielded_value_is_supplied_like_any_other(self):
+        async def get_thing():
+            yield "value"
+
+        cache = DependencyCache()
+        values = await resolve_dependencies(
+            {"thing": DependencyParam("thing", Depends(get_thing))}, None, cache
+        )
+        assert values == {"thing": "value"}
+
+    async def test_the_rest_of_the_dependency_runs_when_the_cache_closes(self):
+        trail = []
+
+        async def get_thing():
+            trail.append("acquired")
+            yield "value"
+            trail.append("released")
+
+        cache = DependencyCache()
+        await resolve_dependencies({"t": DependencyParam("t", Depends(get_thing))}, None, cache)
+        assert trail == ["acquired"]
+
+        await cache.aclose()
+        assert trail == ["acquired", "released"]
+
+    async def test_a_success_is_not_reported_as_a_failure(self):
+        """A dependency written as a context manager must commit, not roll back:
+        closing the generator instead of resuming it would raise GeneratorExit
+        at the yield and every `async with` inside would see a failure."""
+        outcome = []
+
+        async def get_transaction():
+            try:
+                yield "transaction"
+            except BaseException:
+                outcome.append("rolled back")
+                raise
+            else:
+                outcome.append("committed")
+
+        cache = DependencyCache()
+        await resolve_dependencies({"t": DependencyParam("t", Depends(get_transaction))}, None, cache)
+        await cache.aclose()
+
+        assert outcome == ["committed"]
+
+    async def test_a_failure_is_raised_at_the_yield(self):
+        outcome = []
+
+        async def get_transaction():
+            try:
+                yield "transaction"
+            except RuntimeError:
+                outcome.append("rolled back")
+                raise
+
+        cache = DependencyCache()
+        await resolve_dependencies({"t": DependencyParam("t", Depends(get_transaction))}, None, cache)
+        await cache.aclose(RuntimeError("the handler failed"))
+
+        assert outcome == ["rolled back"]
+
+    async def test_a_dependency_may_swallow_the_failure(self):
+        async def get_thing():
+            try:
+                yield "value"
+            except RuntimeError:
+                pass  # handled, and not re-raised
+
+        cache = DependencyCache()
+        await resolve_dependencies({"t": DependencyParam("t", Depends(get_thing))}, None, cache)
+        await cache.aclose(RuntimeError("boom"))  # must not raise
+
+    async def test_they_are_released_in_reverse_order(self):
+        trail = []
+
+        async def outer():
+            trail.append("outer acquired")
+            yield "outer"
+            trail.append("outer released")
+
+        async def inner(value=Depends(outer)):
+            trail.append("inner acquired")
+            yield "inner"
+            trail.append("inner released")
+
+        cache = DependencyCache()
+        await resolve_dependencies(extract_dependencies(lambda thing=Depends(inner): None), None, cache)
+        await cache.aclose()
+
+        assert trail == [
+            "outer acquired",
+            "inner acquired",
+            "inner released",
+            "outer released",
+        ]
+
+    async def test_one_that_fails_to_release_does_not_strand_the_others(self, caplog):
+        trail = []
+
+        async def breaks():
+            yield "value"
+            raise RuntimeError("cannot close")
+
+        async def works():
+            yield "value"
+            trail.append("released")
+
+        cache = DependencyCache()
+        await resolve_dependencies({"a": DependencyParam("a", Depends(works))}, None, cache)
+        await resolve_dependencies({"b": DependencyParam("b", Depends(breaks))}, None, cache)
+
+        await cache.aclose()  # must not raise
+
+        assert trail == ["released"]
+        assert "failed while being released" in caplog.text
+
+    async def test_a_synchronous_generator_works_too(self):
+        trail = []
+
+        def get_thing():
+            trail.append("acquired")
+            yield "value"
+            trail.append("released")
+
+        cache = DependencyCache()
+        values = await resolve_dependencies({"t": DependencyParam("t", Depends(get_thing))}, None, cache)
+        assert values == {"t": "value"}
+
+        await cache.aclose()
+        assert trail == ["acquired", "released"]
+
+    async def test_a_dependency_that_yields_nothing_says_so(self):
+        async def get_nothing():
+            if False:
+                yield "never"
+
+        cache = DependencyCache()
+        with pytest.raises(DependencyError, match="yielded nothing"):
+            await resolve_dependencies({"t": DependencyParam("t", Depends(get_nothing))}, None, cache)
+
+    async def test_a_dependency_that_yields_twice_is_reported(self, caplog):
+        async def get_two():
+            yield "first"
+            yield "second"
+
+        cache = DependencyCache()
+        await resolve_dependencies({"t": DependencyParam("t", Depends(get_two))}, None, cache)
+        await cache.aclose()
+
+        assert "yielded more than once" in caplog.text
+
+    async def test_a_cached_dependency_is_released_once(self):
+        trail = []
+
+        async def get_thing():
+            yield "value"
+            trail.append("released")
+
+        async def first(thing=Depends(get_thing)):
+            return thing
+
+        async def second(thing=Depends(get_thing)):
+            return thing
+
+        cache = DependencyCache()
+        await resolve_dependencies(
+            extract_dependencies(lambda a=Depends(first), b=Depends(second): None), None, cache
+        )
+        await cache.aclose()
+
+        assert trail == ["released"]
+
+    async def test_closing_twice_releases_nothing_further(self):
+        trail = []
+
+        async def get_thing():
+            yield "value"
+            trail.append("released")
+
+        cache = DependencyCache()
+        await resolve_dependencies({"t": DependencyParam("t", Depends(get_thing))}, None, cache)
+        await cache.aclose()
+        await cache.aclose()
+
+        assert trail == ["released"]
+
+
+class TestSuppliedCache:
+    """`_supplied` is what endpoint hooks resolve through."""
+
+    async def test_a_cache_that_is_empty_is_still_the_cache(self):
+        """An empty cache is falsy, so `cache or DependencyCache()` quietly
+        replaced it — and a cache is empty exactly when it is first used, so
+        nothing a socket's hooks resolved was ever shared between them."""
+        from nitro.endpoints import _supplied
+
+        calls = []
+
+        async def get_thing():
+            calls.append("called")
+            return "value"
+
+        async def first(thing=Depends(get_thing)):
+            return thing
+
+        async def second(thing=Depends(get_thing)):
+            return thing
+
+        shared = DependencyCache()
+        await _supplied(first, None, shared)
+        await _supplied(second, None, shared)
+
+        assert calls == ["called"]
+        assert len(shared) > 0
+
+    async def test_what_hooks_open_is_released_once_for_the_connection(self):
+        from nitro.endpoints import _supplied
+
+        trail = []
+
+        async def get_connection():
+            trail.append("acquired")
+            yield "connection"
+            trail.append("released")
+
+        async def on_connect(connection=Depends(get_connection)):
+            return connection
+
+        async def on_receive(connection=Depends(get_connection)):
+            return connection
+
+        shared = DependencyCache()
+        await _supplied(on_connect, None, shared)
+        await _supplied(on_receive, None, shared)
+        await shared.aclose()
+
+        assert trail == ["acquired", "released"]

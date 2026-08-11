@@ -55,6 +55,47 @@ async def handler(request: HttpRequest, token: str = Depends(mint_token, use_cac
 A dependency returning `None` caches like any other value, so it is not called
 again on the assumption that it failed.
 
+## Releasing what a dependency opened
+
+A dependency that `yield`s its value stays suspended there until the work it was
+resolved for is over, and the rest of it runs then:
+
+```python
+async def get_transaction(pool: Pool = Depends(get_pool)) -> AsyncIterator[Transaction]:
+    async with pool.acquire() as connection, connection.transaction() as transaction:
+        yield transaction
+```
+
+The dependency is *resumed*, not closed, so the code after the `yield` runs as
+it normally would — a context manager inside sees an ordinary exit and commits.
+Had it been closed, `GeneratorExit` at the `yield` would look like a failure and
+roll back a request that had succeeded.
+
+When the work fails, the exception is raised at the `yield`, so a dependency can
+tell the two apart:
+
+```python
+async def get_transaction() -> AsyncIterator[Transaction]:
+    transaction = await begin()
+    try:
+        yield transaction
+    except Exception:
+        await transaction.rollback()
+        raise
+    else:
+        await transaction.commit()
+```
+
+Ordinary functions are unaffected: a dependency that returns needs no release
+and gets none. A plain `def` generator works too, and is resumed in a thread.
+
+**When "over" is depends on the protocol.** For HTTP it is after the response;
+for a WebSocket or WebTransport session it is after the disconnect hook, because
+the connection is the unit of work — a dependency resolved at connect is held
+for as long as the connection is. Releases happen in the reverse of the order
+things were acquired, and a dependency named twice is released once. One that
+fails to release is logged and the rest still run.
+
 ## Cycles
 
 A dependency that depends on itself, directly or through others, is reported

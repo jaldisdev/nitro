@@ -94,18 +94,19 @@ def served_addresses(server: Any, options: ServerOptions) -> list[str]:
     return [f"{scheme}://{host}:{port}" for host, port in server.addresses]
 
 
-async def _dependencies(route: Route, context: Any) -> dict[str, Any]:
+async def _dependencies(route: Route, context: Any, cache: DependencyCache) -> dict[str, Any]:
     """Values for the parameters `route`'s handler wants injected.
 
     The graph was read when the route was registered, so nothing is inspected
-    here. A cache is created per call and passed down, which is what makes a
-    dependency named twice in one request resolve once — and, because it is
-    created here rather than held on the route, what stops one request seeing
-    another's values.
+    here. `cache` spans one request, which is what makes a dependency named
+    twice in one request resolve once — and, because it belongs to the call
+    rather than to the route, what stops one request seeing another's values.
+    It also holds whatever the dependencies left open, so the caller drains it
+    when the work it was made for is over.
     """
     if not route.dependencies:
         return {}
-    return await resolve_dependencies(route.dependencies, context, DependencyCache())
+    return await resolve_dependencies(route.dependencies, context, cache)
 
 
 def _is_async_callable(handler: Any) -> bool:
@@ -386,8 +387,16 @@ class Nitro:
         request = HttpRequest(scope, protocol, parameters)
 
         async def call_handler(request: HttpRequest) -> Any:
-            supplied = await _dependencies(route, request)
-            return await route.handler(request, **supplied, **parameters)
+            cache = DependencyCache()
+            failure: BaseException | None = None
+            try:
+                supplied = await _dependencies(route, request, cache)
+                return await route.handler(request, **supplied, **parameters)
+            except BaseException as error:
+                failure = error
+                raise
+            finally:
+                await cache.aclose(failure)
 
         try:
             result = await self.middleware.execute_http(request, call_handler)
@@ -513,8 +522,18 @@ class Nitro:
         socket = WebSocket(scope, transport, parameters)
 
         async def call_handler(socket: WebSocket) -> None:
-            supplied = await _dependencies(route, socket)
-            await route.handler(socket, **supplied, **parameters)
+            cache = DependencyCache()
+            failure: BaseException | None = None
+            try:
+                supplied = await _dependencies(route, socket, cache)
+                await route.handler(socket, **supplied, **parameters)
+            except BaseException as error:
+                failure = error
+                raise
+            finally:
+                # A socket's dependencies are held for the connection, so this
+                # is the disconnect rather than the end of a message.
+                await cache.aclose(failure)
 
         try:
             await self.middleware.execute_websocket(socket, call_handler)
@@ -551,8 +570,18 @@ class Nitro:
         connection = WebTransportSession(scope, session, parameters)
 
         async def call_handler(connection: WebTransportSession) -> None:
-            supplied = await _dependencies(route, connection)
-            await route.handler(connection, **supplied, **parameters)
+            cache = DependencyCache()
+            failure: BaseException | None = None
+            try:
+                supplied = await _dependencies(route, connection, cache)
+                await route.handler(connection, **supplied, **parameters)
+            except BaseException as error:
+                failure = error
+                raise
+            finally:
+                # As for a socket: the session is the span, so this is where
+                # what it opened is released.
+                await cache.aclose(failure)
 
         try:
             await self.middleware.execute_webtransport(connection, call_handler)

@@ -14,10 +14,14 @@ tasks; a cache on it would hand one request's values to another.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger("nitro.di")
 
 __all__ = [
     "DependencyCache",
@@ -82,18 +86,51 @@ class DependencyParam:
 
 
 class DependencyCache:
-    """Resolved values for the span of one request.
+    """Resolved values for the span of one request, and what they left open.
 
     A miss is distinguished from a cached `None`, so a dependency that legitimately
     produces `None` is not called again every time it is asked for.
+
+    A dependency that yields its value is left suspended at the ``yield`` until
+    :meth:`aclose` finishes it. The cache owns those because it already spans
+    exactly the right stretch of time: everything resolved for one request is
+    released at the end of that request, in the reverse of the order it was
+    acquired.
     """
 
-    __slots__ = ("_values",)
+    __slots__ = ("_open", "_values")
 
     _MISSING = object()
 
     def __init__(self) -> None:
         self._values: dict[Callable[..., Any], Any] = {}
+        self._open: list[Any] = []
+
+    def opened(self, generator: Any) -> None:
+        """Remember a dependency suspended at its `yield`, to be finished by
+        :meth:`aclose`."""
+        self._open.append(generator)
+
+    async def aclose(self, exception: BaseException | None = None) -> None:
+        """Finish every dependency still suspended, most recent first.
+
+        `exception` is whatever the request failed with, and is raised at the
+        ``yield`` so a dependency can tell a failure from a success — a
+        transaction has to know which of commit and roll back it is doing.
+        Without one the dependency is resumed normally, which is the difference
+        between running the code after its ``yield`` and running only its
+        ``finally``.
+
+        A dependency that fails to release is logged and the rest are still
+        released: one that cannot close is not a reason to leak the others, nor
+        to lose the failure that is already on its way to the client.
+        """
+        while self._open:
+            generator = self._open.pop()
+            try:
+                await _finish(generator, exception)
+            except Exception:
+                logger.exception("a dependency failed while being released")
 
     def get(self, dependency: Callable[..., Any]) -> Any:
         """The cached value, or :data:`DependencyCache._MISSING`."""
@@ -217,12 +254,70 @@ async def _resolve_one(
         arguments[name] = context
 
     result = depends.dependency(**arguments)
-    if inspect.isawaitable(result):
-        result = await result
+
+    # A provider that yields hands over a value and stays suspended, holding
+    # whatever it opened until the cache releases it. One that returns is done
+    # the moment it answers.
+    if inspect.isasyncgen(result):
+        value = await _start_async(result, depends.dependency)
+        cache.opened(result)
+    elif inspect.isgenerator(result):
+        value = await _start_sync(result, depends.dependency)
+        cache.opened(result)
+    elif inspect.isawaitable(result):
+        value = await result
+    else:
+        value = result
 
     if depends.use_cache:
-        cache.set(depends.dependency, result)
-    return result
+        cache.set(depends.dependency, value)
+    return value
+
+
+async def _start_async(generator: Any, dependency: Callable[..., Any]) -> Any:
+    try:
+        return await anext(generator)
+    except StopAsyncIteration:
+        raise DependencyError(f"{_name(dependency)} yielded nothing") from None
+
+
+async def _start_sync(generator: Any, dependency: Callable[..., Any]) -> Any:
+    try:
+        return await asyncio.to_thread(next, generator)
+    except StopIteration:
+        raise DependencyError(f"{_name(dependency)} yielded nothing") from None
+
+
+async def _finish(generator: Any, exception: BaseException | None) -> None:
+    """Resume `generator` past its `yield` so the rest of it runs.
+
+    Resumed rather than closed, because closing raises `GeneratorExit` at the
+    yield and a dependency written as `async with transaction():` would read
+    that as a failure and roll back a request that had succeeded.
+    """
+    asynchronous = inspect.isasyncgen(generator)
+
+    try:
+        if exception is None:
+            if asynchronous:
+                await anext(generator)
+            else:
+                await asyncio.to_thread(next, generator)
+        else:
+            if asynchronous:
+                await generator.athrow(exception)
+            else:
+                await asyncio.to_thread(generator.throw, exception)
+    except (StopIteration, StopAsyncIteration):
+        return
+    except BaseException as raised:
+        # The dependency let the failure it was told about carry on, which is
+        # what not catching it looks like from here.
+        if raised is exception:
+            return
+        raise
+
+    raise DependencyError(f"a dependency yielded more than once: {_name(generator)}")
 
 
 def _context_parameters(function: Callable[..., Any]) -> list[str]:

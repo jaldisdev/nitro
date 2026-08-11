@@ -22,7 +22,12 @@ async def _supplied(
     graph = dependencies_for(function)
     if not graph:
         return {}
-    return await resolve_dependencies(graph, context, cache or DependencyCache())
+    # `is None` rather than `or`: an empty cache is falsy, so a cache that has
+    # resolved nothing yet would be thrown away and replaced here — which is
+    # every cache, the first time it is used.
+    return await resolve_dependencies(
+        graph, context, DependencyCache() if cache is None else cache
+    )
 
 
 #: The verbs an endpoint may implement, lower case as they are written on the
@@ -67,8 +72,16 @@ class HTTPEndpoint:
         # A verb method is reached through here rather than being the
         # registered handler, so its graph is read on first use instead of at
         # registration; `dependencies_for` remembers it per method.
-        supplied = await _supplied(handler, request)
-        response = await handler(request, **supplied, **params)
+        cache = DependencyCache()
+        failure: BaseException | None = None
+        try:
+            supplied = await _supplied(handler, request, cache)
+            response = await handler(request, **supplied, **params)
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            await cache.aclose(failure)
 
         if request.method.upper() == "HEAD":
             if "content-length" not in response._headers:
@@ -118,16 +131,25 @@ class WebSocketEndpoint:
         receive = await _supplied(self.on_receive, websocket, shared)
         disconnect = await _supplied(self.on_disconnect, websocket, shared)
 
-        await self.on_connect(websocket, **connect, **params)
-
-        close_code = 1000
+        failure: BaseException | None = None
         try:
-            async for data in websocket.iter(self.encoding):
-                await self.on_receive(websocket, data, **receive, **params)
-        except WebSocketDisconnect as exc:
-            close_code = exc.code
+            await self.on_connect(websocket, **connect, **params)
+
+            close_code = 1000
+            try:
+                async for data in websocket.iter(self.encoding):
+                    await self.on_receive(websocket, data, **receive, **params)
+            except WebSocketDisconnect as exc:
+                close_code = exc.code
+            finally:
+                await self.on_disconnect(websocket, close_code, **disconnect, **params)
+        except BaseException as error:
+            failure = error
+            raise
         finally:
-            await self.on_disconnect(websocket, close_code, **disconnect, **params)
+            # After the disconnect hook: what the connection opened is held for
+            # as long as the connection is, and no longer.
+            await shared.aclose(failure)
 
     async def on_connect(self, websocket: WebSocket, **params) -> None:
         """Override to handle WebSocket connection."""
@@ -174,32 +196,42 @@ class WebTransportEndpoint:
         stream_supplied = await _supplied(self.on_stream, session, shared)
         disconnect = await _supplied(self.on_disconnect, session, shared)
 
-        await self.on_connect(session, **connect, **params)
-
-        close_code = 0
+        failure: BaseException | None = None
         try:
-            if self.use_streams:
-                import asyncio
+            await self.on_connect(session, **connect, **params)
 
-                async def handle_datagrams():
+            close_code = 0
+            try:
+                if self.use_streams:
+                    import asyncio
+
+                    async def handle_datagrams():
+                        async for data in session.iter_datagrams(self.encoding):
+                            await self.on_datagram(session, data, **datagram, **params)
+
+                    async def handle_streams():
+                        while True:
+                            stream = await session.receive_stream()
+                            asyncio.create_task(
+                                self.on_stream(session, stream, **stream_supplied, **params)
+                            )
+
+                    await asyncio.gather(
+                        handle_datagrams(), handle_streams(), return_exceptions=True
+                    )
+                else:
                     async for data in session.iter_datagrams(self.encoding):
                         await self.on_datagram(session, data, **datagram, **params)
-
-                async def handle_streams():
-                    while True:
-                        stream = await session.receive_stream()
-                        asyncio.create_task(self.on_stream(session, stream, **stream_supplied, **params))
-
-                await asyncio.gather(
-                    handle_datagrams(), handle_streams(), return_exceptions=True
-                )
-            else:
-                async for data in session.iter_datagrams(self.encoding):
-                    await self.on_datagram(session, data, **datagram, **params)
-        except WebTransportDisconnect as exc:
-            close_code = exc.code
+            except WebTransportDisconnect as exc:
+                close_code = exc.code
+            finally:
+                await self.on_disconnect(session, close_code, **disconnect, **params)
+        except BaseException as error:
+            failure = error
+            raise
         finally:
-            await self.on_disconnect(session, close_code, **disconnect, **params)
+            # As for a socket: released when the session ends, not per datagram.
+            await shared.aclose(failure)
 
     async def on_connect(self, session: WebTransportSession, **params) -> None:
         """Override to handle session connection."""
