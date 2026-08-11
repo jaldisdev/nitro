@@ -67,7 +67,7 @@ async def _rewind(content: Any) -> None:
         await result
 
 
-async def iter_content(content: SaveContent, chunk_size: int = CHUNK_SIZE) -> AsyncIterator[bytes]:
+async def iter_content(content: Content, chunk_size: int = CHUNK_SIZE) -> AsyncIterator[bytes]:
     """Whatever was handed over, as chunks.
 
     For a consumer that writes as it goes. The chunks are whatever the source
@@ -97,7 +97,7 @@ async def iter_content(content: SaveContent, chunk_size: int = CHUNK_SIZE) -> As
     )
 
 
-async def read_content(content: SaveContent) -> bytes:
+async def read_content(content: Content) -> bytes:
     """Whatever was handed over, whole.
 
     For a consumer with nowhere to stream to — one that keeps what it is given
@@ -108,7 +108,7 @@ async def read_content(content: SaveContent) -> bytes:
     return b"".join([chunk async for chunk in iter_content(content)])
 
 
-def file_object_for(content: SaveContent) -> IO[bytes] | None:
+def file_object_for(content: Content) -> IO[bytes] | None:
     """The seekable file behind `content`, or `None` when there is not one.
 
     For a consumer whose own client takes a file object and reads it itself. An
