@@ -153,6 +153,10 @@ pub enum Transport {
 }
 
 impl Transport {
+    /// Every transport there is, so the series for each can exist before one
+    /// has carried anything.
+    pub const ALL: [Self; 3] = [Self::Tcp, Self::Unix, Self::Quic];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Tcp => "tcp",
@@ -170,6 +174,8 @@ pub enum SocketProtocol {
 }
 
 impl SocketProtocol {
+    pub const ALL: [Self; 2] = [Self::WebSocket, Self::WebTransport];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::WebSocket => "websocket",
@@ -255,6 +261,41 @@ pub fn worker_started() {
         .unwrap_or(0);
     WORKER_STARTED.set(epoch_seconds);
     WORKER_DRAINING.set(0);
+    declare_known_series();
+}
+
+/// Create, at zero, every series whose labels are known before any traffic.
+///
+/// A labelled metric has no series until something observes one, and a metric
+/// with no series is absent from a scrape entirely -- no samples, and no `HELP`
+/// or `TYPE` either. A counter that appears only once it is non-zero is worse
+/// than useless to query: `rate()` over it returns nothing rather than zero,
+/// and an alert on its absence fires at exactly the wrong moment. The label
+/// sets here are small and known, so the series are made up front.
+///
+/// Requests are deliberately not among them: their labels include the route,
+/// and inventing a series for every route at startup is the unbounded version
+/// of this idea.
+fn declare_known_series() {
+    for transport in Transport::ALL {
+        CONNECTIONS
+            .with_label_values(&[transport.as_str()])
+            .inc_by(0);
+        CONNECTIONS_ACTIVE
+            .with_label_values(&[transport.as_str()])
+            .set(0);
+    }
+
+    for protocol in SocketProtocol::ALL {
+        for outcome in ["accepted", "refused"] {
+            SOCKETS
+                .with_label_values(&[protocol.as_str(), outcome])
+                .inc_by(0);
+        }
+        SOCKETS_ACTIVE
+            .with_label_values(&[protocol.as_str()])
+            .set(0);
+    }
 }
 
 /// Note that this worker has begun shutting down.
@@ -282,6 +323,40 @@ pub fn render() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_worker_that_has_served_nothing_still_exposes_what_it_can() {
+        // A scrape a moment after startup has to carry every metric whose
+        // labels are known, or a counter appears only once it is non-zero and
+        // nothing can be queried against it in the meantime.
+        worker_started();
+
+        let rendered = render();
+        for name in [
+            "nitro_connections_total",
+            "nitro_connections_active",
+            "nitro_sockets_total",
+            "nitro_sockets_active",
+        ] {
+            assert!(
+                rendered.contains(&format!("# HELP {name}")),
+                "{name} is missing"
+            );
+        }
+
+        // The series must exist; what it holds is another test's business, as
+        // the registry is shared by every test in this process.
+        for transport in Transport::ALL {
+            assert!(
+                rendered.contains(&format!(
+                    "nitro_connections_total{{transport=\"{}\"}}",
+                    transport.as_str()
+                )),
+                "{} has no series",
+                transport.as_str()
+            );
+        }
+    }
 
     #[test]
     fn status_codes_are_reported_by_class() {
