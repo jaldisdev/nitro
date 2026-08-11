@@ -238,6 +238,39 @@ Sending waits when the client is behind, so a producer faster than its reader is
 slowed rather than filling memory. How far ahead it may run is
 `STREAM_QUEUE_CAPACITY`.
 
+### An archive as it is built
+
+```python
+from nitro.utils.archives import zip_stream
+
+
+@app.route("/export")
+async def export(request: HttpRequest) -> HttpResponse:
+    members = {
+        "report.csv": await build_report(),
+        "photo.jpg": storage.open("photos/one.jpg"),
+    }
+    return StreamingResponse(zip_stream(members), content_type="application/zip")
+```
+
+A member is a name and its content — bytes, anything with a `read()`, or an
+async iterator — so an upload or a file in storage goes in without being loaded
+first. The archive is written into a sink that hands each piece straight on, so
+neither the ZIP nor any one file in it is ever held whole, and the client starts
+receiving it before the last member has been read.
+
+Compression happens in a thread, since it is the one genuinely expensive step
+and would otherwise stall the loop. `compression=zipfile.ZIP_STORED` turns it
+off for content that is already compressed, and `force_zip64=True` makes room
+for a member past 4 GiB.
+
+The same stream can be saved instead of sent, because
+[storage](storage.md) takes an async iterator too:
+
+```python
+await storage.save("exports/bundle.zip", zip_stream(members))
+```
+
 ### Templates
 
 ```python
