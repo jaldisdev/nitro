@@ -28,11 +28,13 @@ use nitro_core::router::{RouteMatch, RouteTable};
 use nitro_core::transport::{Dispatch, HttpRequest, HttpResponse, ResponseBody, WebSocketRequest};
 use nitro_core::webtransport::WebTransportRequest;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use pyo3_async_runtimes::TaskLocals;
 use tokio::sync::oneshot;
 
 use crate::protocol::{
-    FileRequest, HttpProtocol, PreparedBody, PreparedResponse, WsTransport, WtSession,
+    FileRequest, HandlerOutcome, HttpProtocol, PreparedBody, PreparedResponse, WsTransport,
+    WtSession,
 };
 use crate::scope::{HttpScope, WsScope, WtScope};
 
@@ -62,32 +64,56 @@ pub struct PythonDispatch {
     routes: Arc<RouteTable>,
     locals: TaskLocals,
     stream_capacity: usize,
+    /// Everything an HTTP request needs from Python, looked up once: the shim
+    /// that runs a handler, the loop's two scheduling methods, and the context
+    /// tasks are started in. Resolving these per request is several attribute
+    /// lookups on the hot path for values that never change.
+    http: Arc<HttpEntry>,
+}
+
+struct HttpEntry {
+    serve: Py<PyAny>,
+    call_soon_threadsafe: Py<PyAny>,
+    create_task: Py<PyAny>,
+    context: Py<PyAny>,
 }
 
 impl PythonDispatch {
     pub fn new(
+        python: Python<'_>,
         application: Py<PyAny>,
         routes: Arc<RouteTable>,
         locals: TaskLocals,
         stream_capacity: usize,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let event_loop = locals.event_loop(python);
+        let http = HttpEntry {
+            serve: python.import("nitro.app")?.getattr("serve_http")?.unbind(),
+            call_soon_threadsafe: event_loop.getattr("call_soon_threadsafe")?.unbind(),
+            create_task: event_loop.getattr("create_task")?.unbind(),
+            context: locals.context(python).clone().unbind(),
+        };
+        Ok(Self {
             application: Arc::new(application),
             routes,
             locals,
             stream_capacity,
-        }
+            http: Arc::new(http),
+        })
     }
 
-    /// Start the handler coroutine, returning a channel the response arrives on.
+    /// Hand the request to Python, returning the channel its outcome arrives on.
+    ///
+    /// The handler runs as one ordinary task on the event loop, started with the
+    /// loop's own `call_soon_threadsafe`, and everything the transport needs to
+    /// hear comes back over one channel: the response, or the fact that the
+    /// handler ended without sending one. Nothing here waits for the task
+    /// itself, which is what lets a handler send its response and keep working —
+    /// a streaming body outlives the response it belongs to.
     fn start_handler(
         &self,
         request: HttpRequest,
-    ) -> PyResult<(
-        oneshot::Receiver<PreparedResponse>,
-        impl Future<Output = ()> + Send + use<>,
-        Option<String>,
-    )> {
+    ) -> PyResult<(oneshot::Receiver<HandlerOutcome>, Option<String>)> {
         let (responder, receiver) = oneshot::channel();
 
         // Matching happens before the handler is built so the scope can carry
@@ -109,40 +135,34 @@ impl PythonDispatch {
             disconnect,
         } = request;
 
-        let coroutine = Python::attach(|python| -> PyResult<_> {
+        Python::attach(|python| -> PyResult<_> {
             let scope = Py::new(python, HttpScope::from_parts(python, parts, &matched)?)?;
             let protocol = Py::new(
                 python,
-                HttpProtocol::new(
-                    body,
-                    responder,
-                    disconnect,
-                    self.stream_capacity,
-                ),
+                HttpProtocol::new(body, responder, disconnect, self.stream_capacity),
             )?;
 
-            let application = self.application.bind(python);
-            let entry_point = if application.hasattr(HTTP_ENTRY_POINT)? {
-                application.getattr(HTTP_ENTRY_POINT)?
-            } else {
-                application.clone()
-            };
+            let coroutine = self.http.serve.bind(python).call1((
+                self.application.bind(python),
+                scope,
+                protocol,
+            ))?;
 
-            let awaitable = entry_point.call1((scope, protocol))?;
-            pyo3_async_runtimes::into_future_with_locals(&self.locals, awaitable)
+            // The context is passed rather than left to be copied here: this
+            // runs on a runtime thread, whose context is not the one the worker
+            // started in, and a task started from the wrong one would not see
+            // the context variables an application set at startup.
+            let arguments = (self.http.create_task.bind(python), coroutine);
+            let keywords = PyDict::new(python);
+            keywords.set_item("context", self.http.context.bind(python))?;
+            self.http
+                .call_soon_threadsafe
+                .bind(python)
+                .call(arguments, Some(&keywords))?;
+            Ok(())
         })?;
 
-        Ok((
-            receiver,
-            async move {
-                if let Err(error) = coroutine.await {
-                    Python::attach(|python| {
-                        tracing::error!(error = %error.value(python), "the HTTP handler raised");
-                    });
-                }
-            },
-            route,
-        ))
+        Ok((receiver, route))
     }
 }
 
@@ -265,7 +285,7 @@ impl PythonDispatch {
 
 impl Dispatch for PythonDispatch {
     async fn handle_http(&self, request: HttpRequest) -> HttpResponse {
-        let (mut receiver, handler, route) = match self.start_handler(request) {
+        let (receiver, route) = match self.start_handler(request) {
             Ok(started) => started,
             Err(error) => {
                 Python::attach(|python| {
@@ -275,27 +295,19 @@ impl Dispatch for PythonDispatch {
             }
         };
 
-        let mut handler = std::pin::pin!(tokio::spawn(handler));
-
-        // Preferring the response branch means a handler that answers and then
-        // returns in the same tick still has its answer used.
-        let response = tokio::select! {
-            biased;
-            prepared = &mut receiver => match prepared {
-                Ok(prepared) => to_response(prepared).await,
-                Err(_) => internal_error("the handler ended without sending a response"),
-            },
-            outcome = &mut handler => {
-                if let Err(error) = outcome
-                    && !error.is_cancelled()
-                {
-                    tracing::error!(%error, "the HTTP handler task failed");
-                }
-                match receiver.try_recv() {
-                    Ok(prepared) => to_response(prepared).await,
-                    Err(_) => internal_error("the handler ended without sending a response"),
-                }
+        // One await on one channel. Whichever way serving ended — a response, a
+        // return without one, a raise — the shim on the Python side says so, and
+        // a dropped sender covers the case where the task never ran at all.
+        let response = match receiver.await {
+            Ok(HandlerOutcome::Response(prepared)) => to_response(prepared).await,
+            Ok(HandlerOutcome::Ended) => {
+                internal_error("the handler ended without sending a response")
             }
+            Ok(HandlerOutcome::Failed(error)) => {
+                tracing::error!(%error, "the HTTP handler raised");
+                internal_error("the handler failed")
+            }
+            Err(_) => internal_error("the handler never ran"),
         };
 
         response.from_route(route)

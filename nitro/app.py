@@ -74,6 +74,27 @@ LifecycleCallback = Callable[[], Any]
 _PLAIN_TEXT = ("content-type", "text/plain; charset=utf-8")
 
 
+async def serve_http(application: Any, scope: Any, protocol: Any) -> None:
+    """Run `application`'s HTTP entry point and say how it ended.
+
+    The server schedules this on the event loop as one ordinary task, and hears
+    back through `protocol` — the response the handler sent, or the fact that it
+    returned or raised without sending one. That is the whole conversation, and
+    it is why the server does not also need a future for the handler itself.
+
+    The entry point answers its own exceptions; anything reaching here escaped
+    that, so there is nothing left to do but report it and let the transport
+    send a 500.
+    """
+    try:
+        await application.__handle_http__(scope, protocol)
+    except BaseException as error:  # noqa: BLE001 — reported, not swallowed
+        logger.exception("serving a request failed")
+        protocol._handler_failed(f"{type(error).__name__}: {error}")
+    else:
+        protocol._handler_ended()
+
+
 def _full_path(scope: Any) -> str:
     """The path a request asked for, query string included."""
     path = getattr(scope, "path", "/")

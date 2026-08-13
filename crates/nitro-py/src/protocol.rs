@@ -66,6 +66,22 @@ pub struct PreparedResponse {
     pub body: PreparedBody,
 }
 
+/// How serving a request ended, which is either a response or an explanation of
+/// why there is not one.
+///
+/// One channel rather than two: the transport is waiting for exactly one of
+/// these, and a handler that returns without answering has to be told apart from
+/// one that is still running, or the request would wait for a response nobody is
+/// going to send.
+#[derive(Debug)]
+pub enum HandlerOutcome {
+    Response(PreparedResponse),
+    /// The handler returned without sending anything.
+    Ended,
+    /// The handler raised, and the application did not turn it into a response.
+    Failed(String),
+}
+
 /// Request body state. Reading it is destructive, so a body that has been
 /// consumed reads as empty rather than raising — a handler that reads twice is
 /// usually doing so defensively.
@@ -168,7 +184,7 @@ where
 #[pyclass(name = "HttpProtocol", module = "nitro._nitro")]
 pub struct HttpProtocol {
     body: Arc<tokio::sync::Mutex<BodyReader>>,
-    responder: Arc<Mutex<Option<oneshot::Sender<PreparedResponse>>>>,
+    responder: Arc<Mutex<Option<oneshot::Sender<HandlerOutcome>>>>,
     disconnect: DisconnectWatcher,
     stream_capacity: usize,
 }
@@ -176,7 +192,7 @@ pub struct HttpProtocol {
 impl HttpProtocol {
     pub fn new(
         body: RequestBody,
-        responder: oneshot::Sender<PreparedResponse>,
+        responder: oneshot::Sender<HandlerOutcome>,
         disconnect: DisconnectWatcher,
         stream_capacity: usize,
     ) -> Self {
@@ -191,17 +207,27 @@ impl HttpProtocol {
     /// Hand a response to the transport. Only the first one is accepted; a
     /// second is a handler bug and is reported rather than silently ignored.
     fn respond(&self, response: PreparedResponse) -> PyResult<()> {
+        self.finish(HandlerOutcome::Response(response), true)
+    }
+
+    /// Report how the handler ended, for the cases where nothing was sent.
+    fn finish(&self, outcome: HandlerOutcome, complain: bool) -> PyResult<()> {
         let sender = match self.responder.lock() {
             Ok(mut responder) => responder.take(),
             Err(poisoned) => poisoned.into_inner().take(),
         };
 
         let Some(sender) = sender else {
-            return Err(PyRuntimeError::new_err(
-                "a response has already been sent for this request",
-            ));
+            // Ending after answering is the ordinary case: the handler returns
+            // once its response is on the way. Only a second *response* is a bug.
+            if complain {
+                return Err(PyRuntimeError::new_err(
+                    "a response has already been sent for this request",
+                ));
+            }
+            return Ok(());
         };
-        if sender.send(response).is_err() {
+        if sender.send(outcome).is_err() {
             tracing::debug!("response discarded because the connection had already closed");
         }
         Ok(())
@@ -224,6 +250,19 @@ fn body_error(error: BodyError) -> PyErr {
 
 #[pymethods]
 impl HttpProtocol {
+    /// Called by the shim that runs a handler, once it has returned. Ignored
+    /// when a response was already sent, which is the ordinary case.
+    fn _handler_ended(&self) -> PyResult<()> {
+        self.finish(HandlerOutcome::Ended, false)
+    }
+
+    /// Called by the shim that runs a handler when it raised instead of
+    /// answering. The transport turns this into a 500; the application has
+    /// already had its chance to handle the exception itself.
+    fn _handler_failed(&self, error: String) -> PyResult<()> {
+        self.finish(HandlerOutcome::Failed(error), false)
+    }
+
     /// `await protocol()` — the rest of the request body as one value.
     fn __call__<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let body = Arc::clone(&self.body);
