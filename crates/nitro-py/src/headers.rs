@@ -37,6 +37,11 @@ pub struct Headers {
 }
 
 impl Headers {
+    /// Wrap headers that are already shared, without copying them.
+    pub fn from_shared(inner: Arc<CoreHeaders>) -> Self {
+        Self { inner }
+    }
+
     pub fn new(inner: CoreHeaders) -> Self {
         Self {
             inner: Arc::new(inner),

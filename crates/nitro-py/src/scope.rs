@@ -24,7 +24,10 @@
 //! shape of a request is discoverable.
 
 use std::net::SocketAddr;
+use std::sync::{Arc, OnceLock};
 
+use http::{Method, Uri};
+use nitro_core::headers::Headers as CoreHeaders;
 use nitro_core::router::RouteMatch;
 use nitro_core::transport::RequestParts;
 use pyo3::prelude::*;
@@ -36,6 +39,14 @@ fn address_pair(address: Option<SocketAddr>) -> Option<(String, u16)> {
     address.map(|address| (address.ip().to_string(), address.port()))
 }
 
+/// What a handler is told about a request.
+///
+/// The request's own types are moved in and turned into Python values as they
+/// are asked for, rather than up front. A scope is built for every request and
+/// most of it is read by none of them: a handler that answers from the path
+/// alone has no use for a formatted peer address, and formatting one anyway is
+/// two allocations and an address-to-text conversion per request. The cost of
+/// asking is a getter call, and only whoever asks pays it.
 #[pyclass(name = "HttpScope", module = "nitro._nitro", frozen)]
 pub struct HttpScope {
     #[pyo3(get)]
@@ -43,23 +54,17 @@ pub struct HttpScope {
     #[pyo3(get)]
     pub http_version: &'static str,
     #[pyo3(get)]
-    pub method: String,
-    #[pyo3(get)]
-    pub path: String,
-    #[pyo3(get)]
-    pub query_string: String,
-    #[pyo3(get)]
     pub scheme: &'static str,
-    #[pyo3(get)]
-    pub authority: Option<String>,
-    /// The address the request arrived on, absent on a Unix domain socket.
-    #[pyo3(get)]
-    pub server: Option<(String, u16)>,
-    /// The peer's address, absent on a Unix domain socket.
-    #[pyo3(get)]
-    pub client: Option<(String, u16)>,
-    #[pyo3(get)]
-    pub headers: Py<Headers>,
+    method: Method,
+    /// Holds the path, the query string and the authority between them, so all
+    /// three cost nothing until one is read.
+    uri: Uri,
+    server: Option<SocketAddr>,
+    client: Option<SocketAddr>,
+    headers: Arc<CoreHeaders>,
+    /// The Python view of the headers, built the first time one is asked for.
+    /// Shared with the map above rather than copied from it.
+    headers_object: OnceLock<Py<Headers>>,
     /// The route that answers this request, or `None` when none does.
     #[pyo3(get)]
     pub route_id: Option<u64>,
@@ -71,6 +76,64 @@ pub struct HttpScope {
     /// methods that would have worked. Empty otherwise.
     #[pyo3(get)]
     pub allowed_methods: Py<PyTuple>,
+}
+
+#[pymethods]
+impl HttpScope {
+    #[getter]
+    fn method(&self) -> &str {
+        self.method.as_str()
+    }
+
+    #[getter]
+    fn path(&self) -> &str {
+        self.uri.path()
+    }
+
+    #[getter]
+    fn query_string(&self) -> &str {
+        self.uri.query().unwrap_or("")
+    }
+
+    #[getter]
+    fn authority(&self) -> Option<&str> {
+        self.uri.authority().map(|authority| authority.as_str())
+    }
+
+    /// The address the request arrived on, absent on a Unix domain socket.
+    #[getter]
+    fn server(&self) -> Option<(String, u16)> {
+        address_pair(self.server)
+    }
+
+    /// The peer's address, absent on a Unix domain socket.
+    #[getter]
+    fn client(&self) -> Option<(String, u16)> {
+        address_pair(self.client)
+    }
+
+    #[getter]
+    fn headers(&self, python: Python<'_>) -> PyResult<Py<Headers>> {
+        if let Some(headers) = self.headers_object.get() {
+            return Ok(headers.clone_ref(python));
+        }
+        let headers = Py::new(python, Headers::from_shared(Arc::clone(&self.headers)))?;
+        // A race here means one of the two objects is dropped and the other is
+        // used by both, which is the same headers either way.
+        Ok(self
+            .headers_object
+            .get_or_init(|| headers)
+            .clone_ref(python))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HttpScope(method={:?}, path={:?}, http_version={:?})",
+            self.method.as_str(),
+            self.uri.path(),
+            self.http_version
+        )
+    }
 }
 
 impl HttpScope {
@@ -106,28 +169,17 @@ impl HttpScope {
         Ok(Self {
             proto: "http",
             http_version: parts.http_version(),
-            method: parts.method.as_str().to_owned(),
-            path: parts.path().to_owned(),
-            query_string: parts.query().to_owned(),
             scheme: parts.scheme.as_str(),
-            authority: parts.authority().map(str::to_owned),
-            server: address_pair(parts.server),
-            client: address_pair(parts.client),
-            headers: Py::new(python, Headers::new(parts.headers))?,
+            method: parts.method,
+            uri: parts.uri,
+            server: parts.server,
+            client: parts.client,
+            headers: Arc::new(parts.headers),
+            headers_object: OnceLock::new(),
             route_id,
             path_params: path_params.unbind(),
             allowed_methods: PyTuple::new(python, allowed)?.unbind(),
         })
-    }
-}
-
-#[pymethods]
-impl HttpScope {
-    fn __repr__(&self) -> String {
-        format!(
-            "HttpScope(method={:?}, path={:?}, http_version={:?})",
-            self.method, self.path, self.http_version
-        )
     }
 }
 
