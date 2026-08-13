@@ -173,6 +173,49 @@ impl Server {
     }
 }
 
+thread_local! {
+    /// The thread state this runtime thread keeps for its lifetime, and the one
+    /// it was running under before it gave the interpreter lock back.
+    static ATTACHED: std::cell::Cell<Option<(pyo3::ffi::PyGILState_STATE, *mut pyo3::ffi::PyThreadState)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Give every runtime thread a thread state that outlives the calls it makes.
+///
+/// Without this, a thread Python did not create pays for one on every call into
+/// the interpreter: `Python::attach` ends in `PyGILState_Release`, which deletes
+/// the state it had to create, and deleting it unmaps the data stack CPython
+/// allocated for it. That is two system calls per request, and at the rates this
+/// server is meant to serve they are a measurable fraction of what a request
+/// costs.
+///
+/// Holding the state open costs nothing while the thread is idle: the lock is
+/// handed straight back with `PyEval_SaveThread`, so what survives is the state,
+/// not the lock. `PyGILState_Ensure` then finds it already there and returns
+/// without allocating.
+fn attach_runtime_threads(builder: &mut tokio::runtime::Builder) {
+    builder
+        .on_thread_start(|| {
+            // SAFETY: the interpreter is initialised -- this runs on a thread
+            // the runtime started from `run_worker`, which holds the lock.
+            unsafe {
+                let state = pyo3::ffi::PyGILState_Ensure();
+                let saved = pyo3::ffi::PyEval_SaveThread();
+                ATTACHED.set(Some((state, saved)));
+            }
+        })
+        .on_thread_stop(|| {
+            if let Some((state, saved)) = ATTACHED.take() {
+                // SAFETY: paired with the `Ensure` above, on the same thread,
+                // and nothing else has released this thread's state since.
+                unsafe {
+                    pyo3::ffi::PyEval_RestoreThread(saved);
+                    pyo3::ffi::PyGILState_Release(state);
+                }
+            }
+        });
+}
+
 /// Run the server in this process: build the runtime, construct the event loop,
 /// run the startup hook, serve, then run the shutdown hook.
 fn run_worker(
@@ -185,6 +228,7 @@ fn run_worker(
 ) -> PyResult<DrainOutcome> {
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder.worker_threads(config.runtime_threads).enable_all();
+    attach_runtime_threads(&mut builder);
     pyo3_async_runtimes::tokio::init(builder);
 
     let asyncio = python.import("asyncio")?;
