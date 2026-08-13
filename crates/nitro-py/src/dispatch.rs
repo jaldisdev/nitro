@@ -75,7 +75,9 @@ struct HttpEntry {
     serve: Py<PyAny>,
     call_soon_threadsafe: Py<PyAny>,
     create_task: Py<PyAny>,
-    context: Py<PyAny>,
+    /// `context=` for the scheduling call, built once because it never varies:
+    /// every request starts its task in the context the worker started in.
+    keywords: Py<PyDict>,
 }
 
 impl PythonDispatch {
@@ -87,11 +89,13 @@ impl PythonDispatch {
         stream_capacity: usize,
     ) -> PyResult<Self> {
         let event_loop = locals.event_loop(python);
+        let keywords = PyDict::new(python);
+        keywords.set_item("context", locals.context(python))?;
         let http = HttpEntry {
             serve: python.import("nitro.app")?.getattr("serve_http")?.unbind(),
             call_soon_threadsafe: event_loop.getattr("call_soon_threadsafe")?.unbind(),
             create_task: event_loop.getattr("create_task")?.unbind(),
-            context: locals.context(python).clone().unbind(),
+            keywords: keywords.unbind(),
         };
         Ok(Self {
             application: Arc::new(application),
@@ -153,12 +157,10 @@ impl PythonDispatch {
             // started in, and a task started from the wrong one would not see
             // the context variables an application set at startup.
             let arguments = (self.http.create_task.bind(python), coroutine);
-            let keywords = PyDict::new(python);
-            keywords.set_item("context", self.http.context.bind(python))?;
             self.http
                 .call_soon_threadsafe
                 .bind(python)
-                .call(arguments, Some(&keywords))?;
+                .call(arguments, Some(self.http.keywords.bind(python)))?;
             Ok(())
         })?;
 
