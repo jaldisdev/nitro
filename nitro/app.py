@@ -38,7 +38,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
-from nitro.di import DependencyCache, cache_for, resolve_dependencies
+from nitro.di import cache_for, existing_cache, resolve_dependencies
 from nitro.middleware.stack import MiddlewareStack
 from nitro.protocols.exceptions import (
     ExceptionHandlerRegistry,
@@ -113,19 +113,22 @@ def served_addresses(server: Any, options: ServerOptions) -> list[str]:
     return [f"{scheme}://{host}:{port}" for host, port in server.addresses]
 
 
-async def _dependencies(route: Route, context: Any, cache: DependencyCache) -> dict[str, Any]:
+async def _dependencies(route: Route, context: Any) -> dict[str, Any]:
     """Values for the parameters `route`'s handler wants injected.
 
     The graph was read when the route was registered, so nothing is inspected
-    here. `cache` spans one request, which is what makes a dependency named
+    here. The cache spans one request, which is what makes a dependency named
     twice in one request resolve once — and, because it belongs to the call
     rather than to the route, what stops one request seeing another's values.
     It also holds whatever the dependencies left open, so the caller drains it
     when the work it was made for is over.
+
+    A route with nothing to inject never asks for a cache, so it never makes
+    one: the common request pays for none of this.
     """
     if not route.dependencies:
         return {}
-    return await resolve_dependencies(route.dependencies, context, cache)
+    return await resolve_dependencies(route.dependencies, context, cache_for(context))
 
 
 async def _served(connection: Any, work: Any) -> Any:
@@ -144,7 +147,9 @@ async def _served(connection: Any, work: Any) -> Any:
         failure = error
         raise
     finally:
-        await cache_for(connection).aclose(failure)
+        cache = existing_cache(connection)
+        if cache is not None:
+            await cache.aclose(failure)
 
 
 def _is_async_callable(handler: Any) -> bool:
@@ -409,7 +414,7 @@ class Nitro:
             return
 
         try:
-            parameters = route.convert(dict(scope.path_params))
+            parameters = route.convert(scope.path_params)
         except (ValueError, TypeError):
             # The matcher accepted the text but the converter could not turn it
             # into a value, so as far as the application is concerned the path
@@ -421,7 +426,7 @@ class Nitro:
         request = HttpRequest(scope, protocol, parameters)
 
         async def call_handler(request: HttpRequest) -> Any:
-            supplied = await _dependencies(route, request, cache_for(request))
+            supplied = await _dependencies(route, request)
             return await route.handler(request, **supplied, **parameters)
 
         try:
@@ -535,7 +540,7 @@ class Nitro:
             return
 
         try:
-            parameters = route.convert(dict(scope.path_params))
+            parameters = route.convert(scope.path_params)
         except (ValueError, TypeError):
             logger.debug("path parameters for %s could not be converted", scope.path, exc_info=True)
             await transport.reject(404, "Not Found")
@@ -544,7 +549,7 @@ class Nitro:
         socket = WebSocket(scope, transport, parameters)
 
         async def call_handler(socket: WebSocket) -> None:
-            supplied = await _dependencies(route, socket, cache_for(socket))
+            supplied = await _dependencies(route, socket)
             await route.handler(socket, **supplied, **parameters)
 
         try:
@@ -573,7 +578,7 @@ class Nitro:
             return
 
         try:
-            parameters = route.convert(dict(scope.path_params))
+            parameters = route.convert(scope.path_params)
         except (ValueError, TypeError):
             logger.debug("path parameters for %s could not be converted", scope.path, exc_info=True)
             await session.reject(404)
@@ -582,7 +587,7 @@ class Nitro:
         connection = WebTransportSession(scope, session, parameters)
 
         async def call_handler(connection: WebTransportSession) -> None:
-            supplied = await _dependencies(route, connection, cache_for(connection))
+            supplied = await _dependencies(route, connection)
             await route.handler(connection, **supplied, **parameters)
 
         try:

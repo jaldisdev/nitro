@@ -247,6 +247,20 @@ def cache_for(connection: Any) -> DependencyCache:
     return getattr(state, _CACHE_ATTRIBUTE)
 
 
+def existing_cache(connection: Any) -> DependencyCache | None:
+    """The cache `connection` already has, or `None` if nothing made one.
+
+    :func:`cache_for` creates one on the way past, which is right for something
+    about to resolve a dependency and wrong for something only tidying up after
+    a request: a route with no dependencies would allocate a cache, and open
+    nothing in it, purely to have something to close.
+    """
+    state = getattr(connection, "state", None)
+    if state is None or _CACHE_ATTRIBUTE not in state:
+        return None
+    return getattr(state, _CACHE_ATTRIBUTE)
+
+
 def reset_worker_dependencies() -> None:
     """Forget everything worker-scoped, without releasing it.
 
