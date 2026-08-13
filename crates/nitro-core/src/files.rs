@@ -191,10 +191,20 @@ impl OpenFile {
 
         Ok(FileBody {
             remaining: range.length(),
-            stream: ReaderStream::new(self.file),
+            stream: ReaderStream::with_capacity(self.file, READ_CHUNK),
         })
     }
 }
+
+/// How much of a file to ask for at once.
+///
+/// Every read from a `tokio::fs::File` is handed to a blocking thread and waited
+/// on, so the read size decides how many times serving one file crosses between
+/// threads: at the 4 KiB the reader stream uses by default, a 50 KiB file costs
+/// thirteen crossings, and the waiting dominates the reading. Large enough that
+/// an ordinary file is one read, small enough that a response holds one buffer
+/// of this size rather than the file.
+const READ_CHUNK: usize = 64 * 1024;
 
 /// A response body that reads from a file as it is sent.
 #[derive(Debug)]
