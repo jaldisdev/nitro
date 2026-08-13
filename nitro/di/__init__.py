@@ -145,6 +145,12 @@ class DependencyParam:
     depends: Depends
     sub_dependencies: dict[str, DependencyParam] = field(default_factory=dict)
 
+    #: The parameters this dependency asks for by name — ``request``, ``socket``,
+    #: ``session`` or ``scope``. Read when the graph is, because reading it is
+    #: :func:`inspect.signature`, and doing that once per request per dependency
+    #: costs more than everything else resolving one of them does.
+    context_parameters: tuple[str, ...] = ()
+
 
 class DependencyCache:
     """Resolved values for the span of one request, and what they left open.
@@ -355,6 +361,7 @@ def _extract(
             name=name,
             depends=depends,
             sub_dependencies=_extract(depends.dependency, (*ancestry, function)),
+            context_parameters=tuple(_context_parameters(depends.dependency)),
         )
     return found
 
@@ -402,7 +409,7 @@ async def _resolve_one(
         arguments[name] = await _resolve_one(sub, context, cache)
 
     # A dependency may ask for the request, socket or session by naming it.
-    for name in _context_parameters(depends.dependency):
+    for name in parameter.context_parameters:
         arguments[name] = context
 
     result = depends.dependency(**arguments)
