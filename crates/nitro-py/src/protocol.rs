@@ -19,9 +19,11 @@
 
 //! The object a handler answers a request through.
 
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 
 use bytes::Bytes;
 use http::StatusCode;
@@ -35,7 +37,7 @@ use nitro_core::websocket::{
 use nitro_core::webtransport::{
     IncomingStream, ReceiveHalf, SendHalf, SessionHandle, WebTransportError, WebTransportSession,
 };
-use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use tokio::sync::oneshot;
@@ -92,6 +94,74 @@ impl BodyReader {
                 Ok(None)
             }
         }
+    }
+}
+
+/// An awaitable that already has its answer.
+///
+/// `await` on one of these never reaches the event loop: the iterator behind it
+/// stops on its first step, which is how a coroutine returns a value without
+/// suspending. That is the whole point of it — a value that is already in memory
+/// should not cost a trip through the loop to hand over.
+#[pyclass(name = "Ready", module = "nitro._nitro")]
+struct Ready {
+    value: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl Ready {
+    fn __await__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    fn __iter__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> PyResult<()> {
+        // `StopIteration(value)` is how an iterator hands a value to `await`.
+        Err(match self.value.take() {
+            Some(value) => PyStopIteration::new_err(value),
+            None => PyStopIteration::new_err(()),
+        })
+    }
+}
+
+/// Hand `future` to Python as an awaitable, without involving the event loop if
+/// it turns out to have finished already.
+///
+/// Polling once costs a poll. Not polling costs a scheduled callback on the loop
+/// thread, the wake-up that delivers it and the hop back — which for a body that
+/// arrived with the request, and is sitting in memory when the handler asks for
+/// it, is the entire cost of reading it.
+fn ready_or_scheduled<'py, F>(python: Python<'py>, future: F) -> PyResult<Bound<'py, PyAny>>
+where
+    F: Future<Output = PyResult<Py<PyAny>>> + Send + 'static,
+{
+    let mut future = Box::pin(future);
+
+    // Entered so that a future which registers with the reactor or the timer
+    // finds them, exactly as it would when polled by the runtime itself.
+    let runtime = pyo3_async_runtimes::tokio::get_runtime();
+    let polled = {
+        let _guard = runtime.enter();
+        future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+    };
+
+    match polled {
+        // The waker was never given anything to wake, and the future is done, so
+        // there is nothing left for the loop to do.
+        Poll::Ready(result) => Ok(Ready {
+            value: Some(result?),
+        }
+        .into_pyobject(python)?
+        .into_any()),
+        // Polled once with a waker that does nothing, which a future must
+        // tolerate: the runtime polls it again below with a real one, and the
+        // most recent waker is the one that counts.
+        Poll::Pending => pyo3_async_runtimes::tokio::future_into_py(python, future),
     }
 }
 
@@ -157,9 +227,9 @@ impl HttpProtocol {
     /// `await protocol()` — the rest of the request body as one value.
     fn __call__<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let body = Arc::clone(&self.body);
-        pyo3_async_runtimes::tokio::future_into_py(python, async move {
+        ready_or_scheduled(python, async move {
             let chunk = body.lock().await.read_all().await.map_err(body_error)?;
-            Python::attach(|python| Ok(PyBytes::new(python, &chunk).unbind()))
+            Python::attach(|python| Ok(PyBytes::new(python, &chunk).into_any().unbind()))
         })
     }
 
