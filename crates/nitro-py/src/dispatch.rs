@@ -103,17 +103,20 @@ impl PythonDispatch {
             _ => None,
         };
 
+        let HttpRequest {
+            parts,
+            body,
+            disconnect,
+        } = request;
+
         let coroutine = Python::attach(|python| -> PyResult<_> {
-            let scope = Py::new(
-                python,
-                HttpScope::from_parts(python, &request.parts, &matched)?,
-            )?;
+            let scope = Py::new(python, HttpScope::from_parts(python, parts, &matched)?)?;
             let protocol = Py::new(
                 python,
                 HttpProtocol::new(
-                    request.body,
+                    body,
                     responder,
-                    request.disconnect,
+                    disconnect,
                     self.stream_capacity,
                 ),
             )?;

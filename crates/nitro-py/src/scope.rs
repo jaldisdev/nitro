@@ -74,9 +74,13 @@ pub struct HttpScope {
 }
 
 impl HttpScope {
+    /// Takes the request's parts rather than borrowing them, so the headers can
+    /// be moved into the scope. Cloning them was a copy of the whole map on
+    /// every request, paid whether or not the handler ever read a header, and
+    /// nothing on the Rust side reads them once the scope exists.
     pub fn from_parts(
         python: Python<'_>,
-        parts: &RequestParts,
+        parts: RequestParts,
         matched: &RouteMatch,
     ) -> PyResult<Self> {
         let path_params = PyDict::new(python);
@@ -109,7 +113,7 @@ impl HttpScope {
             authority: parts.authority().map(str::to_owned),
             server: address_pair(parts.server),
             client: address_pair(parts.client),
-            headers: Py::new(python, Headers::new(parts.headers.clone()))?,
+            headers: Py::new(python, Headers::new(parts.headers))?,
             route_id,
             path_params: path_params.unbind(),
             allowed_methods: PyTuple::new(python, allowed)?.unbind(),
