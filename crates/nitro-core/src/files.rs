@@ -134,6 +134,8 @@ pub struct OpenFile {
     pub modified: Option<SystemTime>,
     pub content_type: String,
     file: tokio::fs::File,
+    /// The whole file, when it was small enough to read while it was open.
+    loaded: Option<Bytes>,
 }
 
 impl OpenFile {
@@ -147,14 +149,26 @@ impl OpenFile {
         let opened = tokio::task::spawn_blocking({
             let path = path.clone();
             move || {
-                let file = std::fs::File::open(&path)?;
+                use std::io::Read;
+
+                let mut file = std::fs::File::open(&path)?;
                 let metadata = file.metadata()?;
-                Ok::<_, std::io::Error>((file, metadata))
+                // Small enough to read here, where the thread has already been
+                // borrowed and the file is already open. Reading it later would
+                // cost a second visit for what one read answers.
+                let loaded = if metadata.is_file() && metadata.len() <= LOAD_WHOLE {
+                    let mut contents = Vec::with_capacity(metadata.len() as usize);
+                    file.read_to_end(&mut contents)?;
+                    Some(Bytes::from(contents))
+                } else {
+                    None
+                };
+                Ok::<_, std::io::Error>((file, metadata, loaded))
             }
         })
         .await;
 
-        let (file, metadata) = match opened {
+        let (file, metadata, loaded) = match opened {
             Ok(Ok(opened)) => opened,
             Ok(Err(source)) => {
                 return Err(FileError::Open {
@@ -184,6 +198,7 @@ impl OpenFile {
             content_type,
             path,
             file,
+            loaded,
         })
     }
 
@@ -197,6 +212,18 @@ impl OpenFile {
     /// An unsatisfiable range produces an empty body; the caller is responsible
     /// for pairing it with the right status.
     pub async fn into_body(mut self, range: ResolvedRange) -> Result<FileBody, FileError> {
+        if let Some(loaded) = self.loaded {
+            let start = match range {
+                ResolvedRange::Partial { start, .. } => start as usize,
+                _ => 0,
+            };
+            let start = start.min(loaded.len());
+            return Ok(FileBody {
+                remaining: range.length(),
+                source: FileSource::Loaded(Some(loaded.slice(start..))),
+            });
+        }
+
         if let ResolvedRange::Partial { start, .. } = range
             && start > 0
         {
@@ -211,7 +238,7 @@ impl OpenFile {
 
         Ok(FileBody {
             remaining: range.length(),
-            stream: ReaderStream::with_capacity(self.file, READ_CHUNK),
+            source: FileSource::Streaming(ReaderStream::with_capacity(self.file, READ_CHUNK)),
         })
     }
 }
@@ -226,11 +253,30 @@ impl OpenFile {
 /// of this size rather than the file.
 const READ_CHUNK: usize = 64 * 1024;
 
+/// Files up to this size are read whole while they are opened.
+///
+/// The same size as a read, deliberately: a file served by streaming already
+/// holds a buffer this large for the length of the response, so reading one
+/// this small in full costs no more memory than sending it would have. Anything
+/// larger is still read as it is sent, which is what keeps a response's cost
+/// independent of the size of the file.
+const LOAD_WHOLE: u64 = READ_CHUNK as u64;
+
 /// A response body that reads from a file as it is sent.
 #[derive(Debug)]
 pub struct FileBody {
     remaining: u64,
-    stream: ReaderStream<tokio::fs::File>,
+    source: FileSource,
+}
+
+/// Where the bytes of a file response come from.
+#[derive(Debug)]
+enum FileSource {
+    /// Already in memory: a file small enough to have been read in the same
+    /// visit to a blocking thread that opened it, which is one visit rather
+    /// than two and is most of what serving a small file costs.
+    Loaded(Option<Bytes>),
+    Streaming(ReaderStream<tokio::fs::File>),
 }
 
 impl FileBody {
@@ -252,7 +298,21 @@ impl Body for FileBody {
             return Poll::Ready(None);
         }
 
-        match Pin::new(&mut this.stream).poll_next(context) {
+        let stream = match &mut this.source {
+            FileSource::Loaded(loaded) => {
+                let Some(mut chunk) = loaded.take() else {
+                    return Poll::Ready(None);
+                };
+                if chunk.len() as u64 > this.remaining {
+                    chunk.truncate(this.remaining as usize);
+                }
+                this.remaining -= chunk.len() as u64;
+                return Poll::Ready(Some(Ok(Frame::data(chunk))));
+            }
+            FileSource::Streaming(stream) => stream,
+        };
+
+        match Pin::new(stream).poll_next(context) {
             Poll::Ready(Some(Ok(mut chunk))) => {
                 // The reader does not know where the range ends, so the last
                 // chunk is trimmed to it.
