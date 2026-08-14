@@ -139,20 +139,40 @@ pub struct OpenFile {
 impl OpenFile {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, FileError> {
         let path = path.as_ref().to_path_buf();
-        let file = tokio::fs::File::open(&path)
-            .await
-            .map_err(|source| FileError::Open {
-                path: path.clone(),
-                source,
-            })?;
 
-        let metadata = file.metadata().await.map_err(|source| FileError::Open {
-            path: path.clone(),
-            source,
-        })?;
+        // Opening a file and asking what it is are both blocking calls, and
+        // each one made on its own is a trip to a blocking thread and back.
+        // Asked together they cost one trip, which is worth more than either
+        // call: the handoff is the expensive part.
+        let opened = tokio::task::spawn_blocking({
+            let path = path.clone();
+            move || {
+                let file = std::fs::File::open(&path)?;
+                let metadata = file.metadata()?;
+                Ok::<_, std::io::Error>((file, metadata))
+            }
+        })
+        .await;
+
+        let (file, metadata) = match opened {
+            Ok(Ok(opened)) => opened,
+            Ok(Err(source)) => {
+                return Err(FileError::Open {
+                    path: path.clone(),
+                    source,
+                });
+            }
+            Err(error) => {
+                return Err(FileError::Open {
+                    path: path.clone(),
+                    source: std::io::Error::other(error),
+                });
+            }
+        };
         if !metadata.is_file() {
             return Err(FileError::NotAFile { path });
         }
+        let file = tokio::fs::File::from_std(file);
 
         let content_type = mime_guess::from_path(&path)
             .first_or_octet_stream()
