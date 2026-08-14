@@ -39,6 +39,7 @@ use nitro_core::webtransport::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration, PyValueError};
 use pyo3::prelude::*;
+use pyo3::pybacked::PyBackedStr;
 use pyo3::types::PyBytes;
 use tokio::sync::oneshot;
 
@@ -237,7 +238,7 @@ impl HttpProtocol {
     }
 }
 
-fn build_headers(pairs: Vec<(String, String)>) -> PyResult<CoreHeaders> {
+fn build_headers(pairs: Vec<(PyBackedStr, PyBackedStr)>) -> PyResult<CoreHeaders> {
     let mut headers = CoreHeaders::new();
     for (name, value) in pairs {
         headers
@@ -311,7 +312,11 @@ impl HttpProtocol {
     }
 
     #[pyo3(signature = (status, headers=Vec::new()))]
-    fn response_empty(&self, status: u16, headers: Vec<(String, String)>) -> PyResult<()> {
+    fn response_empty(
+        &self,
+        status: u16,
+        headers: Vec<(PyBackedStr, PyBackedStr)>,
+    ) -> PyResult<()> {
         self.respond(PreparedResponse {
             status,
             headers: build_headers(headers)?,
@@ -323,7 +328,7 @@ impl HttpProtocol {
     fn response_bytes(
         &self,
         status: u16,
-        headers: Vec<(String, String)>,
+        headers: Vec<(PyBackedStr, PyBackedStr)>,
         body: Vec<u8>,
     ) -> PyResult<()> {
         self.respond(PreparedResponse {
@@ -337,7 +342,7 @@ impl HttpProtocol {
     fn response_str(
         &self,
         status: u16,
-        headers: Vec<(String, String)>,
+        headers: Vec<(PyBackedStr, PyBackedStr)>,
         body: String,
     ) -> PyResult<()> {
         self.respond(PreparedResponse {
@@ -356,7 +361,7 @@ impl HttpProtocol {
     fn response_file(
         &self,
         status: u16,
-        headers: Vec<(String, String)>,
+        headers: Vec<(PyBackedStr, PyBackedStr)>,
         path: String,
     ) -> PyResult<()> {
         self.respond(PreparedResponse {
@@ -380,7 +385,7 @@ impl HttpProtocol {
     fn response_file_range(
         &self,
         status: u16,
-        headers: Vec<(String, String)>,
+        headers: Vec<(PyBackedStr, PyBackedStr)>,
         path: String,
         start: u64,
         end: Option<u64>,
@@ -403,7 +408,7 @@ impl HttpProtocol {
         &self,
         python: Python<'_>,
         status: u16,
-        headers: Vec<(String, String)>,
+        headers: Vec<(PyBackedStr, PyBackedStr)>,
     ) -> PyResult<Py<StreamTransport>> {
         let (sender, body) = streaming::channel(self.stream_capacity);
         self.respond(PreparedResponse {
