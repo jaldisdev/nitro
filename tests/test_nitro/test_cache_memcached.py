@@ -49,10 +49,13 @@ async def cache():
     backend = MemcachedCache(LOCATION, {"TIMEOUT": 300, "KEY_PREFIX": "nitro-test", "OPTIONS": {}})
     try:
         await backend._connect()
+        # Connecting is not the same as answering: a server that accepts and
+        # then says nothing gets past the connect and fails here instead, which
+        # is still a server these tests cannot run against.
+        await backend.clear()
     except Exception as error:
-        pytest.skip(f"no memcached at {LOCATION}: {error}")
+        pytest.skip(f"no usable memcached at {LOCATION}: {error}")
 
-    await backend.clear()
     yield backend
     await backend.clear()
     await backend.close()
@@ -106,8 +109,9 @@ class TestValues:
         backend = MemcachedCache(LOCATION, {"OPTIONS": {"SERIALIZER": "pickle"}})
         try:
             await backend._connect()
+            await backend.clear()
         except Exception as error:
-            pytest.skip(f"no memcached at {LOCATION}: {error}")
+            pytest.skip(f"no usable memcached at {LOCATION}: {error}")
 
         try:
             await backend.set("key", (1, 2))
