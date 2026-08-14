@@ -84,11 +84,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics: Vec::new(),
     };
 
-    // One worker thread, matching what the benchmark gives the real server.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()?;
+    // `st` builds a current-thread runtime, the shape Granian serves its
+    // single-threaded mode on; the default is what Nitro's server uses today.
+    let single_threaded = std::env::args().nth(2).as_deref() == Some("st");
+    let runtime = if single_threaded {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()?
+    };
 
     let controller = ShutdownController::new();
     let shutdown = controller.subscribe();
