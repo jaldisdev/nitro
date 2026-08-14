@@ -34,7 +34,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import http.cookies as http_cookies
-from nitro.utils import json as json_module
 import mimetypes
 import os
 from collections.abc import AsyncIterator, Iterable
@@ -45,6 +44,7 @@ from urllib.parse import parse_qsl, quote, urlencode
 # Safe at module level in this direction: the exceptions carry no import of
 # their own, and reach back for a response class only when one is being built.
 from nitro.protocols.exceptions import HttpBadRequest
+from nitro.utils import json as json_module
 
 __all__ = [
     "URL",

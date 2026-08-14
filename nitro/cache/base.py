@@ -17,10 +17,11 @@
 # limitations under the License.
 #
 
-from nitro.utils import json
 import pickle
 from abc import ABC, abstractmethod
 from typing import Any
+
+from nitro.utils import json
 
 __all__ = [
     "DEFAULT_TIMEOUT",

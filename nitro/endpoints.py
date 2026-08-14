@@ -18,7 +18,6 @@
 #
 
 import asyncio
-from nitro.utils import json as json_module
 import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any, Literal
@@ -28,6 +27,7 @@ from nitro.protocols.exceptions import HttpMethodNotAllowed
 from nitro.protocols.http import HttpRequest, HttpResponse
 from nitro.protocols.websocket import WebSocket, WebSocketDisconnect
 from nitro.protocols.webtransport import WebTransportDisconnect, WebTransportSession
+from nitro.utils import json as json_module
 
 logger = logging.getLogger("nitro.endpoints")
 

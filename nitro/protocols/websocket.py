@@ -27,12 +27,12 @@ middle of a loop.
 
 from __future__ import annotations
 
-from nitro.utils import json as json_module
 from collections.abc import AsyncIterator
 from enum import Enum
 from typing import Any
 
 from nitro.protocols.http import URL, Address, QueryParams, State
+from nitro.utils import json as json_module
 
 __all__ = ["WebSocket", "WebSocketDisconnect", "WebSocketState"]
 
