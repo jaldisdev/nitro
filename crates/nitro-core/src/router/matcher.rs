@@ -180,8 +180,8 @@ fn capture(
 ) -> Option<Vec<(String, String)>> {
     let mut parameters = Vec::with_capacity(route.parameters.len());
 
-    for (position, parameter) in route.parameters.iter().enumerate() {
-        let value = captured.get(format!("p{position}"))?;
+    for parameter in &route.parameters {
+        let value = captured.get(&parameter.placeholder)?;
         if !parameter.expression.is_match(value) {
             return None;
         }

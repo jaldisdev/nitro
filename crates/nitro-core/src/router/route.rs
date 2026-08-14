@@ -111,6 +111,9 @@ impl RouteDefinition {
 pub struct CompiledParameter {
     pub name: String,
     pub expression: Regex,
+    /// The placeholder this parameter was given in the template, which is what
+    /// a match is read back under.
+    pub placeholder: String,
 }
 
 /// A route ready to be matched against.
@@ -194,15 +197,17 @@ pub(crate) fn compile(definition: &RouteDefinition) -> Result<Compilation, Route
                 name: name.to_owned(),
             })?;
 
-        let placeholder = parameters.len();
+        let position = parameters.len();
+        let placeholder = format!("p{position}");
         if spec.greedy {
-            template.push_str(&format!("{{*p{placeholder}}}"));
+            template.push_str(&format!("{{*{placeholder}}}"));
         } else {
-            template.push_str(&format!("{{p{placeholder}}}"));
+            template.push_str(&format!("{{{placeholder}}}"));
         }
 
         parameters.push(CompiledParameter {
             name: spec.name.clone(),
+            placeholder,
             expression: anchored(&spec.pattern).map_err(|reason| {
                 RouteError::UnusableExpression {
                     path: path.clone(),
