@@ -660,7 +660,11 @@ class HttpResponse:
         if self.content_type is not None:
             pairs.append(("content-type", self.content_type))
         pairs.extend(self._headers.items())
-        pairs.extend(("set-cookie", cookie) for cookie in self._cookies)
+        # Guarded rather than always extended: building the generator costs
+        # more than reading the headers does, and almost no response sets a
+        # cookie.
+        if self._cookies:
+            pairs.extend(("set-cookie", cookie) for cookie in self._cookies)
         return pairs
 
     async def __http__(self, protocol: Any) -> None:
