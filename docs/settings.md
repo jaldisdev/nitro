@@ -54,7 +54,7 @@ it first.
 | `SERVER_TLS_CA`, `SERVER_TLS_CLIENT_AUTH` | `None`, `"none"` | Client certificates: `"none"`, `"optional"` or `"required"`. |
 | `SERVER_TLS_TCP` | `True` | Terminate TLS on the TCP socket. Off when a proxy already does. |
 | `SERVER_TLS_RELOAD_INTERVAL` | `10.0` | Seconds between certificate checks. `0` disables reloading. |
-| `SERVER_WORKERS`, `SERVER_RUNTIME_THREADS` | `1`, `1` | Processes, and threads within each one's runtime. |
+| `SERVER_WORKERS`, `SERVER_RUNTIME_THREADS` | `1`, `2` | Processes, and threads within each one's runtime. |
 | `SERVER_BACKLOG` | `1024` | Kernel accept queue depth. |
 | `SERVER_MAX_CONCURRENT_CONNECTIONS` | `None` | Per-worker cap. Beyond it, connections wait in the backlog. |
 | `SERVER_DATAGRAM_QUEUE_CAPACITY` | `64` | Datagrams held per session before the oldest is dropped. |

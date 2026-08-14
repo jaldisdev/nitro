@@ -102,7 +102,7 @@ def build_options(application: Any, **overrides: Any) -> ServerOptions:
 @click.option("-p", "--port", type=int, help="Port to bind. [default: 8000]")
 @click.option("--uds", type=click.Path(), help="Bind a Unix domain socket instead of a port.")
 @click.option("-w", "--workers", type=int, help="Number of worker processes. [default: 1]")
-@click.option("--runtime-threads", type=int, help="Threads per worker's runtime. [default: 1]")
+@click.option("--runtime-threads", type=int, help="Threads per worker's runtime. [default: 2]")
 @click.option(
     "--http",
     type=click.Choice(["auto", "1", "2", "3"]),

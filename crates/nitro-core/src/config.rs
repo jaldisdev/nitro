@@ -284,7 +284,7 @@ impl Default for ServerConfig {
             websockets: true,
             webtransport: true,
             workers: 1,
-            runtime_threads: 1,
+            runtime_threads: 2,
             backlog: 1024,
             max_concurrent_connections: None,
             datagram_queue_capacity: 64,

@@ -63,6 +63,24 @@ Two consequences worth knowing:
 The parent supervises. A worker that exits unexpectedly is replaced after a
 short delay, so a crash does not quietly reduce capacity.
 
+## Runtime threads
+
+Each worker's runtime gets two threads by default. They are not for running
+handlers — handlers run on the worker's event loop, one thread, as they do in
+any asyncio server. They read sockets, parse requests and write responses, none
+of which needs the interpreter, so a second one overlaps that work with the
+Python the loop is running.
+
+```python
+SERVER_RUNTIME_THREADS = 2
+```
+
+Two is worth about a quarter more throughput than one and keeps its advantage as
+connections pile up, where one levels off and then declines. Four measured no
+better than two: past that the loop, not the sockets, is what the server is
+waiting for. Raise it only if a profile says the runtime threads are busy and
+the loop is not.
+
 ## Shutting down
 
 On `SIGINT` or `SIGTERM` the parent asks every worker to stop and each one runs

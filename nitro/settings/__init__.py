@@ -180,7 +180,7 @@ class ServerOptions:
     webtransport: bool = True
 
     workers: int = 1
-    runtime_threads: int = 1
+    runtime_threads: int = 2
 
     backlog: int = 1024
     max_concurrent_connections: int | None = None

@@ -130,7 +130,7 @@ SERVER_WEBTRANSPORT: bool = True
 
 # Processes
 SERVER_WORKERS: int = 1
-SERVER_RUNTIME_THREADS: int = 1
+SERVER_RUNTIME_THREADS: int = 2
 
 # Backpressure
 SERVER_BACKLOG: int = 1024
