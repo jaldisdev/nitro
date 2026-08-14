@@ -23,6 +23,7 @@ use pyo3::prelude::*;
 
 mod config;
 mod dispatch;
+mod handoff;
 mod headers;
 mod intercom_bridge;
 mod lifecycle;

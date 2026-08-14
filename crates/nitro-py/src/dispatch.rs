@@ -32,6 +32,7 @@ use pyo3::types::PyDict;
 use pyo3_async_runtimes::TaskLocals;
 use tokio::sync::oneshot;
 
+use crate::handoff::{self, Handoff, Pending};
 use crate::protocol::{
     FileRequest, HandlerOutcome, HttpProtocol, PreparedBody, PreparedResponse, WsTransport,
     WtSession,
@@ -69,6 +70,9 @@ pub struct PythonDispatch {
     /// tasks are started in. Resolving these per request is several attribute
     /// lookups on the hot path for values that never change.
     http: Arc<HttpEntry>,
+    /// The queue the event loop collects requests from, where there is one.
+    /// Handing a request over through it costs no interpreter lock at all.
+    handoff: Option<Arc<Handoff>>,
 }
 
 struct HttpEntry {
@@ -91,8 +95,27 @@ impl PythonDispatch {
         let event_loop = locals.event_loop(python);
         let keywords = PyDict::new(python);
         keywords.set_item("context", locals.context(python))?;
+
+        // The application is bound in now, so what is called per request takes
+        // only the scope and the protocol.
+        let serve = python
+            .import("functools")?
+            .getattr("partial")?
+            .call1((
+                python.import("nitro.app")?.getattr("serve_http")?,
+                application.bind(python),
+            ))?
+            .unbind();
+
+        let handoff = handoff::install(
+            python,
+            &event_loop,
+            serve.clone_ref(python),
+            stream_capacity,
+        )?;
+
         let http = HttpEntry {
-            serve: python.import("nitro.app")?.getattr("serve_http")?.unbind(),
+            serve,
             call_soon_threadsafe: event_loop.getattr("call_soon_threadsafe")?.unbind(),
             create_task: event_loop.getattr("create_task")?.unbind(),
             keywords: keywords.unbind(),
@@ -103,6 +126,7 @@ impl PythonDispatch {
             locals,
             stream_capacity,
             http: Arc::new(http),
+            handoff,
         })
     }
 
@@ -139,6 +163,20 @@ impl PythonDispatch {
             disconnect,
         } = request;
 
+        // Nothing above needed the interpreter, and with a queue to put this on
+        // nothing below does either: the loop builds the request's objects when
+        // it comes to collect, and this thread goes back to its sockets.
+        if let Some(handoff) = &self.handoff {
+            handoff.push(Pending {
+                parts,
+                body,
+                disconnect,
+                responder,
+                matched,
+            });
+            return Ok((receiver, route));
+        }
+
         Python::attach(|python| -> PyResult<_> {
             let scope = Py::new(python, HttpScope::from_parts(python, parts, &matched)?)?;
             let protocol = Py::new(
@@ -146,11 +184,7 @@ impl PythonDispatch {
                 HttpProtocol::new(body, responder, disconnect, self.stream_capacity),
             )?;
 
-            let coroutine = self.http.serve.bind(python).call1((
-                self.application.bind(python),
-                scope,
-                protocol,
-            ))?;
+            let coroutine = self.http.serve.bind(python).call1((scope, protocol))?;
 
             // The context is passed rather than left to be copied here: this
             // runs on a runtime thread, whose context is not the one the worker
