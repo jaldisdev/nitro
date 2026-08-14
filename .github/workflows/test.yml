@@ -20,8 +20,8 @@ jobs:
           cache: pip
       # Reads the rules from pyproject.toml, so this and a local run agree.
       - run: pip install ruff
-      - run: ruff check nitro tests
-      - run: ruff format --check nitro tests
+      - run: ruff check nitro tests benchmark
+      - run: ruff format --check nitro tests benchmark
 
   rust:
     name: Rust

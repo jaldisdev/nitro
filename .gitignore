@@ -55,3 +55,7 @@ target/
 
 # maturin / PyO3 built extension modules
 *.so
+
+# Benchmark output
+benchmark/logs/
+benchmark/assets/

@@ -50,6 +50,10 @@ all = [
     "redis[hiredis]>=8.0.0",
     "sendgrid>=6.12.5",
 ]
+benchmark = [
+    "uvloop>=0.21",
+    "httpx>=0.28.1",
+]
 dev = [
     "pytest>=9",
     "ruff>=0.16",
