@@ -369,7 +369,7 @@ class TestDeclarations:
         router = Router()
         HTTPRoute("/things/<int:identifier>", Things).attach(router)
         response = asyncio.run(router.routes[0].handler(GetRequest(), identifier=7))
-        assert response.body == b'{"identifier": 7}'
+        assert response.body == b'{"identifier":7}'
 
     def test_a_class_that_is_not_an_endpoint_is_refused(self):
         class NotAnEndpoint:

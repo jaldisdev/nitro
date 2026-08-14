@@ -17,7 +17,7 @@
 # limitations under the License.
 #
 
-import json
+from nitro.utils import json
 import pickle
 from abc import ABC, abstractmethod
 from typing import Any
@@ -57,7 +57,7 @@ class JsonSerializer(CacheSerializer):
 
     def dumps(self, value: Any) -> bytes:
         try:
-            return json.dumps(value).encode("utf-8")
+            return json.dumps(value)
         except TypeError as error:
             raise TypeError(
                 f"{type(value).__name__} cannot be cached as JSON: {error}. "

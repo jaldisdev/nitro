@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import http.cookies as http_cookies
-import json as json_module
+from nitro.utils import json as json_module
 import mimetypes
 import os
 from collections.abc import AsyncIterator, Iterable
@@ -332,7 +332,10 @@ class HttpRequest:
     def __init__(self, scope: Any, protocol: Any, path_params: dict[str, Any] | None = None):
         self.scope = scope
         self._protocol = protocol
-        self._path_params = dict(path_params) if path_params else dict(scope.path_params)
+        # Taken as given rather than copied: what the application passes is
+        # built for this request and handed over, so copying it again is a
+        # dictionary per request that nothing reads differently.
+        self._path_params = path_params if path_params is not None else dict(scope.path_params)
         self._state = State()
         self._body: bytes | None = None
         self._form: FormData | None = None
@@ -603,7 +606,7 @@ class HttpResponse:
         if isinstance(content, (dict, list, tuple)):
             if self.content_type is None:
                 self.content_type = "application/json"
-            return json_module.dumps(content).encode("utf-8")
+            return json_module.dumps(content)
         return str(content).encode("utf-8")
 
     @property
@@ -672,7 +675,7 @@ class JSONResponse(HttpResponse):
     media_type = "application/json"
 
     def render(self, content: Any) -> bytes:
-        return json_module.dumps(content).encode("utf-8")
+        return json_module.dumps(content)
 
 
 class PlainTextResponse(HttpResponse):

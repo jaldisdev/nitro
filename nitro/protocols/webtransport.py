@@ -27,7 +27,7 @@ hidden behind one interface.
 
 from __future__ import annotations
 
-import json as json_module
+from nitro.utils import json as json_module
 from collections.abc import AsyncIterator
 from enum import Enum
 from typing import Any
@@ -78,7 +78,7 @@ class WebTransportStream:
         await self._stream.write(text.encode("utf-8"))
 
     async def send_json(self, data: Any) -> None:
-        await self._stream.write(json_module.dumps(data).encode("utf-8"))
+        await self._stream.write(json_module.dumps(data))
 
     async def receive(self, limit: int = 65536) -> bytes:
         return await self._stream.read(limit)
@@ -111,7 +111,10 @@ class WebTransportSession:
     def __init__(self, scope: Any, session: Any, path_params: dict[str, Any] | None = None):
         self.scope = scope
         self._session = session
-        self._path_params = dict(path_params) if path_params else dict(scope.path_params)
+        # Taken as given rather than copied: what the application passes is
+        # built for this request and handed over, so copying it again is a
+        # dictionary per request that nothing reads differently.
+        self._path_params = path_params if path_params is not None else dict(scope.path_params)
         self._state = State()
         self._url: URL | None = None
         self._query_params: QueryParams | None = None
@@ -184,7 +187,7 @@ class WebTransportSession:
         self._session.send_datagram(text.encode("utf-8"))
 
     def send_datagram_json(self, data: Any) -> None:
-        self._session.send_datagram(json_module.dumps(data).encode("utf-8"))
+        self._session.send_datagram(json_module.dumps(data))
 
     async def receive_datagram(self) -> bytes:
         """The next datagram, raising when the session has ended."""

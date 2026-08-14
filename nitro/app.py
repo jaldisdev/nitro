@@ -446,12 +446,25 @@ class Nitro:
 
         request = HttpRequest(scope, protocol, parameters)
 
-        async def call_handler(request: HttpRequest) -> Any:
-            supplied = await _dependencies(route, request)
-            return await route.handler(request, **supplied, **parameters)
+        # With nothing to wrap the handler in and nothing to inject, the chain
+        # the middleware stack builds is the handler itself and the dependency
+        # resolution has nothing to resolve. Calling it directly is the same
+        # work with three fewer coroutines to get there, and most requests take
+        # this way. What still has to happen afterwards is the release, because
+        # a handler can resolve dependencies of its own — an endpoint's method
+        # does — so it keeps the same wrapper the long way round uses.
+        direct = not self.middleware and not route.dependencies
 
         try:
-            result = await _served(request, self.middleware.execute_http(request, call_handler))
+            if direct:
+                result = await _served(request, route.handler(request, **parameters))
+            else:
+
+                async def call_handler(request: HttpRequest) -> Any:
+                    supplied = await _dependencies(route, request)
+                    return await route.handler(request, **supplied, **parameters)
+
+                result = await _served(request, self.middleware.execute_http(request, call_handler))
         except HttpException as exception:
             if not await self._answered(scope, protocol, exception, request):
                 page = self._debug_page(scope, exception.status_code, exception)

@@ -27,7 +27,7 @@ middle of a loop.
 
 from __future__ import annotations
 
-import json as json_module
+from nitro.utils import json as json_module
 from collections.abc import AsyncIterator
 from enum import Enum
 from typing import Any
@@ -58,7 +58,10 @@ class WebSocket:
     def __init__(self, scope: Any, transport: Any, path_params: dict[str, Any] | None = None):
         self.scope = scope
         self._transport = transport
-        self._path_params = dict(path_params) if path_params else dict(scope.path_params)
+        # Taken as given rather than copied: what the application passes is
+        # built for this request and handed over, so copying it again is a
+        # dictionary per request that nothing reads differently.
+        self._path_params = path_params if path_params is not None else dict(scope.path_params)
         self._state = State()
         self._url: URL | None = None
         self._query_params: QueryParams | None = None
@@ -161,7 +164,7 @@ class WebSocket:
         await self._transport.send_bytes(data)
 
     async def send_json(self, data: Any) -> None:
-        await self._transport.send_str(json_module.dumps(data))
+        await self._transport.send_str(json_module.dumps_str(data))
 
     async def send(self, data: str | bytes) -> None:
         if isinstance(data, str):

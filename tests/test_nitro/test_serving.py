@@ -194,11 +194,11 @@ class TestRequestHandling:
             """
         )
 
-        assert server.request("/users/42").text == '{"id": 42}'
+        assert server.request("/users/42").text == '{"id":42}'
         # The endpoint declares POST, so the matcher must let it through rather
         # than answering 405 from the route's default methods.
-        assert server.request("/users/42", method="POST").text == '{"created": 42}'
-        assert server.request("/api/status").text == '{"ok": true}'
+        assert server.request("/users/42", method="POST").text == '{"created":42}'
+        assert server.request("/api/status").text == '{"ok":true}'
         assert server.request("/users/not-a-number").status == 404
         assert server.stop() == 0
 

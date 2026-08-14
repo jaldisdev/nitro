@@ -18,7 +18,7 @@
 #
 
 import asyncio
-import json as json_module
+from nitro.utils import json as json_module
 import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any, Literal

@@ -158,6 +158,12 @@ HTMLResponse("<p>hello</p>")
 RedirectResponse("/elsewhere")                # 307 by default
 ```
 
+JSON is encoded by `orjson`, which the wheel carries. Two consequences worth
+knowing: the output is compact, with no space after a separator, and a `NaN` or
+an infinity raises rather than being written as a literal no JSON parser
+accepts. Keys that are not strings are still coerced, as the standard library
+does.
+
 ### Headers and cookies
 
 ```python
