@@ -88,7 +88,7 @@ async def serve_http(application: Any, scope: Any, protocol: Any) -> None:
     """
     try:
         await application.__handle_http__(scope, protocol)
-    except BaseException as error:  # noqa: BLE001 — reported, not swallowed
+    except BaseException as error:
         logger.exception("serving a request failed")
         protocol._handler_failed(f"{type(error).__name__}: {error}")
     else:

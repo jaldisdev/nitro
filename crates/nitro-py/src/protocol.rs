@@ -73,6 +73,9 @@ pub struct PreparedResponse {
 /// these, and a handler that returns without answering has to be told apart from
 /// one that is still running, or the request would wait for a response nobody is
 /// going to send.
+// Boxing the large variant would cost every response an allocation to save two
+// bytes on the failures.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum HandlerOutcome {
     Response(PreparedResponse),
