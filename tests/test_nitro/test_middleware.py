@@ -485,3 +485,40 @@ class TestLoggingMiddleware:
                 await stack.execute_http(make_request(), handler)
 
         assert any("failed" in record.getMessage() for record in caplog.records)
+
+    async def test_a_client_error_is_logged_without_a_traceback(self, caplog):
+        from nitro.middleware.common import LoggingMiddleware
+        from nitro.protocols.exceptions import Http404
+
+        stack = MiddlewareStack(app=None, middleware_paths=[])
+        stack.add_middleware(LoggingMiddleware())
+
+        async def handler(request):
+            raise Http404()
+
+        with caplog.at_level(logging.INFO, logger="nitro.middleware"):
+            with pytest.raises(Http404):
+                await stack.execute_http(make_request(path="/missing"), handler)
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("http answered 404: /missing" in message for message in messages), messages
+        assert not any("failed" in message for message in messages), messages
+        assert all(record.exc_info is None for record in caplog.records)
+
+    async def test_a_server_error_keeps_its_traceback(self, caplog):
+        from nitro.middleware.common import LoggingMiddleware
+        from nitro.protocols.exceptions import HttpServiceUnavailable
+
+        stack = MiddlewareStack(app=None, middleware_paths=[])
+        stack.add_middleware(LoggingMiddleware())
+
+        async def handler(request):
+            raise HttpServiceUnavailable()
+
+        with caplog.at_level(logging.INFO, logger="nitro.middleware"):
+            with pytest.raises(HttpServiceUnavailable):
+                await stack.execute_http(make_request(), handler)
+
+        failures = [record for record in caplog.records if "failed" in record.getMessage()]
+        assert failures
+        assert all(record.exc_info is not None for record in failures)

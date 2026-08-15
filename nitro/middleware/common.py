@@ -69,6 +69,18 @@ class LoggingMiddleware(Middleware):
 
         try:
             result = await call_next(connection)
+        except HttpException as exception:
+            # Raising one of these names the answer the handler wants, so below
+            # 500 it is an outcome and a traceback for it is noise. A 5xx did go
+            # wrong whichever way it was raised, and keeps its traceback.
+            held = time.monotonic() - started
+            if exception.status_code >= 500:
+                logger.exception("%s failed: %s (%.3fs)", protocol, path, held)
+            else:
+                logger.info(
+                    "%s answered %d: %s (%.3fs)", protocol, exception.status_code, path, held
+                )
+            raise
         except Exception:
             logger.exception("%s failed: %s (%.3fs)", protocol, path, time.monotonic() - started)
             raise
