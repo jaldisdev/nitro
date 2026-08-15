@@ -227,6 +227,33 @@
         font-family: var(--mono);
         font-size: 13px;
         color: var(--text);
+        overflow-wrap: anywhere;
+      }
+
+      .pattern-methods {
+        display: flex;
+        gap: 4px;
+        margin-left: auto;
+        padding-left: 12px;
+        flex-shrink: 0;
+      }
+
+      .method-badge {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: var(--surface-2);
+        color: var(--text-muted);
+        border: 1px solid var(--border);
+      }
+
+      .method-badge.protocol {
+        background: oklch(54.1% 0.281 293.009 / 8%);
+        color: var(--accent);
+        border-color: oklch(54.1% 0.281 293.009 / 20%);
       }
 
       /* ── No-match note ────────────────────── */
@@ -313,7 +340,17 @@
         <p class="section-eyebrow">Routes tried</p>
         <ol class="pattern-list">
           {% for pattern in url_patterns %}
-          <li><code>{{ pattern }}</code></li>
+          <li>
+            <code>{{ pattern.path }}</code>
+            <span class="pattern-methods">
+              {% for method in pattern.methods %}
+              <span
+                class="method-badge{% if method in protocol_methods %} protocol{% endif %}"
+                >{{ method }}</span
+              >
+              {% endfor %}
+            </span>
+          </li>
           {% endfor %}
         </ol>
         <p class="miss-note">

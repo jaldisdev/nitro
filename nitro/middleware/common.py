@@ -252,7 +252,7 @@ class ExceptionMiddleware(Middleware):
                 f"{request.path}?{query}" if query else request.path,
                 debug=bool(settings.DEBUG) if debug is None else debug,
                 exception=exception,
-                routes=[route.path for route in router] if router is not None else (),
+                routes=router if router is not None else (),
             )
         except Exception:
             logger.exception("the debug page for %s could not be rendered", status_code)

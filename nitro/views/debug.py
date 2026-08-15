@@ -31,18 +31,35 @@ import linecache
 import sys
 import traceback as tb
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jinja2 import Environment, FileSystemLoader
 
+from nitro.routing.router import WEBSOCKET_METHOD, WEBTRANSPORT_METHOD
+
 if TYPE_CHECKING:
     from nitro.protocols.http import HttpResponse
+    from nitro.routing.router import Route
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 #: The statuses a debug page exists for. Anything else keeps its plain answer.
 _PAGES = (404, 500)
+
+#: Methods that name a protocol of their own rather than an HTTP verb. They are
+#: marked as such on the 404 page: a path listed under one of them cannot be
+#: reached by the browser that is reading the page.
+_PROTOCOL_METHODS = frozenset({WEBSOCKET_METHOD, WEBTRANSPORT_METHOD})
+
+
+@dataclass(frozen=True, slots=True)
+class RoutePattern:
+    """One path on the 404 page, with every method registered for it."""
+
+    path: str
+    methods: tuple[str, ...]
 
 
 def _env() -> Environment:
@@ -56,7 +73,7 @@ def debug_response(
     *,
     debug: bool,
     exception: BaseException | None = None,
-    routes: Iterable[str] = (),
+    routes: Iterable[Route] = (),
 ) -> HttpResponse | None:
     """The debug page for `status_code`, or `None` if there is not one.
 
@@ -71,7 +88,7 @@ def debug_response(
         return None
 
     if status_code == 404:
-        html = render_404_page(method=method, path=path, url_patterns=list(routes))
+        html = render_404_page(method=method, path=path, url_patterns=route_patterns(routes))
     elif exception is not None:
         html = render_500_page(method=method, path=path, exc=exception)
     else:
@@ -125,16 +142,48 @@ def _extract_frames(exc: BaseException) -> list[dict]:
     return frames
 
 
+def _displayed_methods(methods: list[str]) -> tuple[str, ...]:
+    """`methods` as the page shows them.
+
+    HEAD is registered alongside GET for every route that answers one, so
+    listing both on every line buries the methods that actually differ.
+    """
+    if "GET" in methods:
+        return tuple(method for method in methods if method != "HEAD")
+    return tuple(methods)
+
+
+def route_patterns(routes: Iterable[Route]) -> list[RoutePattern]:
+    """One entry per path, carrying every method registered for it.
+
+    A path may be registered more than once, since HTTP and WebSocket routes
+    share a table and a route for each may be declared for the same path.
+    Listing it once per registration reads as a duplicate declaration rather
+    than as one path serving two protocols.
+    """
+    methods_by_path: dict[str, list[str]] = {}
+    for route in routes:
+        methods = methods_by_path.setdefault(route.path, [])
+        for method in route.methods:
+            if method not in methods:
+                methods.append(method)
+
+    return [
+        RoutePattern(path, _displayed_methods(methods)) for path, methods in methods_by_path.items()
+    ]
+
+
 def render_404_page(
     method: str,
     path: str,
-    url_patterns: list[str] | None = None,
+    url_patterns: list[RoutePattern] | None = None,
 ) -> str:
     template = _env().get_template("error_404.html")
     return template.render(
         method=method,
         path=path,
         url_patterns=url_patterns or [],
+        protocol_methods=_PROTOCOL_METHODS,
     )
 
 

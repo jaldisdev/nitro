@@ -549,7 +549,7 @@ class Nitro:
                 _full_path(scope),
                 debug=self.debug,
                 exception=exception,
-                routes=[route.path for route in self.router],
+                routes=self.router,
             )
         except Exception:
             # The page is a convenience; failing to build it must not replace
