@@ -44,7 +44,6 @@ pyrightconfig.json
 # Environment
 .env
 .env.*
-!.env.example
 
 # Rust
 target/
