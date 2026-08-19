@@ -565,6 +565,24 @@ class TestExceptionHandlers:
         assert protocol.status == 404
         assert protocol.body == b"custom 404"
 
+    async def test_a_403_status_handler_answers(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", False, raising=False)
+
+        async def forbidden(request, exception):
+            return PlainTextResponse("custom 403", status_code=403)
+
+        app = Nitro(exception_handlers={403: forbidden})
+
+        @app.route("/private")
+        async def private(request):
+            raise HttpForbidden({"reason": "not yours"})
+
+        protocol = RecordingProtocol()
+        await app.__handle_http__(scope_for(app, "GET", "/private"), protocol)
+
+        assert protocol.status == 403
+        assert protocol.body == b"custom 403"
+
     async def test_an_exception_class_handler_answers(self, monkeypatch):
         monkeypatch.setattr(settings, "DEBUG", False, raising=False)
 
