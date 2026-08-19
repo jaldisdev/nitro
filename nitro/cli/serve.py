@@ -112,14 +112,29 @@ def build_options(application: Any, **overrides: Any) -> ServerOptions:
 @click.option("--tls-key", type=click.Path(exists=True, dir_okay=False), help="TLS private key.")
 @click.option("--access-log/--no-access-log", default=None, help="Write an access log.")
 @click.option(
+    "--reload",
+    is_flag=True,
+    default=False,
+    help="Restart when a Python file changes. Development only.",
+)
+@click.option(
     "-l",
     "--log-level",
     type=click.Choice(["trace", "debug", "info", "warning", "error"]),
     help="Server log level. [default: info]",
 )
-def serve(application: str, **overrides: Any) -> None:
+def serve(application: str, reload: bool, **overrides: Any) -> None:
     """Serve APPLICATION, given as 'module:attribute'."""
     from nitro.app import build_server, served_addresses
+
+    if reload:
+        # Imported here, and only here, so serving normally never loads the
+        # supervisor. The check comes before the application does: the parent
+        # supervises, and only the child pays to import the project.
+        from nitro.reload import is_reload_child, run_with_reloader
+
+        if not is_reload_child():
+            raise SystemExit(run_with_reloader())
 
     loaded = load_application(application)
     if callable(loaded) and not hasattr(loaded, "__handle_http__"):

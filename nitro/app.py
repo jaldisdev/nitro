@@ -380,7 +380,7 @@ class Nitro:
 
     # ── server configuration ─────────────────────────────────────────────────
 
-    def serve(self, **overrides: Any) -> None:
+    def serve(self, *, reload: bool = False, **overrides: Any) -> None:
         """Start the bundled server and block until it stops.
 
         This is what `nitro app:app` does, reachable from Python so a script can
@@ -392,7 +392,23 @@ class Nitro:
 
             if __name__ == "__main__":
                 app.serve()
+
+        `reload` restarts the server whenever a Python file under the working
+        directory changes. It is for development only, and is deliberately not
+        wired to ``DEBUG``: a deployment that ships debug pages by mistake
+        should not also acquire a file watcher and a supervising process.
+
+            if __name__ == "__main__":
+                app.serve(reload=True)
         """
+        if reload:
+            # Imported here, and only here, so a server started without
+            # reloading never loads the supervisor at all.
+            from nitro.reload import is_reload_child, run_with_reloader
+
+            if not is_reload_child():
+                raise SystemExit(run_with_reloader())
+
         server, options = build_server(self, **overrides)
         for address in served_addresses(server, options):
             # Flushed because stdout is a pipe under a process supervisor, and
