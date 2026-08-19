@@ -56,7 +56,10 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --locked --out dist --manifest-path crates/intercom-py/Cargo.toml
+          # The manifest this builds is named by nitro-intercom's own
+          # pyproject.toml, and --out is relative to that directory, so both
+          # wheels land in the one dist the upload below collects.
+          args: --release --locked --out ../dist
           manylinux: auto
           working-directory: nitro-intercom
 
@@ -64,10 +67,13 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install dist/nitro-*.whl
+          python -m pip install dist/nitro_framework-*.whl
           python -c "import nitro; print('nitro', nitro.__version__)"
           python -c "import nitro._nitro; print('compiled server ok')"
-          python -m zipfile -l dist/nitro-*.whl | grep -i LICENSE
+          python -m zipfile -l dist/nitro_framework-*.whl | grep -i LICENSE
+          python -m pip install dist/nitro_intercom-*.whl
+          python -c "import nitro_intercom; print('nitro-intercom', nitro_intercom.__version__)"
+          python -m zipfile -l dist/nitro_intercom-*.whl | grep -i LICENSE
 
       - uses: actions/upload-artifact@v4
         with:
@@ -83,6 +89,14 @@ jobs:
         with:
           command: sdist
           args: --out dist
+      # Without one of its own, nitro-intercom would go out wheels-only: no
+      # install on a platform the matrix above does not build for, and nothing
+      # for a distribution that packages from source.
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out ../dist
+          working-directory: nitro-intercom
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
@@ -119,6 +133,17 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # A trusted publisher mints a token scoped to one project, so the two
+      # distributions are uploaded separately rather than from one directory.
+      - name: Separate the two distributions
+        run: |
+          mkdir -p upload/framework upload/intercom
+          mv dist/nitro_framework-* upload/framework/
+          mv dist/nitro_intercom-* upload/intercom/
+          test -z "$(ls -A dist)" || { echo "unexpected artefacts:"; ls dist; exit 1; }
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist
+          packages-dir: upload/framework
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: upload/intercom
