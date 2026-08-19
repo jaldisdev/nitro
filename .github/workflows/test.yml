@@ -84,7 +84,7 @@ jobs:
       - name: Build and install nitro
         run: |
           maturin build --locked --release -o dist
-          pip install "$(ls dist/nitro-*.whl)[dev,all]"
+          pip install "$(ls dist/nitro_framework-*.whl)[dev,all]"
       - name: Build and install nitro-intercom
         working-directory: nitro-intercom
         run: |

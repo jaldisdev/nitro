@@ -3,7 +3,7 @@ requires = ["maturin>=1.14.1,<2"]
 build-backend = "maturin"
 
 [project]
-name = "nitro"
+name = "nitro-framework"
 version = "0.1.0"
 description = "Async-first Python web framework with a bundled Rust server"
 readme = "README.md"

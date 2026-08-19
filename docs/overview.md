@@ -99,7 +99,10 @@ Steps 1 and 2 are compiled. Steps 3 and 4 are yours.
 
 ## Requirements
 
-Python 3.13 or newer. The wheel carries the compiled server; there is nothing
-else to install to serve traffic. Optional extras pull in the clients particular
-backends need — `nitro[redis]`, `nitro[aws]`, `nitro[azure]`, `nitro[sendgrid]`,
-`nitro[memcached]`, or `nitro[all]`.
+Python 3.13 or newer, installed with `pip install nitro-framework`. The
+distribution is named `nitro-framework`; the package it installs is `nitro`.
+The wheel carries the compiled server; there is nothing else to install to
+serve traffic. Optional extras pull in the clients particular backends need —
+`nitro-framework[redis]`, `nitro-framework[aws]`, `nitro-framework[azure]`,
+`nitro-framework[sendgrid]`, `nitro-framework[memcached]`, or
+`nitro-framework[all]`.

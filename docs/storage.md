@@ -64,7 +64,7 @@ a thread rather than blocking the loop.
 |---|---|---|
 | `FileSystemStorage` | nothing | a directory |
 | `MemoryStorage` | nothing | ignored |
-| `S3Storage` | `nitro[aws]` | the bucket |
-| `AzureStorage` | `nitro[azure]` | the container |
+| `S3Storage` | `nitro-framework[aws]` | the bucket |
+| `AzureStorage` | `nitro-framework[azure]` | the container |
 
 `MemoryStorage` is per process and does not survive a restart. It is for tests.

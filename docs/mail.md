@@ -47,9 +47,9 @@ await message.send()
 |---|---|
 | `nitro.mail.backends.console.ConsoleBackend` | nothing — prints instead of sending |
 | `nitro.mail.backends.smtp.SMTPBackend` | nothing |
-| `nitro.mail.backends.oauth_smtp.OAuthSMTPBackend` | `nitro[email-oauth]` |
-| `nitro.mail.backends.ses.SESBackend` | `nitro[aws]` |
-| `nitro.mail.backends.sendgrid.SendGridBackend` | `nitro[sendgrid]` |
+| `nitro.mail.backends.oauth_smtp.OAuthSMTPBackend` | `nitro-framework[email-oauth]` |
+| `nitro.mail.backends.ses.SESBackend` | `nitro-framework[aws]` |
+| `nitro.mail.backends.sendgrid.SendGridBackend` | `nitro-framework[sendgrid]` |
 
 `ConsoleBackend` is the default, so a project that has not configured mail
 prints its messages rather than failing or silently dropping them.

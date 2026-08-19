@@ -101,10 +101,24 @@ Tests that need Redis skip when there is not one reachable at
 
 ## Requirements
 
-Python 3.13 or newer. The wheel carries the compiled server. Optional extras
-pull in the clients particular backends need: `nitro[redis]`, `nitro[aws]`,
-`nitro[azure]`, `nitro[sendgrid]`, `nitro[memcached]`, `nitro[email-oauth]`, or
-`nitro[all]`.
+Python 3.13 or newer. The wheel carries the compiled server, so there is
+nothing to build.
+
+```sh
+pip install nitro-framework
+```
+
+The distribution is named `nitro-framework`; the package it installs is
+`nitro`, which is what you import. Optional extras pull in the clients
+particular backends need: `nitro-framework[redis]`, `nitro-framework[aws]`,
+`nitro-framework[azure]`, `nitro-framework[sendgrid]`,
+`nitro-framework[memcached]`, `nitro-framework[email-oauth]`, or
+`nitro-framework[all]`.
+
+`nitro-intercom` is published from this repository too, from the same tag and
+at the same version, so either package at a given version was built from the
+same source. A Nitro project does not install it — see
+[docs/intercom.md](docs/intercom.md).
 
 ## Contributing
 

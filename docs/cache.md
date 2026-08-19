@@ -33,8 +33,8 @@ never connected to.
 | Backend | Needs |
 |---|---|
 | `nitro.cache.backends.MemoryCache` | nothing |
-| `nitro.cache.backends.RedisCache` | `nitro[redis]` |
-| `nitro.cache.backends.MemcachedCache` | `nitro[memcached]`, Python 3.13 |
+| `nitro.cache.backends.RedisCache` | `nitro-framework[redis]` |
+| `nitro.cache.backends.MemcachedCache` | `nitro-framework[memcached]`, Python 3.13 |
 
 `MemoryCache` is per process. With more than one worker each has its own, so it
 suits caching that can differ between workers and not sessions.
