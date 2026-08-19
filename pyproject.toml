@@ -65,11 +65,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jaldis/nitro"
-Repository = "https://github.com/jaldis/nitro"
-Documentation = "https://github.com/jaldis/nitro/blob/canary/docs/overview.md"
-Issues = "https://github.com/jaldis/nitro/issues"
-Changelog = "https://github.com/jaldis/nitro/blob/canary/CHANGELOG.md"
+Homepage = "https://github.com/jaldisdev/nitro"
+Repository = "https://github.com/jaldisdev/nitro"
+Documentation = "https://github.com/jaldisdev/nitro/blob/canary/docs/overview.md"
+Issues = "https://github.com/jaldisdev/nitro/issues"
+Changelog = "https://github.com/jaldisdev/nitro/blob/canary/CHANGELOG.md"
 
 [project.scripts]
 nitro = "nitro.cli:main"

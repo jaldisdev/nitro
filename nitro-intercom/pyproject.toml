@@ -22,10 +22,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jaldis/nitro"
-Repository = "https://github.com/jaldis/nitro"
-Documentation = "https://github.com/jaldis/nitro/blob/canary/docs/intercom.md"
-Issues = "https://github.com/jaldis/nitro/issues"
+Homepage = "https://github.com/jaldisdev/nitro"
+Repository = "https://github.com/jaldisdev/nitro"
+Documentation = "https://github.com/jaldisdev/nitro/blob/canary/docs/intercom.md"
+Issues = "https://github.com/jaldisdev/nitro/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=9", "pytest-asyncio>=1.0", "ruff>=0.16"]

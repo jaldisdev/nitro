@@ -13,7 +13,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 version = "0.1.0"
 authors = ["Mario Ritzerfeld <oss@jaldis.com>"]
-repository = "https://github.com/jaldis/nitro"
+repository = "https://github.com/jaldisdev/nitro"
 
 [workspace.dependencies]
 nitro-core = { path = "crates/nitro-core", version = "0.1.0" }

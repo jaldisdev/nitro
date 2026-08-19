@@ -7,7 +7,7 @@ Please report security issues privately, not as a public issue.
 Use GitHub's [private vulnerability reporting][advisory] on this repository, or
 email **oss@jaldis.com**.
 
-[advisory]: https://github.com/jaldis/nitro/security/advisories/new
+[advisory]: https://github.com/jaldisdev/nitro/security/advisories/new
 
 Please include what the issue is, how to reproduce it, and what an attacker
 could do with it. You will get an acknowledgement within a few days, and we
