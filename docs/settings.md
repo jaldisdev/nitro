@@ -90,6 +90,7 @@ constructor argument.
 | Setting | Purpose |
 |---|---|
 | `DEBUG` | Detail in error responses, including the 404 and 500 pages. `Nitro(debug=...)` overrides it. Never on in production. |
+| `RELOAD` | Restart the server when a `.py` file changes. Development only; `--reload` turns it on regardless. See [the CLI](cli.md#reloading-during-development). |
 | `SECRET_KEY` | Signing. Required outside debug. |
 | `SECRET_KEY_FALLBACKS` | Older keys still accepted when checking a signature, so `SECRET_KEY` can be rotated. |
 | `ALLOWED_HOSTS` | Host names this site answers for. See below. |

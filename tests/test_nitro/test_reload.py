@@ -17,6 +17,8 @@
 # limitations under the License.
 #
 
+import contextlib
+import itertools
 import subprocess
 import sys
 import textwrap
@@ -33,6 +35,33 @@ from nitro.reload import (
     iter_watched_files,
     snapshot,
 )
+
+#: Module-scoped, so no two cases ever write the same module name. Resetting
+#: the settings singleton is not enough on its own: `import_module` would hand
+#: back whichever module `sys.modules` already holds under that name.
+_settings_module_names = itertools.count()
+
+
+@pytest.fixture
+def settings_module(tmp_path, monkeypatch):
+    """Point the settings singleton at a module written for one case."""
+    from nitro.settings import ENVIRONMENT_VARIABLE, settings
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    @contextlib.contextmanager
+    def use(body: str):
+        name = f"reload_settings_{next(_settings_module_names)}"
+        (tmp_path / f"{name}.py").write_text(textwrap.dedent(body))
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, name)
+        settings.reset()
+        try:
+            yield
+        finally:
+            settings.reset()
+
+    yield use
+    settings.reset()
 
 
 @pytest.fixture
@@ -123,6 +152,40 @@ class TestChildIdentification:
         monkeypatch.setattr(sys, "argv", ["/site-packages/nitro/cli/__main__.py", "app:app"])
         monkeypatch.setattr(sys.modules["__main__"], "__spec__", Spec(), raising=False)
         assert child_command() == [sys.executable, "-m", "nitro.cli", "app:app"]
+
+
+class TestPrecedence:
+    """`RELOAD` decides it; an explicit request overrides it."""
+
+    def test_reloading_is_off_by_default(self, settings_module):
+        from nitro.app import reload_requested
+
+        with settings_module("DEBUG = True\n"):
+            assert reload_requested(None) is False
+
+    def test_the_setting_turns_it_on(self, settings_module):
+        from nitro.app import reload_requested
+
+        with settings_module("DEBUG = True\nRELOAD = DEBUG\n"):
+            assert reload_requested(None) is True
+
+    def test_an_explicit_request_beats_the_setting(self, settings_module):
+        from nitro.app import reload_requested
+
+        with settings_module("RELOAD = False\n"):
+            assert reload_requested(True) is True
+        with settings_module("RELOAD = True\n"):
+            assert reload_requested(False) is False
+
+    def test_an_unconfigured_project_reloads_nothing(self, monkeypatch):
+        # Serving is reachable before settings exist — an embedded application,
+        # a test — and that must not become an error on the way to the server.
+        from nitro.app import reload_requested
+        from nitro.settings import ENVIRONMENT_VARIABLE, settings
+
+        monkeypatch.delenv(ENVIRONMENT_VARIABLE, raising=False)
+        settings.reset()
+        assert reload_requested(None) is False
 
 
 class TestCommandLine:

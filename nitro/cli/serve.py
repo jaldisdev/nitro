@@ -115,7 +115,7 @@ def build_options(application: Any, **overrides: Any) -> ServerOptions:
     "--reload",
     is_flag=True,
     default=False,
-    help="Restart when a Python file changes. Development only.",
+    help="Restart when a Python file changes. Overrides the RELOAD setting.",
 )
 @click.option(
     "-l",
@@ -125,12 +125,14 @@ def build_options(application: Any, **overrides: Any) -> ServerOptions:
 )
 def serve(application: str, reload: bool, **overrides: Any) -> None:
     """Serve APPLICATION, given as 'module:attribute'."""
-    from nitro.app import build_server, served_addresses
+    from nitro.app import build_server, reload_requested, served_addresses
 
-    if reload:
-        # Imported here, and only here, so serving normally never loads the
-        # supervisor. The check comes before the application does: the parent
-        # supervises, and only the child pays to import the project.
+    # The flag only ever turns reloading on, so its absence falls through to
+    # the RELOAD setting rather than overriding it off.
+    if reload_requested(True if reload else None):
+        # Imported only once reloading is settled on, so serving normally
+        # never loads the supervisor. This comes before the application does:
+        # the parent supervises, and only the child pays to import the project.
         from nitro.reload import is_reload_child, run_with_reloader
 
         if not is_reload_child():

@@ -29,6 +29,10 @@ from typing import Any
 # SECURITY WARNING: don't run with debug turned on in production.
 DEBUG: bool = False
 
+# Restart the server when a Python file changes. Development only; `--reload`
+# turns it on regardless.
+RELOAD: bool = False
+
 # SECURITY WARNING: keep the secret key used in production secret.
 SECRET_KEY: str = ""
 

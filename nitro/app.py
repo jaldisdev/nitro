@@ -64,7 +64,7 @@ from nitro.routing.router import (
     Router,
     RouteTable,
 )
-from nitro.settings import ServerOptions
+from nitro.settings import ImproperlyConfigured, ServerOptions, settings
 
 logger = logging.getLogger("nitro")
 
@@ -120,6 +120,23 @@ def build_server(application: Any, **overrides: Any) -> tuple[Any, ServerOptions
 
     table = getattr(application, "route_table", None)
     return Server(application, options, table() if callable(table) else []), options
+
+
+def reload_requested(explicit: bool | None) -> bool:
+    """Whether to supervise rather than serve.
+
+    `explicit` wins when given; ``None`` falls back to the ``RELOAD`` setting.
+
+    Lives here rather than in :mod:`nitro.reload` because it decides whether
+    that module is imported at all. An unconfigured project reloads nothing,
+    the way `ServerOptions.resolve` treats every setting it cannot read.
+    """
+    if explicit is not None:
+        return explicit
+    try:
+        return bool(settings.RELOAD)
+    except (AttributeError, ImproperlyConfigured):
+        return False
 
 
 def served_addresses(server: Any, options: ServerOptions) -> list[str]:
@@ -380,7 +397,7 @@ class Nitro:
 
     # ── server configuration ─────────────────────────────────────────────────
 
-    def serve(self, *, reload: bool = False, **overrides: Any) -> None:
+    def serve(self, *, reload: bool | None = None, **overrides: Any) -> None:
         """Start the bundled server and block until it stops.
 
         This is what `nitro app:app` does, reachable from Python so a script can
@@ -394,16 +411,16 @@ class Nitro:
                 app.serve()
 
         `reload` restarts the server whenever a Python file under the working
-        directory changes. It is for development only, and is deliberately not
-        wired to ``DEBUG``: a deployment that ships debug pages by mistake
-        should not also acquire a file watcher and a supervising process.
+        directory changes, for development. Left unset it follows the
+        ``RELOAD`` setting, which is where it belongs for an entry point that
+        production runs too; pass it to decide here regardless.
 
             if __name__ == "__main__":
-                app.serve(reload=True)
+                app.serve()
         """
-        if reload:
-            # Imported here, and only here, so a server started without
-            # reloading never loads the supervisor at all.
+        if reload_requested(reload):
+            # Imported only once reloading is settled on, so a server that is
+            # not reloading never loads the supervisor at all.
             from nitro.reload import is_reload_child, run_with_reloader
 
             if not is_reload_child():

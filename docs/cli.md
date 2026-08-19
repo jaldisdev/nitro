@@ -35,7 +35,7 @@ without installing it.
 | `--http` | `SERVER_HTTP` |
 | `--tls-cert`, `--tls-key` | the TLS pair |
 | `--access-log` / `--no-access-log` | `SERVER_ACCESS_LOG` |
-| `--reload` | — (development only, see below) |
+| `--reload` | `RELOAD` (turns it on; never off) |
 | `-l`, `--log-level` | `SERVER_LOG_LEVEL` |
 
 A flag that is not given is dropped rather than applied, so it cannot erase
@@ -55,9 +55,24 @@ nitro --reload app:app
 ```
 
 `--reload` restarts the server whenever a `.py` file under the working
-directory changes. It is off unless asked for, and is not tied to `DEBUG`: a
-deployment that ships debug pages by mistake should not also acquire a file
-watcher and a supervising process on top of it.
+directory changes.
+
+It can also be asked for in settings, which is where it belongs for a project
+whose entry point production runs too:
+
+```python
+RELOAD: bool = DEBUG
+```
+
+`--reload` turns reloading on regardless of the setting; it has no spelling
+that turns it off, so the setting is what decides that. `app.serve(reload=...)`
+takes precedence over both when given.
+
+Note that `RELOAD` is a setting of its own rather than something `DEBUG`
+implies. Writing `RELOAD = DEBUG` is a reasonable convention, but it should be
+a project's own choice: reloading brings a file watcher and a supervising
+process with it, and a deployment that leaves `DEBUG` on by mistake should not
+acquire those as well unless it asked to.
 
 A parent process watches the tree and a child runs the server, which is
 replaced wholesale on a change. Reloading a module in place would not work
@@ -80,11 +95,19 @@ tree. And changes are noticed by polling, within roughly half a second rather
 than instantly — the trade for having nothing to install and no per-platform
 notification backend to differ.
 
-An application that starts the server itself takes the same option:
+An application that starts the server itself follows `RELOAD` with no
+argument at all, so the same entry point serves both environments:
 
 ```python
 if __name__ == "__main__":
-    app.serve(reload=True)
+    app.serve()
+```
+
+Passing it decides here instead, either way:
+
+```python
+app.serve(reload=True)   # regardless of RELOAD
+app.serve(reload=False)  # regardless of RELOAD
 ```
 
 ## Commands of your own
