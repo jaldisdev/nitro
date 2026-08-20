@@ -94,11 +94,11 @@ from nitro.protocols.webtransport import WebTransportSession
 
 
 @app.webtransport("/live")
-async def live(session: WebTransportSession) -> None:
-    await session.accept()
+async def live(transport: WebTransportSession) -> None:
+    await transport.accept()
 
-    async for payload in session.iter_datagrams():
-        session.send_datagram(payload)
+    async for payload in transport.iter_datagrams():
+        transport.send_datagram(payload)
 ```
 
 ### Datagrams
@@ -107,10 +107,10 @@ Unordered, and may be lost. Right for anything where the newest value matters
 more than every value — cursor positions, telemetry, game state.
 
 ```python
-session.send_datagram(b"...")
-session.send_datagram_json({"x": 1, "y": 2})
+transport.send_datagram(b"...")
+transport.send_datagram_json({"x": 1, "y": 2})
 
-payload: bytes = await session.receive_datagram()
+payload: bytes = await transport.receive_datagram()
 ```
 
 Datagrams arriving while nothing is reading are held in a ring of
@@ -123,14 +123,14 @@ unlike a stream a datagram carries no promise of delivery to break.
 Ordered and reliable. Right for anything that must arrive whole.
 
 ```python
-stream = await session.open_stream()          # both sides can use it
+stream = await transport.open_stream()          # both sides can use it
 await stream.send_text("hello")
 reply: str = await stream.receive_text()
 await stream.finish()
 
-outgoing = await session.open_outgoing()      # this side only writes
+outgoing = await transport.open_outgoing()      # this side only writes
 
-async for incoming in session.iter_streams():
+async for incoming in transport.iter_streams():
     body: bytes = await incoming.receive_all()
 ```
 

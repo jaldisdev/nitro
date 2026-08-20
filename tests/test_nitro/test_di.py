@@ -66,7 +66,7 @@ class TestExtraction:
         assert found["database"].depends.dependency is get_database
 
     def test_context_parameters_are_not_dependencies(self):
-        async def handler(request, websocket, session, scope): ...
+        async def handler(request, websocket, transport, scope): ...
 
         assert extract_dependencies(handler) == {}
 

@@ -61,9 +61,10 @@ __all__ = [
 #: Set on a provider by :func:`worker_scoped`.
 WORKER_SCOPED = "__nitro_worker_scoped__"
 
-#: Parameter names that receive the request, socket or session itself rather
-#: than a dependency.
-CONTEXT_PARAMETERS: frozenset[str] = frozenset({"request", "websocket", "session", "scope"})
+#: Parameter names that receive the connection itself rather than a dependency.
+#: ``transport`` is the WebTransport session; it is not called ``session``
+#: because that name belongs to the session store a connection carries.
+CONTEXT_PARAMETERS: frozenset[str] = frozenset({"request", "websocket", "transport", "scope"})
 
 
 class DependencyError(Exception):
@@ -145,8 +146,9 @@ class DependencyParam:
     depends: Depends
     sub_dependencies: dict[str, DependencyParam] = field(default_factory=dict)
 
-    #: The parameters this dependency asks for by name — ``request``, ``socket``,
-    #: ``session`` or ``scope``. Read when the graph is, because reading it is
+    #: The parameters this dependency asks for by name — ``request``,
+    #: ``websocket``, ``transport`` or ``scope``. Read when the graph is, because
+    #: reading it is
     #: :func:`inspect.signature`, and doing that once per request per dependency
     #: costs more than everything else resolving one of them does.
     context_parameters: tuple[str, ...] = ()
@@ -422,7 +424,7 @@ async def _resolve_one(
     for name, sub in parameter.sub_dependencies.items():
         arguments[name] = await _resolve_one(sub, context, cache)
 
-    # A dependency may ask for the request, socket or session by naming it.
+    # A dependency may ask for the connection itself by naming it.
     for name in parameter.context_parameters:
         arguments[name] = context
 

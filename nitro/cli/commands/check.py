@@ -46,6 +46,68 @@ def _report(passed: bool, message: str) -> bool:
     return passed
 
 
+def _installed_middleware() -> list[type]:
+    """The middleware classes named by ``MIDDLEWARE``, as far as they import.
+
+    A path that cannot be resolved is left out rather than reported: the stack
+    raises on it at startup with a better message than this command could, and
+    a check that guessed here would report the same problem twice.
+    """
+    from nitro.utils.modules import import_string
+
+    found: list[type] = []
+    for path in settings.MIDDLEWARE:
+        try:
+            found.append(import_string(path))
+        except (ImportError, AttributeError):
+            continue
+    return found
+
+
+def _session_problems() -> list[str]:
+    """What is wrong with how sessions are configured, if anything."""
+    from nitro.middleware.common import OriginMiddleware
+    from nitro.sessions import SessionMiddleware
+
+    installed = _installed_middleware()
+    sessions = [
+        candidate
+        for candidate in installed
+        if isinstance(candidate, type) and issubclass(candidate, SessionMiddleware)
+    ]
+    if not sessions:
+        return []
+
+    problems: list[str] = []
+
+    entry = settings.CACHES.get(settings.SESSION_CACHE)
+    if entry is None:
+        problems.append(f"SESSION_CACHE names {settings.SESSION_CACHE!r}, which is not in CACHES")
+    elif "MemoryCache" in entry.get("BACKEND", "") and ServerOptions.resolve().workers > 1:
+        problems.append(
+            f"sessions are kept in {settings.SESSION_CACHE!r}, a MemoryCache, with more than "
+            "one worker; each worker has its own, so a session is only found again by the "
+            "worker that made it"
+        )
+
+    # Only a middleware that still writes the cookie needs the origin check.
+    # One that carries the key itself — a claim inside a token, a header — is
+    # not sending an ambient credential, and there is nothing to forge.
+    carries_cookie = any(
+        candidate.write_key is SessionMiddleware.write_key for candidate in sessions
+    )
+    if carries_cookie and not any(
+        isinstance(candidate, type) and issubclass(candidate, OriginMiddleware)
+        for candidate in installed
+    ):
+        problems.append(
+            "sessions are carried in a cookie but OriginMiddleware is not installed, so a "
+            "state-changing request from another site arrives with the visitor's session"
+        )
+
+    return problems
+
+
 @click.command("check")
 @click.option("-v", "--verbose", is_flag=True, help="List optional packages too.")
 def check(verbose: bool) -> None:
@@ -115,6 +177,12 @@ def check(verbose: bool) -> None:
                     True,
                     f"metrics on {options.observability_host}:{options.observability_port}",
                 )
+
+    try:
+        for problem in _session_problems():
+            problems += not _report(False, problem)
+    except ImproperlyConfigured as error:
+        problems += not _report(False, f"sessions: {error}")
 
     click.echo()
     click.echo(click.style("Runtime", bold=True))

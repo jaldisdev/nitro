@@ -22,6 +22,7 @@ from nitro.middleware.common import (
     CORSMiddleware,
     ExceptionMiddleware,
     LoggingMiddleware,
+    OriginMiddleware,
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "Middleware",
     "MiddlewareProtocol",
     "MiddlewareStack",
+    "OriginMiddleware",
     "RateLimitMiddleware",
     "SecurityHeadersMiddleware",
 ]

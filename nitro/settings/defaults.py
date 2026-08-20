@@ -205,6 +205,38 @@ CACHES: dict[str, dict[str, Any]] = {
     }
 }
 
+# Sessions, read by nitro.sessions. They do nothing unless SessionMiddleware is
+# installed, or the application opens a session itself.
+#
+# SESSION_CACHE names the cache the bag is kept in, so sessions can be given a
+# store of their own rather than sharing whatever else is being cached. A
+# MemoryCache is per process and therefore wrong for sessions in a deployment
+# with more than one worker; `nitro check` says so.
+SESSION_CACHE: str = "default"
+SESSION_KEY_PREFIX: str = "session"
+
+# Two weeks, in seconds.
+SESSION_TIMEOUT: int = 1209600
+
+# Whether a session that was only read is written back to extend its life. Off
+# because it turns every request that touches a session into a write.
+SESSION_REFRESH_ON_ACCESS: bool = False
+
+# The cookie SessionMiddleware carries the key in, when it is left to do so. An
+# application that carries the key some other way — a claim inside a token, a
+# header — overrides `read_key` and `write_key` instead, and none of these are
+# read.
+#
+# SECURITY WARNING: a cookie is sent by the browser whether or not the request
+# came from your own site, so a cookie-carried session wants
+# nitro.middleware.common.OriginMiddleware installed with it.
+SESSION_COOKIE_NAME: str = "sessionid"
+SESSION_COOKIE_PATH: str = "/"
+SESSION_COOKIE_DOMAIN: str | None = None
+SESSION_COOKIE_SECURE: bool = True
+SESSION_COOKIE_HTTPONLY: bool = True
+SESSION_COOKIE_SAMESITE: str | None = "lax"
+
 EMAIL_BACKEND: str = "nitro.mail.backends.console.ConsoleBackend"
 DEFAULT_FROM_EMAIL: str = "noreply@example.com"
 

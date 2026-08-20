@@ -29,6 +29,7 @@ from nitro.cli import (
     load_project_commands,
     register_commands,
 )
+from nitro.sessions import SessionMiddleware
 from nitro.settings import settings
 
 
@@ -122,6 +123,16 @@ class TestDiscovery:
         assert "COMMAND_MODULES" in caplog.text
 
 
+class TokenSessionMiddleware(SessionMiddleware):
+    """Carries the key in a header, so nothing ambient is being sent."""
+
+    def read_key(self, connection):
+        return connection.headers.get("x-session-id")
+
+    def write_key(self, response, key):
+        pass
+
+
 class TestVersion:
     def test_it_reports_both_versions(self, runner, full_cli):
         result = runner.invoke(full_cli, ["version"])
@@ -159,6 +170,71 @@ class TestCheck:
 
         assert result.exit_code != 0
         assert "SECRET_KEY" in result.output
+
+    def test_memory_backed_sessions_across_workers_are_reported(
+        self, runner, full_cli, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
+        monkeypatch.setattr(settings, "SERVER_WORKERS", 4, raising=False)
+        monkeypatch.setattr(
+            settings, "MIDDLEWARE", ["nitro.sessions.SessionMiddleware"], raising=False
+        )
+
+        result = runner.invoke(full_cli, ["check"])
+
+        assert result.exit_code != 0
+        assert "MemoryCache" in result.output
+
+    def test_cookie_sessions_without_the_origin_check_are_reported(
+        self, runner, full_cli, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
+        monkeypatch.setattr(settings, "SERVER_WORKERS", 1, raising=False)
+        monkeypatch.setattr(
+            settings, "MIDDLEWARE", ["nitro.sessions.SessionMiddleware"], raising=False
+        )
+
+        result = runner.invoke(full_cli, ["check"])
+
+        assert result.exit_code != 0
+        assert "OriginMiddleware is not installed" in result.output
+
+    def test_the_origin_check_settles_it(self, runner, full_cli, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
+        monkeypatch.setattr(settings, "SERVER_WORKERS", 1, raising=False)
+        monkeypatch.setattr(
+            settings,
+            "MIDDLEWARE",
+            [
+                "nitro.middleware.common.OriginMiddleware",
+                "nitro.sessions.SessionMiddleware",
+            ],
+            raising=False,
+        )
+
+        result = runner.invoke(full_cli, ["check"])
+
+        assert result.exit_code == 0, result.output
+
+    def test_a_session_key_carried_outside_a_cookie_needs_no_origin_check(
+        self, runner, full_cli, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
+        monkeypatch.setattr(settings, "SERVER_WORKERS", 1, raising=False)
+        monkeypatch.setattr(
+            settings,
+            "MIDDLEWARE",
+            ["test_cli.TokenSessionMiddleware"],
+            raising=False,
+        )
+
+        result = runner.invoke(full_cli, ["check"])
+
+        assert result.exit_code == 0, result.output
 
     def test_optional_packages_are_listed_when_asked(self, runner, full_cli, monkeypatch):
         monkeypatch.setattr(settings, "DEBUG", True, raising=False)

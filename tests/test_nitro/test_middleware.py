@@ -22,7 +22,9 @@ import logging
 import pytest
 
 from nitro.middleware.base import Middleware
+from nitro.middleware.common import OriginMiddleware
 from nitro.middleware.stack import MiddlewareStack
+from nitro.protocols.exceptions import HttpForbidden
 from nitro.protocols.http import HttpRequest, HttpResponse
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,13 +67,21 @@ class FakeScope:
         "server",
     )
 
-    def __init__(self, method="GET", path="/", headers=None, query_string="", proto="http"):
+    def __init__(
+        self,
+        method="GET",
+        path="/",
+        headers=None,
+        query_string="",
+        proto="http",
+        authority="localhost:8000",
+    ):
         object.__setattr__(self, "method", method)
         object.__setattr__(self, "path", path)
         object.__setattr__(self, "query_string", query_string)
         object.__setattr__(self, "proto", proto)
         object.__setattr__(self, "scheme", "http")
-        object.__setattr__(self, "authority", "localhost:8000")
+        object.__setattr__(self, "authority", authority)
         object.__setattr__(self, "http_version", "1.1")
         object.__setattr__(self, "headers", FakeHeaders(headers))
         object.__setattr__(self, "client", ("127.0.0.1", 9000))
@@ -89,8 +99,11 @@ class FakeProtocol:
         return b""
 
 
-def make_request(method="GET", path="/", headers=None):
-    return HttpRequest(FakeScope(method=method, path=path, headers=headers), FakeProtocol())
+def make_request(method="GET", path="/", headers=None, authority="localhost:8000"):
+    return HttpRequest(
+        FakeScope(method=method, path=path, headers=headers, authority=authority),
+        FakeProtocol(),
+    )
 
 
 # ── Base middleware ───────────────────────────────────────────────────────────
@@ -522,3 +535,131 @@ class TestLoggingMiddleware:
         failures = [record for record in caplog.records if "failed" in record.getMessage()]
         assert failures
         assert all(record.exc_info is not None for record in failures)
+
+
+# ── Origin checking ────────────────────────────────────────────────────
+
+
+class TestOriginMiddleware:
+    @staticmethod
+    async def _call(middleware, request):
+        async def handler(_request):
+            return HttpResponse("ok")
+
+        return await middleware.__http__(request, handler)
+
+    def _middleware(self, allowed_hosts=()):
+        middleware = OriginMiddleware()
+        middleware.allowed_hosts = [entry.lower() for entry in allowed_hosts]
+        return middleware
+
+    @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS", "TRACE"])
+    async def test_a_safe_method_is_not_checked(self, method):
+        request = make_request(method=method)
+        assert (await self._call(self._middleware(), request)).status_code == 200
+
+    async def test_same_origin_passes(self):
+        request = make_request(method="POST", headers={"sec-fetch-site": "same-origin"})
+        assert (await self._call(self._middleware(), request)).status_code == 200
+
+    async def test_a_user_initiated_request_passes(self):
+        request = make_request(method="POST", headers={"sec-fetch-site": "none"})
+        assert (await self._call(self._middleware(), request)).status_code == 200
+
+    async def test_same_site_passes(self):
+        # A subdomain is trusted on purpose; see the class docstring.
+        request = make_request(method="POST", headers={"sec-fetch-site": "same-site"})
+        assert (await self._call(self._middleware(), request)).status_code == 200
+
+    async def test_cross_site_is_refused(self):
+        request = make_request(method="POST", headers={"sec-fetch-site": "cross-site"})
+        with pytest.raises(HttpForbidden):
+            await self._call(self._middleware(), request)
+
+    async def test_sec_fetch_site_wins_over_a_lying_origin(self):
+        request = make_request(
+            method="POST",
+            headers={"sec-fetch-site": "cross-site", "origin": "http://localhost:8000"},
+        )
+        with pytest.raises(HttpForbidden):
+            await self._call(self._middleware(), request)
+
+    async def test_an_origin_matching_the_host_passes(self):
+        request = make_request(
+            method="POST",
+            headers={"origin": "http://localhost:8000"},
+        )
+        assert (await self._call(self._middleware(), request)).status_code == 200
+
+    async def test_an_origin_elsewhere_is_refused(self):
+        request = make_request(
+            method="POST",
+            headers={"origin": "https://evil.test"},
+        )
+        with pytest.raises(HttpForbidden):
+            await self._call(self._middleware(["localhost"]), request)
+
+    async def test_an_origin_on_the_allow_list_passes(self):
+        request = make_request(
+            method="POST",
+            headers={"origin": "https://admin.example.test"},
+            authority="example.test",
+        )
+        middleware = self._middleware(["example.test", "admin.example.test"])
+        assert (await self._call(middleware, request)).status_code == 200
+
+    async def test_a_leading_dot_covers_subdomains_and_the_domain(self):
+        middleware = self._middleware([".example.test"])
+        for origin in ("https://example.test", "https://app.example.test"):
+            request = make_request(
+                method="POST", headers={"origin": origin}, authority="example.test"
+            )
+            assert (await self._call(middleware, request)).status_code == 200
+
+    async def test_a_leading_dot_does_not_cover_a_lookalike(self):
+        # The compiled matcher keeps the dot so evilexample.test cannot match,
+        # and this one has to agree with it.
+        request = make_request(
+            method="POST",
+            headers={"origin": "https://evilexample.test"},
+            authority="example.test",
+        )
+        with pytest.raises(HttpForbidden):
+            await self._call(self._middleware([".example.test"]), request)
+
+    async def test_a_star_allows_anything(self):
+        request = make_request(
+            method="POST", headers={"origin": "https://evil.test"}, authority="example.test"
+        )
+        assert (await self._call(self._middleware(["*"]), request)).status_code == 200
+
+    async def test_a_null_origin_is_refused_even_when_unrestricted(self):
+        request = make_request(method="POST", headers={"origin": "null"})
+        with pytest.raises(HttpForbidden):
+            await self._call(self._middleware(), request)
+
+    async def test_neither_header_is_refused(self):
+        request = make_request(method="POST")
+        with pytest.raises(HttpForbidden) as raised:
+            await self._call(self._middleware(), request)
+        assert "neither" in str(raised.value)
+
+    async def test_the_refusal_is_a_403(self):
+        request = make_request(method="POST", headers={"sec-fetch-site": "cross-site"})
+        with pytest.raises(HttpForbidden) as raised:
+            await self._call(self._middleware(), request)
+        assert raised.value.status_code == 403
+
+    async def test_a_caller_that_cannot_send_a_header_can_be_let_through(self):
+        class Lenient(OriginMiddleware):
+            def allows(self, request, origin):
+                return True
+
+            async def __http__(self, request, call_next):
+                if request.headers.get("x-internal") == "yes":
+                    return await call_next(request)
+                return await super().__http__(request, call_next)
+
+        middleware = Lenient()
+        request = make_request(method="POST", headers={"x-internal": "yes"})
+        assert (await self._call(middleware, request)).status_code == 200

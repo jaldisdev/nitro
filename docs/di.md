@@ -21,9 +21,10 @@ async def profile(request: HttpRequest, user: User = Depends(get_current_user)) 
     return JSONResponse(user.as_dict())
 ```
 
-A dependency may be async or plain. It may ask for the request, socket or
-session by naming a parameter `request`, `websocket`, `session` or `scope`, and
-it may depend on other dependencies.
+A dependency may be async or plain. It may ask for the connection itself by
+naming a parameter `request`, `websocket`, `transport` or `scope`, and it may
+depend on other dependencies. `transport` is the WebTransport session — the
+name `session` is the session store a connection carries, not the transport.
 
 ## Caching is per request
 
@@ -166,7 +167,7 @@ class Auditing(Middleware):
 ```
 
 `__websocket__` and `__webtransport__` take them too, and are given the socket
-or session as their context.
+or the WebTransport session as their context.
 
 **A dependency the middleware and the handler both name is produced once.** The
 cache belongs to the connection rather than to whichever layer resolved first,
