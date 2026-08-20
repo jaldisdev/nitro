@@ -26,7 +26,6 @@ developer without it running is not blocked while CI still gets the coverage.
 import asyncio
 
 import pytest
-
 from nitro_intercom import Intercom
 
 URL = "redis://127.0.0.1:6379"
@@ -122,8 +121,14 @@ class TestQueuedChannels:
             await asyncio.sleep(0.1)
             await intercom.send("room", "late")
 
-        asyncio.create_task(deliver())
-        assert await reader.receive(timeout=5) == "late"
+        # Held, not abandoned: a task nothing keeps a reference to may be
+        # collected before it runs, which would leave the reader waiting for a
+        # message that was never sent.
+        delivery = asyncio.create_task(deliver())
+        try:
+            assert await reader.receive(timeout=5) == "late"
+        finally:
+            await delivery
 
     async def test_a_reader_gives_up_at_its_timeout(self, intercom):
         reader = await intercom.reader("quiet")
