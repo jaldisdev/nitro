@@ -61,6 +61,7 @@ Start with [the overview](docs/overview.md).
 | [Settings](docs/settings.md) | Configuration, including the server's own |
 | [Dependency injection](docs/di.md) | `Depends`, and why its cache is per request |
 | [Middleware](docs/middleware.md) | Wrapping handlers |
+| [Sessions](docs/sessions.md) | Server-side state, and the origin check that guards it |
 | [Caching](docs/cache.md) · [Storage](docs/storage.md) · [Templates](docs/templates.md) · [Mail](docs/mail.md) | Batteries |
 | [Observability](docs/observability.md) | Prometheus metrics |
 | [Command line](docs/cli.md) | Serving, `check`, `shell` |

@@ -31,6 +31,8 @@ from test_middleware import make_request
 
 from nitro.cache.backends.memory import MemoryCache
 from nitro.protocols.http import HttpResponse
+from nitro.protocols.websocket import WebSocket, WebSocketDisconnect
+from nitro.protocols.webtransport import WebTransportSession
 from nitro.sessions import (
     KEY_ATTEMPTS,
     CacheSessionStore,
@@ -694,3 +696,213 @@ class TestOverridingTheTransport:
 
         response = await middleware.__http__(make_request(), handler)
         assert cookies_of(response) == []
+
+
+# ── Long-lived connections ───────────────────────────────────────────────────
+
+
+class RealtimeScope:
+    """Enough of a scope for a socket or a WebTransport session."""
+
+    __slots__ = (
+        "authority",
+        "client",
+        "headers",
+        "http_version",
+        "method",
+        "path",
+        "path_params",
+        "proto",
+        "query_string",
+        "scheme",
+        "server",
+        "subprotocols",
+    )
+
+    def __init__(self, proto="websocket", headers=None, query_string=""):
+        object.__setattr__(self, "proto", proto)
+        object.__setattr__(self, "path", "/live")
+        object.__setattr__(self, "method", "GET")
+        object.__setattr__(self, "query_string", query_string)
+        object.__setattr__(self, "scheme", "http")
+        object.__setattr__(self, "authority", "localhost:8000")
+        object.__setattr__(self, "http_version", "1.1")
+        object.__setattr__(self, "headers", headers or {})
+        object.__setattr__(self, "client", ("127.0.0.1", 9000))
+        object.__setattr__(self, "server", ("localhost", 8000))
+        object.__setattr__(self, "path_params", {})
+        object.__setattr__(self, "subprotocols", ())
+
+
+def make_socket(headers=None) -> WebSocket:
+    return WebSocket(RealtimeScope(headers=headers), object())
+
+
+def make_transport(query_string="") -> WebTransportSession:
+    return WebTransportSession(
+        RealtimeScope(proto="webtransport", query_string=query_string), object()
+    )
+
+
+class TestWebSocket:
+    async def test_a_socket_sees_the_bag_the_request_made(self):
+        store = make_store()
+        middleware = make_middleware(store)
+
+        async def handler(request):
+            await request.state.session.set("region", "eu")
+            return HttpResponse("hello")
+
+        key = key_from(await middleware.__http__(make_request(), handler))
+
+        seen = {}
+
+        async def socket_handler(socket):
+            seen["region"] = await socket.state.session.get("region")
+
+        await middleware.__websocket__(make_socket({"cookie": f"sessionid={key}"}), socket_handler)
+
+        assert seen["region"] == "eu"
+
+    async def test_a_socket_can_write_to_the_bag(self):
+        store = make_store()
+        middleware = make_middleware(store)
+
+        session = Session(None, store, TIMEOUT)
+        await session.set("a", 1)
+        await session.save()
+
+        async def socket_handler(socket):
+            await socket.state.session.set("b", 2)
+
+        socket = make_socket({"cookie": f"sessionid={session.key}"})
+        await middleware.__websocket__(socket, socket_handler)
+
+        assert await Session(session.key, store, TIMEOUT).items() == {"a": 1, "b": 2}
+
+    async def test_the_bag_survives_a_disconnect(self):
+        # A socket handler usually ends by raising, so a save that only ran on
+        # the way out normally would drop everything the connection wrote.
+        store = make_store()
+        middleware = make_middleware(store)
+
+        session = Session(None, store, TIMEOUT)
+        await session.set("a", 1)
+        await session.save()
+
+        async def socket_handler(socket):
+            await socket.state.session.set("b", 2)
+            raise WebSocketDisconnect(1001)
+
+        socket = make_socket({"cookie": f"sessionid={session.key}"})
+        with pytest.raises(WebSocketDisconnect):
+            await middleware.__websocket__(socket, socket_handler)
+
+        assert await Session(session.key, store, TIMEOUT).get("b") == 2
+
+    async def test_a_socket_that_ignores_the_session_writes_nothing(self):
+        cache = CountingCache()
+        middleware = make_middleware(make_store(cache))
+
+        async def socket_handler(socket):
+            return None
+
+        await middleware.__websocket__(make_socket(), socket_handler)
+
+        assert cache.calls == []
+
+    async def test_a_malformed_cookie_header_does_not_refuse_the_connection(self):
+        middleware = make_middleware(make_store())
+
+        async def socket_handler(socket):
+            assert socket.state.session.key is None
+
+        await middleware.__websocket__(make_socket({"cookie": "=====;;;"}), socket_handler)
+
+
+class TestWebTransport:
+    async def test_a_browser_handshake_carries_no_key(self):
+        # The W3C API sends neither cookies nor HTTP credentials, on purpose.
+        # This must be plainly nothing rather than something that looks found.
+        middleware = make_middleware(make_store())
+        assert middleware.read_key(make_transport()) is None
+
+    async def test_a_session_is_still_attached_and_usable(self):
+        store = make_store()
+        middleware = make_middleware(store)
+
+        async def handler(transport):
+            await transport.state.session.set("cursor", [1, 2])
+
+        transport = make_transport()
+        await middleware.__webtransport__(transport, handler)
+
+        assert transport.state.session.key is not None
+        assert await Session(transport.state.session.key, store, TIMEOUT).get("cursor") == [1, 2]
+
+    async def test_the_key_can_be_taken_from_the_url(self):
+        store = make_store()
+
+        class QuerySessions(SessionMiddleware):
+            def read_key(self, connection):
+                return connection.query_params.get("k")
+
+        middleware = QuerySessions(store=store)
+
+        session = Session(None, store, TIMEOUT)
+        await session.set("region", "eu")
+        await session.save()
+
+        seen = {}
+
+        async def handler(transport):
+            seen["region"] = await transport.state.session.get("region")
+
+        await middleware.__webtransport__(make_transport(f"k={session.key}"), handler)
+
+        assert seen["region"] == "eu"
+
+    async def test_a_handler_can_open_a_session_after_the_connection_is_up(self):
+        # The pattern the spec intends: authenticate over the transport itself,
+        # which the middleware cannot reach because it runs before that.
+        store = make_store()
+
+        session = Session(None, store, TIMEOUT)
+        await session.set("region", "eu")
+        await session.save()
+
+        transport = make_transport()
+        transport.state.session = await open_session(session.key, store=store, timeout=TIMEOUT)
+
+        assert await transport.state.session.get("region") == "eu"
+
+
+class TestOutlivingTheTimeout:
+    async def test_touch_extends_a_session_a_long_connection_holds(self):
+        cache = MemoryCache("", {"KEY_PREFIX": "", "VERSION": 1, "TIMEOUT": TIMEOUT})
+        store = make_store(cache)
+
+        session = Session(None, store, timeout=10)
+        await session.set("a", 1)
+        await session.save()
+
+        with patch("nitro.cache.backends.memory.time") as clock:
+            # Five seconds in, the connection extends its own session.
+            clock.time.return_value = time.time() + 5
+            assert await session.touch() is True
+
+            # Past the original expiry, but not past the extended one.
+            clock.time.return_value = time.time() + 12
+            assert await Session(session.key, store, TIMEOUT).get("a") == 1
+
+    async def test_without_a_touch_it_expires_under_the_connection(self):
+        cache = MemoryCache("", {"KEY_PREFIX": "", "VERSION": 1, "TIMEOUT": TIMEOUT})
+        store = make_store(cache)
+
+        session = Session(None, store, timeout=10)
+        await session.set("a", 1)
+        await session.save()
+
+        with patch("nitro.cache.backends.memory.time") as clock:
+            clock.time.return_value = time.time() + 20
+            assert await Session(session.key, store, TIMEOUT).items() == {}

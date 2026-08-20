@@ -42,6 +42,8 @@ only the application knows when that is.
 
 from __future__ import annotations
 
+import contextlib
+import http.cookies as http_cookies
 from typing import Any, Protocol, runtime_checkable
 
 from nitro.middleware.base import Middleware
@@ -402,15 +404,33 @@ class SessionMiddleware(Middleware):
     def read_key(self, connection: Any) -> str | None:
         """The session key `connection` arrived with, if any.
 
-        Reads ``SESSION_COOKIE_NAME``. A connection that carries no cookies —
-        WebTransport does not, by design — has no key here, and an application
-        using that protocol overrides this or opens the session itself with
-        :func:`open_session`.
+        Reads ``SESSION_COOKIE_NAME``, from the request's own cookies where
+        there are any and from the handshake's ``Cookie`` header otherwise — a
+        WebSocket upgrade is an HTTP request, so a browser sends cookies on it.
+
+        WebTransport is the case with no answer here. Its handshake carries no
+        cookies at all: the W3C API attaches neither them nor HTTP credentials,
+        deliberately, so there is no ambient key to find and this returns
+        `None` for every browser connection. A WebTransport application either
+        puts the key in the URL and overrides this to read
+        ``connection.query_params``, or authenticates over the transport once
+        it is open and calls :func:`open_session` itself.
         """
         cookies = getattr(connection, "cookies", None)
-        if not cookies:
-            return None
-        return cookies.get(self.cookie_name)
+        if cookies is None:
+            headers = getattr(connection, "headers", None)
+            header = headers.get("cookie") if headers is not None else None
+            if not header:
+                return None
+            jar = http_cookies.SimpleCookie()
+            # A malformed Cookie header should not refuse the connection; a key
+            # that did parse is still worth having.
+            with contextlib.suppress(http_cookies.CookieError):
+                jar.load(header)
+            morsel = jar.get(self.cookie_name)
+            return morsel.value if morsel is not None else None
+
+        return cookies.get(self.cookie_name) or None
 
     def write_key(self, response: HttpResponse, key: str) -> None:
         """Tell the client the key to send next time."""
@@ -458,3 +478,29 @@ class SessionMiddleware(Middleware):
             self.write_key(response, session.key)
 
         return response
+
+    async def _realtime(self, connection: Any, call_next: Any) -> Any:
+        """Attach a session to a long-lived connection and write it back after.
+
+        There is no per-message response to hand a key back on, so nothing is
+        set here: a connection either arrived with a key or it did not. What is
+        in the bag when the handler finishes is saved, and a connection that was
+        given a key it did not have keeps it only for as long as it is open.
+        """
+        session = await open_session(
+            self.read_key(connection), store=self.store, timeout=self.timeout
+        )
+        connection.state.session = session
+        try:
+            return await call_next(connection)
+        finally:
+            # In a `finally` because a socket usually ends by raising — a
+            # disconnect is the normal way out, and a bag written during the
+            # connection would otherwise be dropped on the way.
+            await session.save()
+
+    async def __websocket__(self, websocket: Any, call_next: Any) -> Any:
+        return await self._realtime(websocket, call_next)
+
+    async def __webtransport__(self, transport: Any, call_next: Any) -> Any:
+        return await self._realtime(transport, call_next)

@@ -103,6 +103,7 @@ constructor argument.
 | `CACHES` | See [caching](cache.md). |
 | `STORAGES` | See [storage](storage.md). |
 | `INTERCOMS` | See [Intercom](intercom.md). |
+| `SESSION_*` | See [sessions](sessions.md). |
 | `EMAIL_*`, `DEFAULT_FROM_EMAIL` | See [mail](mail.md). |
 | `OBSERVABILITY_*` | See [observability](observability.md). |
 | `TIME_ZONE`, `USE_TZ` | Read by `nitro.utils.datetime`. |

@@ -93,6 +93,7 @@ Steps 1 and 2 are compiled. Steps 3 and 4 are yours.
 | Dependency injection | [di.md](di.md) |
 | Caching, storage, mail, templates | [cache.md](cache.md), [storage.md](storage.md), [mail.md](mail.md), [templates.md](templates.md) |
 | Middleware | [middleware.md](middleware.md) |
+| Sessions and cross-site requests | [sessions.md](sessions.md) |
 | Prometheus metrics | [observability.md](observability.md) |
 | The command line | [cli.md](cli.md) |
 | Running in production | [deployment.md](deployment.md) |

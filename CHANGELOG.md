@@ -30,6 +30,34 @@ pre-1.0 caveat that minor versions may still break things.
   varies on and none of them knows the others, so `Vary` has to be merged
   rather than assigned; and a `Content-Disposition` filename needs RFC 6266
   encoding to survive a name outside ASCII.
+- `nitro.sessions`: server-side state keyed to a connection, kept in the cache
+  named by `SESSION_CACHE` and configured with the flat `SESSION_*` settings.
+  `SessionMiddleware` leaves it at `request.state.session` and answers for all
+  three protocols. Every operation is a coroutine and the bag is read once per
+  connection, so a request that never touches the session costs nothing and one
+  that reads ten keys costs one round trip.
+
+  Where the key travels is the application's decision: `read_key` and
+  `write_key` carry it in a cookie by default and are meant to be overridden by
+  a project whose key rides in a token or a header. `open_session` is the
+  primitive the middleware is built on and is public, because a WebTransport
+  connection can only authenticate after it is up, which middleware cannot
+  reach. Sessions are held somewhere else entirely by supplying a
+  `SessionStore` — five methods — which is also what a deployment does when
+  cache eviction losing a session is not acceptable.
+
+  There is no login, no identity and no device registry. `Session.cycle()`
+  exists because session fixation has to be defended against at sign-in, and
+  only the application knows when that is.
+- `OriginMiddleware`, Nitro's answer to cross-site request forgery. It checks
+  `Sec-Fetch-Site`, falling back to `Origin` against `ALLOWED_HOSTS`, on every
+  unsafe method — no token, no secret in the session, no tag to render into a
+  form and no decorator to exempt a view. Ships alongside sessions rather than
+  separately: once Nitro sets a session cookie it is issuing a credential the
+  browser attaches to requests from anywhere, so the check stops being optional.
+- `nitro check` reports two ways sessions go wrong: kept in a `MemoryCache`
+  with more than one worker, where only the worker that made a session finds it
+  again; and carried in a cookie with no origin check installed.
 
 ### Changed
 
@@ -43,6 +71,12 @@ pre-1.0 caveat that minor versions may still break things.
   `get_connection` reads that instead of matching on the import path.
 - `send_messages(fail_silently=...)` no longer writes the flag onto the
   backend, so one caller's choice cannot leak into another's.
+- **Breaking.** The dependency-injection context parameter `session` is now
+  `transport`. It names the WebTransport session, and that reading only got
+  more confusing once a connection started carrying a session store as well —
+  `session.state.session` was about to become idiomatic. A handler is unaffected,
+  because it receives its connection positionally; a *dependency* that asked for
+  the WebTransport session by naming a parameter `session` has to rename it.
 - `nitro.protocols` exports the WebSocket and WebTransport classes and the full
   set of HTTP exceptions.
 - `BaseStorage.get_accessed_time` is no longer abstract; a backend that cannot
