@@ -45,6 +45,7 @@ from urllib.parse import parse_qsl, quote, urlencode
 # their own, and reach back for a response class only when one is being built.
 from nitro.protocols.exceptions import HttpBadRequest
 from nitro.utils import json as json_module
+from nitro.utils.http import content_disposition_header
 
 __all__ = [
     "URL",
@@ -726,10 +727,11 @@ class FileResponse(HttpResponse):
         # knows the actual extension even when a download name differs.
         self.content_type = content_type
 
-        name = filename or os.path.basename(self.path)
         if as_attachment or filename:
-            disposition = "attachment" if as_attachment else "inline"
-            self._headers.setdefault("content-disposition", f'{disposition}; filename="{name}"')
+            name = filename or os.path.basename(self.path)
+            disposition = content_disposition_header(as_attachment, name)
+            if disposition is not None:
+                self._headers.setdefault("content-disposition", disposition)
 
     async def __http__(self, protocol: Any) -> None:
         if self.range is None:

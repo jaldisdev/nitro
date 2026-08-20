@@ -35,6 +35,7 @@ import zoneinfo
 
 import pytest
 
+from nitro.protocols.http import FileResponse, HttpResponse
 from nitro.settings import settings
 from nitro.utils import datetime as datetime_utils
 from nitro.utils.crypto import (
@@ -44,6 +45,7 @@ from nitro.utils.crypto import (
     salted_hmac,
 )
 from nitro.utils.encoding import ensure_bytes, ensure_str, is_protected_type
+from nitro.utils.http import content_disposition_header, patch_vary_headers
 from nitro.utils.lazy import SimpleLazyObject, empty, lazystr
 from nitro.utils.modules import import_string
 from nitro.utils.text import capitalize_first, lower_first, to_camel_case, to_snake_case
@@ -390,3 +392,70 @@ class TestTranslation:
         from nitro.utils.translation import to_language
 
         assert to_language("en_US") == "en-us"
+
+
+class TestHttp:
+    def test_content_disposition_is_omitted_for_a_nameless_inline_response(self):
+        assert content_disposition_header(False, None) is None
+
+    def test_content_disposition_needs_no_name_to_be_an_attachment(self):
+        assert content_disposition_header(True, None) == "attachment"
+        assert content_disposition_header(True, "") == "attachment"
+
+    def test_content_disposition_quotes_an_ascii_name(self):
+        assert content_disposition_header(True, "report.pdf") == 'attachment; filename="report.pdf"'
+        assert content_disposition_header(False, "report.pdf") == 'inline; filename="report.pdf"'
+
+    def test_content_disposition_escapes_a_name_that_would_close_the_quoting(self):
+        assert content_disposition_header(True, 'a"b.pdf') == 'attachment; filename="a\\"b.pdf"'
+        assert content_disposition_header(True, "a\\b.pdf") == 'attachment; filename="a\\\\b.pdf"'
+
+    def test_content_disposition_encodes_a_name_outside_ascii(self):
+        assert content_disposition_header(True, "verslag-Ω.pdf") == (
+            "attachment; filename*=utf-8''verslag-%CE%A9.pdf"
+        )
+
+    def test_vary_is_created_when_the_response_has_none(self):
+        response = HttpResponse()
+        patch_vary_headers(response, ("Authorization",))
+        assert response.headers["vary"] == "Authorization"
+
+    def test_vary_keeps_what_is_already_there(self):
+        response = HttpResponse(headers={"Vary": "Accept-Encoding"})
+        patch_vary_headers(response, ("Authorization", "Cookie"))
+        assert response.headers["Vary"] == "Accept-Encoding, Authorization, Cookie"
+
+    def test_vary_does_not_repeat_a_name_whatever_its_case(self):
+        response = HttpResponse(headers={"vary": "accept-encoding"})
+        patch_vary_headers(response, ("Accept-Encoding",))
+        assert response.headers["vary"] == "accept-encoding"
+
+    def test_vary_does_not_add_a_second_key_in_another_case(self):
+        response = HttpResponse(headers={"Vary": "Cookie"})
+        patch_vary_headers(response, ("Authorization",))
+        assert [key for key in response.headers if key.lower() == "vary"] == ["Vary"]
+
+    def test_vary_collapses_to_a_star(self):
+        response = HttpResponse(headers={"Vary": "Cookie"})
+        patch_vary_headers(response, ("*",))
+        assert response.headers["Vary"] == "*"
+
+    def test_vary_tolerates_loose_spacing(self):
+        response = HttpResponse(headers={"Vary": "Cookie ,  Accept-Encoding"})
+        patch_vary_headers(response, ("Cookie", "Authorization"))
+        assert response.headers["Vary"] == "Cookie, Accept-Encoding, Authorization"
+
+
+class TestFileResponseDisposition:
+    def test_a_download_name_outside_ascii_is_encoded(self, tmp_path):
+        path = tmp_path / "source.pdf"
+        path.write_bytes(b"%PDF")
+        response = FileResponse(path, filename="verslag-Ω.pdf", as_attachment=True)
+        assert response.headers["content-disposition"] == (
+            "attachment; filename*=utf-8''verslag-%CE%A9.pdf"
+        )
+
+    def test_no_disposition_without_a_reason_for_one(self, tmp_path):
+        path = tmp_path / "source.pdf"
+        path.write_bytes(b"%PDF")
+        assert "content-disposition" not in FileResponse(path).headers

@@ -25,6 +25,11 @@ pre-1.0 caveat that minor versions may still break things.
   `localtime`.
 - `nitro.utils.crypto.constant_time_compare`, which `nitro.utils.tokens`
   imported but which had never existed.
+- `nitro.utils.http`, with `patch_vary_headers` and
+  `content_disposition_header`. Middleware each know one thing a response
+  varies on and none of them knows the others, so `Vary` has to be merged
+  rather than assigned; and a `Content-Disposition` filename needs RFC 6266
+  encoding to survive a name outside ASCII.
 
 ### Changed
 
@@ -45,6 +50,10 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Fixed
 
+- `FileResponse` built its `Content-Disposition` by interpolating the filename
+  into a quoted string, so a name containing a quote or backslash truncated the
+  header and a name outside ASCII arrived mangled. It now goes through
+  `nitro.utils.http.content_disposition_header`.
 - Middleware no longer disappears silently. The stack decided whether a hook
   was implemented by calling it and catching `AttributeError` and
   `NotImplementedError`, so any such error raised *inside* a middleware looked
