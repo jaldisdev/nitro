@@ -33,6 +33,7 @@
 //! loop's own thread. Under load that turns a wake-up per request into a
 //! wake-up per batch, and the busier the server is the larger the batch.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -66,6 +67,7 @@ pub struct Handoff {
 }
 
 impl Handoff {
+    #[cfg(unix)]
     pub fn new(waker: Waker) -> Self {
         Self {
             queued: Mutex::new(Vec::new()),

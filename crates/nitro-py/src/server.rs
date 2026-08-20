@@ -30,6 +30,7 @@
 //! threads in the process at that moment.
 
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use nitro_core::config::ServerConfig;
@@ -48,12 +49,15 @@ use crate::dispatch::PythonDispatch;
 use crate::lifecycle;
 
 /// How often the parent checks on its children.
+#[cfg(unix)]
 const SUPERVISOR_POLL: Duration = Duration::from_millis(100);
 /// How long the parent waits before replacing a worker that died, so a worker
 /// that fails on startup cannot spin.
+#[cfg(unix)]
 const RESPAWN_DELAY: Duration = Duration::from_millis(500);
 /// Extra time beyond a worker's own drain budget before the parent stops
 /// waiting and kills what is left.
+#[cfg(unix)]
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 
 #[pyclass(name = "Server", module = "nitro._nitro")]
@@ -369,6 +373,9 @@ mod process_signals {
         false
     }
 
+    /// Mirrors the Unix module so callers need no platform check. Nothing
+    /// here records a signal, so nothing has to clear one.
+    #[allow(dead_code)]
     pub fn reset() {}
 }
 
@@ -495,6 +502,7 @@ fn fork_worker(
     unsafe { libc::_exit(code) }
 }
 
+#[cfg(unix)]
 fn duplicate(sockets: &BoundSockets, worker: usize) -> PyResult<BoundSockets> {
     let describe =
         |error: std::io::Error| PyRuntimeError::new_err(format!("duplicating a socket: {error}"));
