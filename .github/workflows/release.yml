@@ -73,7 +73,7 @@ jobs:
           python -c "import nitro_intercom; print('nitro-intercom', nitro_intercom.__version__)"
           python -m zipfile -l dist/nitro_intercom-*.whl | grep -i LICENSE
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
           path: dist
@@ -95,7 +95,7 @@ jobs:
           command: sdist
           args: --out ../dist
           working-directory: nitro-intercom
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist
@@ -136,7 +136,7 @@ jobs:
       # somebody has to store and rotate.
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -161,7 +161,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
