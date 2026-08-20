@@ -30,8 +30,6 @@ jobs:
             target: aarch64
           - runner: macos-latest
             target: aarch64
-          - runner: macos-13
-            target: x86_64
           - runner: windows-latest
             target: x64
     steps:
@@ -122,8 +120,13 @@ jobs:
           tar -tzf target/package/intercom-core-*.crate | grep -q LICENSE-MIT \
             || { echo "intercom-core has no licence text"; exit 1; }
 
-  publish:
-    name: Publish to PyPI
+  # Two jobs rather than two steps in one. PyPI matches a trusted publisher on
+  # (owner, repo, workflow, environment), and a *pending* publisher — one for a
+  # project that does not exist on PyPI yet — must be unique on that tuple.
+  # Both distributions are published from this one workflow, so the environment
+  # is what tells the two configurations apart.
+  publish-framework:
+    name: Publish nitro-framework to PyPI
     needs: [wheels, sdist, crates]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-latest
@@ -137,17 +140,35 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # A trusted publisher mints a token scoped to one project, so the two
-      # distributions are uploaded separately rather than from one directory.
-      - name: Separate the two distributions
+      - name: Take the framework distributions
         run: |
-          mkdir -p upload/framework upload/intercom
-          mv dist/nitro_framework-* upload/framework/
-          mv dist/nitro_intercom-* upload/intercom/
-          test -z "$(ls -A dist)" || { echo "unexpected artefacts:"; ls dist; exit 1; }
+          mkdir -p upload
+          mv dist/nitro_framework-* upload/
+          # What is left should be the other distribution. Something matching
+          # neither means the build produced an artefact nobody expected.
+          unexpected=$(ls dist | grep -v '^nitro_intercom-' || true)
+          test -z "$unexpected" || { echo "unexpected artefacts: $unexpected"; exit 1; }
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: upload/framework
+          packages-dir: upload
+
+  publish-intercom:
+    name: Publish nitro-intercom to PyPI
+    needs: [wheels, sdist, crates]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    environment: release-intercom
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Take the intercom distributions
+        run: |
+          mkdir -p upload
+          mv dist/nitro_intercom-* upload/
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: upload/intercom
+          packages-dir: upload

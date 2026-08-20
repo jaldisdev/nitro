@@ -427,12 +427,12 @@ fn supervise(
 
 #[cfg(not(unix))]
 fn supervise(
-    python: Python<'_>,
-    application: &Py<PyAny>,
-    routes: Arc<RouteTable>,
-    config: Arc<ServerConfig>,
-    tls: Option<TlsMaterial>,
-    sockets: &BoundSockets,
+    _python: Python<'_>,
+    _application: &Py<PyAny>,
+    _routes: Arc<RouteTable>,
+    _config: Arc<ServerConfig>,
+    _tls: Option<TlsMaterial>,
+    _sockets: &BoundSockets,
 ) -> PyResult<()> {
     Err(PyRuntimeError::new_err(
         "multiple workers require a platform that can fork; set workers to 1",
