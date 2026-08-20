@@ -3,14 +3,21 @@
 Publish/subscribe channels for Python services, backed by the same Rust core
 the Nitro framework uses internally.
 
-Install this package only if you are **not** running on Nitro. Nitro projects
-should import `nitro.intercom`, which reaches the same core in-process and
-takes its configuration from the project's settings object instead of a
-separate config surface.
+## Installation
 
 ```sh
 pip install nitro-intercom
 ```
+
+Python 3.13 or newer. The distribution is named `nitro-intercom`; the package
+it installs is `nitro_intercom`, which is what you import. The wheel carries the
+compiled core, so there is nothing to build. Redis is what it connects to, not
+something it installs.
+
+Install this only if you are **not** running on Nitro. Nitro projects should
+import `nitro.intercom`, which reaches the same core in-process and takes its
+configuration from the project's settings object instead of a separate config
+surface.
 
 ## Connecting
 

@@ -105,5 +105,5 @@ distribution is named `nitro-framework`; the package it installs is `nitro`.
 The wheel carries the compiled server; there is nothing else to install to
 serve traffic. Optional extras pull in the clients particular backends need —
 `nitro-framework[redis]`, `nitro-framework[aws]`, `nitro-framework[azure]`,
-`nitro-framework[sendgrid]`, `nitro-framework[memcached]`, or
-`nitro-framework[all]`.
+`nitro-framework[sendgrid]`, `nitro-framework[memcached]`,
+`nitro-framework[email-oauth]`, or `nitro-framework[all]`.

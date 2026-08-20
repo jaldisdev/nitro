@@ -32,6 +32,29 @@ A project usually points the `ROUTES` setting at its route module rather than
 naming it here. Handlers can also be registered on the application directly with
 `@app.route(...)`.
 
+## Installation
+
+```sh
+pip install nitro-framework
+```
+
+Python 3.13 or newer. The distribution is named `nitro-framework`; the package
+it installs is `nitro`, which is what you import. The wheel carries the compiled
+server, so there is nothing to build.
+
+Extras pull in the clients particular backends need:
+
+```sh
+pip install "nitro-framework[redis]"
+```
+
+`aws`, `azure`, `email-oauth`, `memcached`, `redis`, `sendgrid`, and `all`.
+
+`nitro-intercom` is published from this repository too, from the same tag and at
+the same version, so either package at a given version was built from the same
+source. A Nitro project does not install it — see
+[docs/intercom.md](docs/intercom.md).
+
 ## Not an ASGI framework
 
 Nitro does not implement ASGI and does not ship an adapter for it. The server —
@@ -99,27 +122,6 @@ pytest                                # Python
 
 Tests that need Redis skip when there is not one reachable at
 `127.0.0.1:6379`, so a checkout without it still runs green.
-
-## Requirements
-
-Python 3.13 or newer. The wheel carries the compiled server, so there is
-nothing to build.
-
-```sh
-pip install nitro-framework
-```
-
-The distribution is named `nitro-framework`; the package it installs is
-`nitro`, which is what you import. Optional extras pull in the clients
-particular backends need: `nitro-framework[redis]`, `nitro-framework[aws]`,
-`nitro-framework[azure]`, `nitro-framework[sendgrid]`,
-`nitro-framework[memcached]`, `nitro-framework[email-oauth]`, or
-`nitro-framework[all]`.
-
-`nitro-intercom` is published from this repository too, from the same tag and
-at the same version, so either package at a given version was built from the
-same source. A Nitro project does not install it — see
-[docs/intercom.md](docs/intercom.md).
 
 ## Contributing
 
