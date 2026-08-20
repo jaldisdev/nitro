@@ -138,6 +138,15 @@ impl Waker {
             Ok(_) => Ok(()),
         }
     }
+
+    /// There is no socket pair to write to on a platform without one, and no
+    /// `Waker` to call this on either: `install` answers `None` before a
+    /// `Handoff` is built, so the caller schedules each request itself. This
+    /// exists so `push` compiles everywhere, not to run.
+    #[cfg(not(unix))]
+    fn wake(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// What the event loop calls when the socket says there is something to collect.
