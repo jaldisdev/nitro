@@ -88,11 +88,15 @@ function, `method_decorator` turns it into one that can wrap a method:
 from nitro.utils.decorators import method_decorator
 
 
-@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(audited, name="dispatch")
 class UploadEndpoint(HTTPEndpoint):
     @method_decorator(rate_limited)
     async def post(self, request: HttpRequest) -> HttpResponse: ...
 ```
+
+`audited` and `rate_limited` here are the application's own — ordinary
+decorators written to wrap a function, which is the case `method_decorator`
+exists for.
 
 Naming a method on the class decorates that method; used on the method itself it
 needs no name. Either form takes a list, applied so that the first written is

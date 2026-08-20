@@ -19,18 +19,21 @@
 
 """The helpers in `nitro.utils`.
 
-These are for applications built on Nitro rather than for the framework, which
-is exactly why none of them had a test: nothing in `nitro/` imports most of
-them, so nothing exercised them either. Two were broken outright —
-`to_camel_case` and `to_snake_case` called an `re` they never imported, and
-`get_current_timezone` read an `_active` that did not exist — and every call
-raised `NameError`.
+What is left is what the framework itself uses, which is the standard the
+package is now held to. The ones that went were unused, and being unused is
+what let them ship broken: `to_camel_case` and `to_snake_case` called an `re`
+they never imported, `get_current_timezone` read an `_active` that did not
+exist, and every call raised `NameError`.
+
+`translation` went for a worse reason. It kept the active language on a
+process-global singleton, so on a worker serving requests concurrently one
+request's `activate` decided every other request's language. Its tests passed
+because they ran one after another, which is the only way that code is correct.
 """
 
 from __future__ import annotations
 
 import datetime as datetime_module
-import pickle
 import zoneinfo
 
 import pytest
@@ -44,49 +47,8 @@ from nitro.utils.crypto import (
     get_random_string,
     salted_hmac,
 )
-from nitro.utils.encoding import ensure_bytes, ensure_str, is_protected_type
 from nitro.utils.http import content_disposition_header, patch_vary_headers
-from nitro.utils.lazy import SimpleLazyObject, empty, lazystr
 from nitro.utils.modules import import_string
-from nitro.utils.text import capitalize_first, lower_first, to_camel_case, to_snake_case
-from nitro.utils.tokens import base36_to_int, int_to_base36
-from nitro.utils.version import get_complete_version, get_version
-
-
-class TestText:
-    """`to_camel_case` and `to_snake_case` raised NameError on every call."""
-
-    def test_camel_case_joins_underscored_words(self):
-        assert to_camel_case("user_id") == "userId"
-        assert to_camel_case("a_b_c") == "aBC"
-
-    def test_camel_case_can_capitalise_the_first_word(self):
-        assert to_camel_case("user_id", capitalize=True) == "UserId"
-
-    def test_camel_case_leaves_a_single_word_alone(self):
-        assert to_camel_case("user") == "user"
-
-    def test_camel_case_of_nothing_is_nothing(self):
-        assert to_camel_case("") == ""
-
-    def test_snake_case_separates_before_each_capital(self):
-        assert to_snake_case("userId") == "user_id"
-        assert to_snake_case("HTTPResponse") == "h_t_t_p_response"
-
-    def test_snake_case_leaves_a_leading_capital_alone(self):
-        assert to_snake_case("User") == "user"
-
-    def test_the_two_round_trip(self):
-        assert to_snake_case(to_camel_case("user_id")) == "user_id"
-
-    def test_capitalising_the_first_letter_leaves_the_rest(self):
-        assert capitalize_first("hello world") == "Hello world"
-        assert capitalize_first("hELLO") == "HELLO", "unlike str.capitalize"
-        assert capitalize_first("") == ""
-
-    def test_lowering_the_first_letter_leaves_the_rest(self):
-        assert lower_first("Hello World") == "hello World"
-        assert lower_first("") == ""
 
 
 class TestDatetime:
@@ -206,56 +168,6 @@ class TestCrypto:
             salted_hmac("salt", "value", secret="s", algorithm="not-an-algorithm")
 
 
-class TestTokens:
-    def test_base36_round_trips(self):
-        for number in [0, 1, 35, 36, 1234, 999999]:
-            assert base36_to_int(int_to_base36(number)) == number
-
-    def test_base36_is_lower_case(self):
-        assert int_to_base36(35) == "z"
-        assert int_to_base36(36) == "10"
-
-    def test_a_negative_number_is_refused(self):
-        with pytest.raises(ValueError):
-            int_to_base36(-1)
-
-    def test_something_that_is_not_base36_is_refused(self):
-        with pytest.raises(ValueError):
-            base36_to_int("not base 36!")
-
-
-class TestEncoding:
-    def test_bytes_become_text(self):
-        assert ensure_str(b"hello") == "hello"
-
-    def test_text_stays_text(self):
-        assert ensure_str("hello") == "hello"
-
-    def test_text_becomes_bytes(self):
-        assert ensure_bytes("hello") == b"hello"
-
-    def test_bytes_stay_bytes(self):
-        assert ensure_bytes(b"hello") == b"hello"
-
-    def test_a_number_becomes_its_text(self):
-        assert ensure_str(42) == "42"
-
-    def test_protected_types_are_left_alone_when_asked(self):
-        assert ensure_str(42, strings_only=True) == 42
-        assert ensure_str(None, strings_only=True) is None
-
-    def test_what_counts_as_protected(self):
-        assert is_protected_type(None)
-        assert is_protected_type(42)
-        assert not is_protected_type("text")
-
-    def test_undecodable_bytes_are_reported_with_their_object(self):
-        from nitro.utils.encoding import NitroUnicodeDecodeError
-
-        with pytest.raises(NitroUnicodeDecodeError):
-            ensure_str(b"\xff\xfe", encoding="utf-8")
-
-
 class TestModules:
     def test_it_imports_a_dotted_path(self):
         assert import_string("nitro.settings.ImproperlyConfigured") is not None
@@ -267,131 +179,6 @@ class TestModules:
     def test_a_missing_attribute_is_reported(self):
         with pytest.raises(ImportError, match="NoSuchThing"):
             import_string("nitro.settings.NoSuchThing")
-
-
-class TestLazy:
-    """The general-purpose deferred objects, distinct from `LazySettings`."""
-
-    def test_it_is_not_built_until_it_is_used(self):
-        built = []
-
-        def make():
-            built.append(True)
-            return "value"
-
-        wrapper = SimpleLazyObject(make)
-        assert built == [], "constructing must not build it"
-
-        assert str(wrapper) == "value"
-        assert built == [True]
-
-    def test_it_is_built_only_once(self):
-        built = []
-        wrapper = SimpleLazyObject(lambda: built.append(True) or "value")
-
-        str(wrapper)
-        str(wrapper)
-        assert len(built) == 1
-
-    def test_it_forwards_attributes(self):
-        class Thing:
-            name = "thing"
-
-            def greet(self):
-                return "hello"
-
-        wrapper = SimpleLazyObject(Thing)
-        assert wrapper.name == "thing"
-        assert wrapper.greet() == "hello"
-
-    def test_an_unbuilt_wrapper_reports_itself_as_such(self):
-        wrapper = SimpleLazyObject(lambda: "value")
-        assert wrapper._wrapped is empty
-
-    def test_it_pickles_as_what_it_wraps(self):
-        wrapper = SimpleLazyObject(lambda: {"a": 1})
-        assert pickle.loads(pickle.dumps(wrapper)) == {"a": 1}
-
-    def test_a_lazy_string_behaves_like_one(self):
-        text = lazystr("hello")
-        assert str(text) == "hello"
-        assert f"{text} world" == "hello world"
-
-    def test_it_compares_as_what_it_wraps(self):
-        assert SimpleLazyObject(lambda: 42) == 42
-
-
-class TestVersion:
-    def test_a_final_release_reads_as_its_numbers(self):
-        assert get_version((1, 2, 3, "final", 0)) == "1.2.3"
-
-    def test_a_trailing_zero_patch_is_dropped(self):
-        assert get_version((1, 2, 0, "final", 0)) == "1.2"
-
-    def test_a_pre_release_carries_its_marker(self):
-        assert get_version((1, 2, 0, "alpha", 1)).startswith("1.2a1")
-        assert get_version((1, 2, 0, "beta", 2)).startswith("1.2b2")
-        assert get_version((1, 2, 0, "rc", 1)).startswith("1.2rc1")
-
-    def test_a_complete_version_is_five_parts(self):
-        assert len(get_complete_version((1, 2, 3, "final", 0))) == 5
-
-    def test_an_invalid_release_stage_is_refused(self):
-        with pytest.raises(AssertionError):
-            get_complete_version((1, 2, 3, "nonsense", 0))
-
-
-class TestTranslation:
-    def test_a_string_passes_through_without_a_catalogue(self):
-        from nitro.utils.translation import gettext
-
-        assert gettext("Hello") == "Hello"
-
-    def test_marking_for_translation_changes_nothing_now(self):
-        from nitro.utils.translation import gettext_noop
-
-        assert gettext_noop("Hello") == "Hello"
-
-    def test_plurals_choose_by_number(self):
-        from nitro.utils.translation import ngettext
-
-        assert ngettext("%d item", "%d items", 1) == "%d item"
-        assert ngettext("%d item", "%d items", 2) == "%d items"
-
-    def test_a_lazy_string_resolves_when_it_is_used(self):
-        from nitro.utils.translation import gettext_lazy
-
-        assert str(gettext_lazy("Hello")) == "Hello"
-
-    def test_the_active_language_can_be_set_and_read(self):
-        from nitro.utils.translation import activate, deactivate_all, get_language
-
-        try:
-            activate("de")
-            assert get_language() == "de"
-        finally:
-            deactivate_all()
-
-    def test_override_restores_the_previous_language(self):
-        from nitro.utils.translation import activate, deactivate_all, get_language, override
-
-        try:
-            activate("en")
-            with override("fr"):
-                assert get_language() == "fr"
-            assert get_language() == "en"
-        finally:
-            deactivate_all()
-
-    def test_a_language_code_becomes_a_locale_name(self):
-        from nitro.utils.translation import to_locale
-
-        assert to_locale("en-us") == "en_US"
-
-    def test_a_locale_name_becomes_a_language_code(self):
-        from nitro.utils.translation import to_language
-
-        assert to_language("en_US") == "en-us"
 
 
 class TestHttp:

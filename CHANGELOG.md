@@ -23,8 +23,8 @@ pre-1.0 caveat that minor versions may still break things.
   JSON. `pickle` remains available as an explicit opt-in.
 - `nitro.utils.datetime` gained `activate`, `deactivate`, `override` and
   `localtime`.
-- `nitro.utils.crypto.constant_time_compare`, which `nitro.utils.tokens`
-  imported but which had never existed.
+- `nitro.utils.crypto.constant_time_compare`, which the package referred to but
+  had never defined.
 - `nitro.utils.http`, with `patch_vary_headers` and
   `content_disposition_header`. Middleware each know one thing a response
   varies on and none of them knows the others, so `Vary` has to be merged

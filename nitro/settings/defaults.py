@@ -53,8 +53,6 @@ ALLOWED_HOSTS: list[str] = []
 TIME_ZONE: str = "Europe/Zurich"
 USE_TZ: bool = True
 
-LANGUAGE_CODE: str = "en-us"
-LANGUAGES: list[tuple[str, str]] = [("en-us", "English (US)")]
 
 # Import paths searched for additional CLI commands.
 COMMAND_MODULES: list[str] = []

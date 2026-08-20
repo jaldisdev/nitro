@@ -72,11 +72,11 @@ class Settings:
 class LazySettings:
     """The project's settings, resolved on first use.
 
-    Not built on :mod:`nitro.utils.lazy`, which offers general-purpose deferred
-    objects for application code. This defers one specific thing from one
-    specific place, and adds :meth:`reset` and :attr:`configured` for tests that
-    change the environment between cases — neither of which a general proxy
-    models, and this sits on the import path of nearly everything.
+    Deliberately its own thing rather than a general deferred-object wrapper.
+    This defers one specific thing from one specific place, and adds
+    :meth:`reset` and :attr:`configured` for tests that change the environment
+    between cases — neither of which a general proxy models, and this sits on
+    the import path of nearly everything.
     """
 
     _wrapped: Settings | None

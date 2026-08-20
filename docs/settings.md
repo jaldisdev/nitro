@@ -107,7 +107,6 @@ constructor argument.
 | `EMAIL_*`, `DEFAULT_FROM_EMAIL` | See [mail](mail.md). |
 | `OBSERVABILITY_*` | See [observability](observability.md). |
 | `TIME_ZONE`, `USE_TZ` | Read by `nitro.utils.datetime`. |
-| `LANGUAGE_CODE`, `LANGUAGES` | Read by `nitro.utils.translation`. |
 
 ## Allowed hosts
 
