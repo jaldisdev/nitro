@@ -320,27 +320,17 @@ class SecurityHeadersMiddleware(Middleware):
 class OriginMiddleware(Middleware):
     """Refuses a state-changing request that came from somewhere else.
 
-    This is Nitro's answer to cross-site request forgery, and it is deliberately
-    not a token scheme. There is no token, no secret in the session, no tag to
-    render into a form and no decorator to exempt a view — the whole check is
-    these headers, so there is nothing for an author to forget and nothing that
-    needs a form framework to carry it.
+    Nitro's answer to cross-site request forgery, and deliberately not a token
+    scheme: the whole check is these headers, so there is nothing to render into
+    a form and nothing for an author to forget.
 
-    ``Sec-Fetch-Site`` is asked first, because the browser computes it and it
-    cannot be set by script. ``Origin`` is the fallback for clients that do not
-    send it.
-
-    An unsafe method arriving with neither header is refused. Something has to
-    give here: a browser sends `Origin` on every unsafe request, so what is left
-    is mostly a client that could just as well send one, and treating silence as
-    permission would make the check optional for anyone who omits a header.
-    Override :meth:`allows` for a caller that genuinely cannot.
+    ``Sec-Fetch-Site`` is asked first, because the browser computes it and script
+    cannot set it; ``Origin`` is the fallback. Neither header on an unsafe method
+    is a refusal — override :meth:`allows` for a caller that cannot send one.
 
     SECURITY WARNING: ``same-site`` is allowed, so a subdomain is trusted. That
-    is right for the usual `app.example.test` calling `api.example.test`, and
-    wrong when a subdomain is under someone else's control — user content on
-    `*.example.test`, say. A deployment like that wants a session-bound token as
-    well; neither this check nor `SameSite` can tell the two cases apart.
+    is wrong where a subdomain is under someone else's control, and neither this
+    check nor `SameSite` can tell that case from the ordinary one.
     """
 
     #: Methods that do not change anything, and so are not checked. A handler
@@ -387,15 +377,8 @@ class OriginMiddleware(Middleware):
         if not host:
             return False
 
-        # The request's own authority first: a request to the site it claims to
-        # come from is same-origin whatever the allow list says, which keeps a
-        # deployment that never filled ALLOWED_HOSTS in from being wide open
-        # here as well.
-        #
-        # Read off the scope rather than the `Host` header, which HTTP/2 and
-        # HTTP/3 do not send — there the authority is a pseudo-header, and a
-        # check that went looking for `Host` would find nothing on exactly the
-        # versions Nitro is built to serve.
+        # From the scope, not the `Host` header: HTTP/2 and HTTP/3 send the
+        # authority as a pseudo-header and no `Host` at all.
         target = request.url.netloc.lower()
         if target and host == target:
             return True

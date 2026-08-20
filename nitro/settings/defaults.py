@@ -206,10 +206,9 @@ CACHES: dict[str, dict[str, Any]] = {
 # Sessions, read by nitro.sessions. They do nothing unless SessionMiddleware is
 # installed, or the application opens a session itself.
 #
-# SESSION_CACHE names the cache the bag is kept in, so sessions can be given a
-# store of their own rather than sharing whatever else is being cached. A
-# MemoryCache is per process and therefore wrong for sessions in a deployment
-# with more than one worker; `nitro check` says so.
+# SESSION_CACHE names the cache the bag is kept in, so sessions can have one of
+# their own. A MemoryCache is per process and so wrong for sessions with more
+# than one worker; `nitro check` says so.
 SESSION_CACHE: str = "default"
 SESSION_KEY_PREFIX: str = "session"
 
@@ -220,10 +219,8 @@ SESSION_TIMEOUT: int = 1209600
 # because it turns every request that touches a session into a write.
 SESSION_REFRESH_ON_ACCESS: bool = False
 
-# The cookie SessionMiddleware carries the key in, when it is left to do so. An
-# application that carries the key some other way — a claim inside a token, a
-# header — overrides `read_key` and `write_key` instead, and none of these are
-# read.
+# The cookie SessionMiddleware carries the key in. An application carrying it
+# some other way overrides `read_key` and `write_key`, and none of these apply.
 #
 # SECURITY WARNING: a cookie is sent by the browser whether or not the request
 # came from your own site, so a cookie-carried session wants

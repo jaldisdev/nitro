@@ -59,15 +59,13 @@ __all__ = [
     "open_session",
 ]
 
-#: Characters and length of a session key. 32 characters of the default
-#: alphabet is about 190 bits, which is the point: a key is guessed or it is
-#: not, and nothing else stands between a guess and the state behind it.
+#: Length of a session key. 32 characters of the default alphabet is about
+#: 190 bits, and nothing but the key stands between a guess and the state.
 KEY_LENGTH = 32
 
-#: How many times a fresh key is tried before giving up. A collision needs two
-#: 190-bit draws to match, so more than one attempt is already the impossible
-#: case; the loop exists so that a store which is refusing writes for some
-#: other reason fails loudly instead of spinning.
+#: How many times a fresh key is tried before giving up. A collision is
+#: impossible at this width; the limit is so a store refusing writes fails
+#: loudly rather than spinning.
 KEY_ATTEMPTS = 5
 
 
@@ -205,11 +203,8 @@ class Session:
 
         stored = await self._store.read(self._key)
         if stored is None:
-            # The key names nothing: it expired, it was evicted, or it was
-            # invented by whoever sent it. Dropping it rather than writing to
-            # it is what stops a chosen key from becoming a real session — an
-            # attacker who plants `sessionid=known` would otherwise have the
-            # visitor fill in a bag they can already read.
+            # Session fixation: a key naming nothing may have been planted, so
+            # it is dropped rather than written to.
             self._key = None
             self._data = {}
             return self._data
@@ -470,11 +465,8 @@ class SessionMiddleware(Middleware):
             else:
                 self.write_key(response, session.key)
         elif self.refresh_on_access and session.loaded and session.key is not None:
-            # Same key, but the store's copy was just given a fresh life, so the
-            # cookie's should be too — otherwise the browser forgets a session
-            # the store still holds. Gated on `loaded` because a session nothing
-            # touched was not written either, and re-dating the cookie for one
-            # would have the browser keep a key past the store's expiry.
+            # The store's copy was just re-dated, so the cookie's must be too.
+            # Only when loaded: an untouched session was not written either.
             self.write_key(response, session.key)
 
         return response

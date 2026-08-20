@@ -148,9 +148,8 @@ class DependencyParam:
 
     #: The parameters this dependency asks for by name — ``request``,
     #: ``websocket``, ``transport`` or ``scope``. Read when the graph is, because
-    #: reading it is
-    #: :func:`inspect.signature`, and doing that once per request per dependency
-    #: costs more than everything else resolving one of them does.
+    #: reading it is :func:`inspect.signature`, and doing that once per request
+    #: per dependency costs more than everything else resolving one of them does.
     context_parameters: tuple[str, ...] = ()
 
 

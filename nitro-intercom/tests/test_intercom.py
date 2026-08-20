@@ -121,9 +121,7 @@ class TestQueuedChannels:
             await asyncio.sleep(0.1)
             await intercom.send("room", "late")
 
-        # Held, not abandoned: a task nothing keeps a reference to may be
-        # collected before it runs, which would leave the reader waiting for a
-        # message that was never sent.
+        # Held: an unreferenced task may be collected before it runs.
         delivery = asyncio.create_task(deliver())
         try:
             assert await reader.receive(timeout=5) == "late"

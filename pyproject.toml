@@ -119,11 +119,6 @@ ignore = [
 "tests/**" = ["B018", "SIM117", "RUF012"]
 
 [tool.ruff.format]
-# Ruff formats Python inside Markdown, and the documentation does not want it
-# to. Trailing comments are aligned into a column throughout the docs so a
-# reader's eye can follow what each line is being told about, and reflowing
-# collapses that. In one case it makes an example wrong: a comment sitting on a
-# handler's body is carried up onto the reflowed signature, where it explains
-# the wrong thing. `ruff check` still reads these blocks; only formatting is
-# off.
+# The docs align trailing comments into a column on purpose, and formatting the
+# Python inside Markdown collapses that. `ruff check` still reads those blocks.
 exclude = ["*.md"]
