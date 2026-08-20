@@ -103,20 +103,24 @@ jobs:
           path: dist
 
   crates:
-    name: Check the crates package
+    name: Check intercom-core packages
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      # Not published automatically: crates.io releases are ordered by
-      # dependency and are worth doing deliberately. This only proves each
-      # crate packages, licence files included.
+      # A release is the two PyPI distributions; no crate goes to crates.io as
+      # part of it. intercom-core is checked because it is the one that might
+      # be published on its own later, and keeping it packageable is cheaper
+      # than discovering it is not on the day.
+      #
+      # The others are not checked and cannot be: each depends on a sibling
+      # that is not on the index, so `cargo package` rewrites the path
+      # dependency to a registry one and fails to resolve it. That is a
+      # property of publishing them, not of them being broken.
       - run: |
-          for crate in nitro-observability nitro-core intercom-core nitro-py intercom-py; do
-            cargo package -p "$crate" --no-verify
-            tar -tzf "target/package/$crate-"*.crate | grep -q LICENSE-MIT \
-              || { echo "$crate has no licence text"; exit 1; }
-          done
+          cargo package -p intercom-core --no-verify
+          tar -tzf target/package/intercom-core-*.crate | grep -q LICENSE-MIT \
+            || { echo "intercom-core has no licence text"; exit 1; }
 
   publish:
     name: Publish to PyPI
