@@ -75,9 +75,8 @@ async def _call(function: Any, *arguments: Any) -> Any:
 
 async def _rewind(content: Any) -> None:
     """Positions `content` at its start when it can be, so that content already
-    read once still saves whole. It is needed
-    for this reason: an `UploadFile` a handler has inspected is left sitting
-    at its end."""
+    read once still saves whole: an `UploadFile` a handler has inspected is left
+    sitting at its end, and saving it from there would write nothing."""
     seek = getattr(content, "seek", None)
     if seek is None or not getattr(content, "seekable", lambda: True)():
         return

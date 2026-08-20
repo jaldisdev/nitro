@@ -321,10 +321,10 @@ class OriginMiddleware(Middleware):
     """Refuses a state-changing request that came from somewhere else.
 
     This is Nitro's answer to cross-site request forgery, and it is deliberately
-    not a token scheme. There is no token, no secret in the session, no tag to render
-    into a form and no decorator to exempt a view — the whole check is these
-    headers, so there is nothing for an author to forget and nothing that needs
-    a form framework to carry it.
+    not a token scheme. There is no token, no secret in the session, no tag to
+    render into a form and no decorator to exempt a view — the whole check is
+    these headers, so there is nothing for an author to forget and nothing that
+    needs a form framework to carry it.
 
     ``Sec-Fetch-Site`` is asked first, because the browser computes it and it
     cannot be set by script. ``Origin`` is the fallback for clients that do not
