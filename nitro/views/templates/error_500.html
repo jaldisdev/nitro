@@ -34,6 +34,8 @@
         --green: oklch(52.7% 0.154 150.069);
         --green-soft: oklch(52.7% 0.154 150.069 / 8%);
         --green-border: oklch(52.7% 0.154 150.069 / 20%);
+        --debug-text: oklch(37.2% 0 0);
+        --debug-chip: oklch(90.1% 0.074 70.697);
         --error-line: oklch(97% 0.018 20);
         --error-mark: oklch(60% 0.2 22);
         --mono:
@@ -44,6 +46,35 @@
           sans-serif;
         --r: 6px;
         --r-md: 8px;
+        color-scheme: light dark;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: oklch(17.8% 0.011 266.3);
+          --surface: oklch(21.8% 0.013 267.4);
+          --surface-2: oklch(25.4% 0.014 268.5);
+          --border: oklch(30.8% 0.016 270.8);
+          --border-2: oklch(38.4% 0.023 272.5);
+          --text: oklch(92.8% 0.005 56.043);
+          --text-muted: oklch(69.5% 0.012 58.071);
+          --text-dim: oklch(45.2% 0.008 56.366);
+          --accent: oklch(73.5% 0.168 293.009);
+          --error: oklch(89.5% 0.004 56.037);
+          --code: oklch(74.2% 0.132 262.881);
+          --code-bg: oklch(74.2% 0.132 262.881 / 12%);
+          --code-border: oklch(74.2% 0.132 262.881 / 26%);
+          --debug: oklch(79.5% 0.125 66.5);
+          --debug-soft: oklch(29.5% 0.048 62.4);
+          --debug-border: oklch(38.2% 0.068 64.8);
+          --green: oklch(76.4% 0.148 150.069);
+          --green-soft: oklch(76.4% 0.148 150.069 / 12%);
+          --green-border: oklch(76.4% 0.148 150.069 / 28%);
+          --debug-text: oklch(86.5% 0.021 70.697);
+          --debug-chip: oklch(36.5% 0.066 66.2);
+          --error-line: oklch(28.5% 0.045 21.5);
+          --error-mark: oklch(72.5% 0.163 22);
+        }
       }
 
       body {
@@ -361,7 +392,7 @@
 
       .debug-notice-text {
         font-size: 13px;
-        color: oklch(37.2% 0 0);
+        color: var(--debug-text);
         line-height: 1.7;
       }
 
@@ -370,7 +401,7 @@
         font-size: 12px;
         padding: 1px 5px;
         border-radius: 4px;
-        background: oklch(90.1% 0.074 70.697);
+        background: var(--debug-chip);
         color: var(--debug);
       }
     </style>
