@@ -19,26 +19,29 @@
 
 //! The compiled route table.
 //!
-//! Matching happens in two steps. A radix tree finds the routes whose shape
-//! fits the path, which is the part that has to be fast because it runs on
-//! every request. The candidates it returns are then checked against what each
-//! of their parameters actually accepts, in registration order, and the first
-//! that passes wins.
+//! Routes are kept in a tree of path segments. A segment is either text, which
+//! is looked up directly, or an expression built from a route's literal text
+//! and its parameters' expressions, which is tried against the segment. A route
+//! ending in a parameter that spans separators keeps an expression for the rest
+//! of the path instead.
 //!
-//! Splitting it this way is what lets two routes with the same shape but
-//! different parameter types coexist: the tree sees one entry, and the
-//! expressions tell them apart.
+//! At each level the text branch is tried first, then the expression branches
+//! and the tails in registration order. A branch that does not lead to a route
+//! is left for the next, so an expression that rejects a segment never hides a
+//! route registered after it. The first route whose path matches and which
+//! answers the method wins.
 
 use std::collections::{BTreeSet, HashMap};
+use std::ops::ControlFlow;
 
-use crate::router::route::{CompiledRoute, RouteDefinition, RouteError, compile};
+use crate::router::route::{
+    Compilation, CompiledRoute, Pattern, RouteDefinition, RouteError, Segment, compile,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouterError {
     #[error(transparent)]
     Route(#[from] RouteError),
-    #[error("route {path:?} cannot be added: {reason}")]
-    Conflict { path: String, reason: String },
 }
 
 /// What a path lookup found.
@@ -57,19 +60,25 @@ pub enum RouteMatch {
 }
 
 #[derive(Debug, Default)]
+struct Node {
+    texts: HashMap<String, Node>,
+    /// In the order their first route was registered.
+    patterns: Vec<(Pattern, Node)>,
+    /// Routes matched by an expression over the rest of the path, as indices
+    /// into the table's routes.
+    tails: Vec<(Pattern, usize)>,
+    /// Routes whose path ends at this node.
+    routes: Vec<usize>,
+}
+
+#[derive(Debug, Default)]
 pub struct RouteTable {
-    tree: matchit::Router<Vec<CompiledRoute>>,
-    /// Templates already in the tree. The tree cannot be asked whether it holds
-    /// a template — only whether it matches a path — and those are different
-    /// questions: `/users/new` is matched by `/users/{p0}` but is not that
-    /// template, and treating it as one would file the static route behind the
-    /// parameterised one where it could never win.
-    templates: BTreeSet<String>,
+    root: Node,
+    routes: Vec<CompiledRoute>,
     /// The declared path of every route, by identifier. Metric labels need the
     /// pattern rather than the requested path, and a match only reports the
     /// identifier.
     declared: HashMap<u64, String>,
-    count: usize,
 }
 
 impl RouteTable {
@@ -88,73 +97,92 @@ impl RouteTable {
     }
 
     /// Add a route.
-    ///
-    /// Routes that compile to the same template are kept together, in the order
-    /// they were added, and tried in that order at match time.
     pub fn insert(&mut self, definition: RouteDefinition) -> Result<(), RouterError> {
-        let compilation = compile(&definition)?;
-        let template = compilation.template;
+        let Compilation {
+            segments,
+            tail,
+            route,
+        } = compile(&definition)?;
+        let index = self.routes.len();
 
-        if self.templates.contains(&template) {
-            let probe = probe_path(&template);
-            let found = self
-                .tree
-                .at_mut(&probe)
-                .map_err(|error| RouterError::Conflict {
-                    path: definition.path.clone(),
-                    reason: error.to_string(),
-                })?;
-            self.declared
-                .insert(compilation.route.id, definition.path.clone());
-            found.value.push(compilation.route);
-            self.count += 1;
-            return Ok(());
+        let mut node = &mut self.root;
+        for segment in segments {
+            node = match segment {
+                Segment::Static(text) => node.texts.entry(text).or_default(),
+                Segment::Pattern(pattern) => {
+                    let position = match node
+                        .patterns
+                        .iter()
+                        .position(|(existing, _)| existing.source == pattern.source)
+                    {
+                        Some(position) => position,
+                        None => {
+                            node.patterns.push((pattern, Node::default()));
+                            node.patterns.len() - 1
+                        }
+                    };
+                    &mut node.patterns[position].1
+                }
+            };
+        }
+        match tail {
+            Some(pattern) => node.tails.push((pattern, index)),
+            None => node.routes.push(index),
         }
 
-        self.declared
-            .insert(compilation.route.id, definition.path.clone());
-        self.tree
-            .insert(&template, vec![compilation.route])
-            .map_err(|error| RouterError::Conflict {
-                path: definition.path.clone(),
-                reason: error.to_string(),
-            })?;
-        self.templates.insert(template);
-        self.count += 1;
+        self.declared.insert(route.id, definition.path);
+        self.routes.push(route);
         Ok(())
     }
 
     /// Find the route that answers `method` for `path`.
     pub fn find(&self, method: &str, path: &str) -> RouteMatch {
-        let Ok(found) = self.tree.at(path) else {
-            return RouteMatch::NotFound;
-        };
+        let segments: Vec<(usize, &str)> = path
+            .split('/')
+            .scan(0_usize, |offset, segment| {
+                let start = *offset;
+                *offset += segment.len() + 1;
+                Some((start, segment))
+            })
+            .collect();
 
         let mut allowed: BTreeSet<String> = BTreeSet::new();
-        for route in found.value {
-            let Some(parameters) = capture(route, &found.params) else {
-                continue;
-            };
+        let mut captures: Vec<&str> = Vec::new();
+        let mut search = Search {
+            path,
+            segments: &segments,
+            routes: &self.routes,
+        };
+
+        let found = search.visit(&self.root, 0, &mut captures, &mut |route, values| {
             if route.accepts(method) {
-                return RouteMatch::Found {
+                return ControlFlow::Break(RouteMatch::Found {
                     route_id: route.id,
-                    parameters,
-                };
+                    parameters: route
+                        .parameters
+                        .iter()
+                        .cloned()
+                        .zip(values.iter().map(|value| (*value).to_owned()))
+                        .collect(),
+                });
             }
             allowed.extend(route.methods.iter().cloned());
-        }
+            ControlFlow::Continue(())
+        });
 
+        if let ControlFlow::Break(found) = found {
+            return found;
+        }
         if allowed.is_empty() {
-            RouteMatch::NotFound
-        } else {
-            // A route that answers GET answers HEAD, and advertising that keeps
-            // the two consistent with how they are matched.
-            if allowed.contains("GET") {
-                allowed.insert("HEAD".to_owned());
-            }
-            RouteMatch::MethodNotAllowed {
-                allowed: allowed.into_iter().collect(),
-            }
+            return RouteMatch::NotFound;
+        }
+        // A route that answers GET answers HEAD, and advertising that keeps the
+        // two consistent with how they are matched.
+        if allowed.contains("GET") {
+            allowed.insert("HEAD".to_owned());
+        }
+        RouteMatch::MethodNotAllowed {
+            allowed: allowed.into_iter().collect(),
         }
     }
 
@@ -165,57 +193,84 @@ impl RouteTable {
 
     /// The number of routes registered.
     pub fn len(&self) -> usize {
-        self.count
+        self.routes.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.count == 0
+        self.routes.is_empty()
     }
 }
 
-/// Check a candidate's parameters against the captured values.
-fn capture(
-    route: &CompiledRoute,
-    captured: &matchit::Params<'_, '_>,
-) -> Option<Vec<(String, String)>> {
-    let mut parameters = Vec::with_capacity(route.parameters.len());
-
-    for parameter in &route.parameters {
-        let value = captured.get(&parameter.placeholder)?;
-        if !parameter.expression.is_match(value) {
-            return None;
-        }
-        parameters.push((parameter.name.clone(), value.to_owned()));
-    }
-
-    Some(parameters)
+struct Search<'a> {
+    path: &'a str,
+    /// Each segment of the path with the offset it starts at.
+    segments: &'a [(usize, &'a str)],
+    routes: &'a [CompiledRoute],
 }
 
-/// A concrete path that reaches `template`, used to find an entry that is
-/// already in the tree. Placeholders are filled with text that any expression
-/// check will be applied to separately.
-fn probe_path(template: &str) -> String {
-    let mut path = String::with_capacity(template.len());
-    let mut rest = template;
-
-    while let Some(open) = rest.find('{') {
-        path.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        match after.find('}') {
-            Some(close) => {
-                path.push('\u{1}');
-                rest = &after[close + 1..];
+impl<'a> Search<'a> {
+    /// Offer every route whose path matches to `offer`, most specific branch
+    /// first, until it breaks.
+    fn visit<B>(
+        &mut self,
+        node: &Node,
+        depth: usize,
+        captures: &mut Vec<&'a str>,
+        offer: &mut impl FnMut(&CompiledRoute, &[&str]) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        let Some(&(offset, segment)) = self.segments.get(depth) else {
+            for index in &node.routes {
+                if let Some(route) = self.routes.get(*index) {
+                    offer(route, captures)?;
+                }
             }
-            None => {
-                rest = after;
-                break;
-            }
+            return ControlFlow::Continue(());
+        };
+
+        if let Some(child) = node.texts.get(segment) {
+            self.visit(child, depth + 1, captures, offer)?;
         }
+
+        for (pattern, child) in &node.patterns {
+            let mark = captures.len();
+            if capture(pattern, segment, captures) {
+                self.visit(child, depth + 1, captures, offer)?;
+            }
+            captures.truncate(mark);
+        }
+
+        let rest = self.path.get(offset..).unwrap_or_default();
+        for (pattern, index) in &node.tails {
+            let mark = captures.len();
+            if capture(pattern, rest, captures)
+                && let Some(route) = self.routes.get(*index)
+            {
+                offer(route, captures)?;
+            }
+            captures.truncate(mark);
+        }
+
+        ControlFlow::Continue(())
     }
-    path.push_str(rest);
-    path
 }
 
+/// Match `text` against `pattern`, appending what its parameters captured.
+fn capture<'a>(pattern: &Pattern, text: &'a str, captures: &mut Vec<&'a str>) -> bool {
+    let Some(found) = pattern.expression.captures(text) else {
+        return false;
+    };
+
+    let mark = captures.len();
+    for (group, spans_separators) in pattern.groups.iter().zip(&pattern.spans_separators) {
+        let value = found.get(*group).map_or("", |value| value.as_str());
+        if !spans_separators && value.contains('/') {
+            captures.truncate(mark);
+            return false;
+        }
+        captures.push(value);
+    }
+    true
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +508,175 @@ mod tests {
 
         assert_eq!(found(&table, "GET", "/things/").0, 1);
         assert_eq!(table.find("GET", "/things"), RouteMatch::NotFound);
+    }
+
+    #[test]
+    fn a_segment_can_hold_several_parameters_and_text() {
+        let table = RouteTable::build([route(
+            1,
+            "/media/photo_<id><size>.<extension>",
+            &["GET"],
+            vec![
+                ParameterSpec::new("id", "[0-9]+"),
+                ParameterSpec::new("size", "(?:_[0-9]+x[0-9]+)?"),
+                ParameterSpec::new("extension", "jpg|png"),
+            ],
+        )])
+        .unwrap();
+
+        let (_, parameters) = found(&table, "GET", "/media/photo_42_64x64.png");
+        assert_eq!(
+            parameters,
+            vec![
+                ("id".to_owned(), "42".to_owned()),
+                ("size".to_owned(), "_64x64".to_owned()),
+                ("extension".to_owned(), "png".to_owned()),
+            ]
+        );
+        let (_, parameters) = found(&table, "GET", "/media/photo_42.jpg");
+        assert_eq!(parameters[1], ("size".to_owned(), String::new()));
+        assert_eq!(
+            table.find("GET", "/media/photo_42.gif"),
+            RouteMatch::NotFound
+        );
+    }
+
+    #[test]
+    fn a_prefixed_parameter_and_a_bare_one_can_share_a_position() {
+        let parameters = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| ParameterSpec::new(*name, "[0-9a-z]+"))
+                .collect()
+        };
+        let table = RouteTable::build([
+            route(
+                1,
+                "/contents/<owner>/file_<file>",
+                &["GET"],
+                parameters(&["owner", "file"]),
+            ),
+            route(
+                2,
+                "/contents/<owner>/<container>/file_<file>",
+                &["GET"],
+                parameters(&["owner", "container", "file"]),
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(found(&table, "GET", "/contents/ada/file_one").0, 1);
+        let (id, parameters) = found(&table, "GET", "/contents/ada/box/file_one");
+        assert_eq!(id, 2);
+        assert_eq!(parameters[1], ("container".to_owned(), "box".to_owned()));
+    }
+
+    #[test]
+    fn a_rejected_segment_falls_through_to_the_next_branch() {
+        let table = RouteTable::build([
+            route(
+                1,
+                "/things/<int:identifier>/detail",
+                &["GET"],
+                vec![ParameterSpec::new("identifier", "[0-9]+")],
+            ),
+            route(
+                2,
+                "/things/<str:name>/<str:part>",
+                &["GET"],
+                vec![
+                    ParameterSpec::new("name", "[^/]+"),
+                    ParameterSpec::new("part", "[^/]+"),
+                ],
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(found(&table, "GET", "/things/42/detail").0, 1);
+        assert_eq!(found(&table, "GET", "/things/42/other").0, 2);
+        assert_eq!(found(&table, "GET", "/things/ada/detail").0, 2);
+    }
+
+    #[test]
+    fn a_route_answering_the_method_wins_over_a_closer_one_that_does_not() {
+        let table = RouteTable::build([
+            route(1, "/users/new", &["POST"], Vec::new()),
+            route(
+                2,
+                "/users/<str:name>",
+                &["GET"],
+                vec![ParameterSpec::new("name", "[^/]+")],
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(found(&table, "GET", "/users/new").0, 2);
+        assert_eq!(found(&table, "POST", "/users/new").0, 1);
+        assert_eq!(
+            table.find("DELETE", "/users/new"),
+            RouteMatch::MethodNotAllowed {
+                allowed: vec!["GET".to_owned(), "HEAD".to_owned(), "POST".to_owned()]
+            }
+        );
+    }
+
+    #[test]
+    fn a_tail_can_follow_text_in_its_segment() {
+        let table = RouteTable::build([route(
+            1,
+            "/files/archive_<path:rest>",
+            &["GET"],
+            vec![ParameterSpec::new("rest", ".+").greedy()],
+        )])
+        .unwrap();
+
+        let (_, parameters) = found(&table, "GET", "/files/archive_2026/09/log.txt");
+        assert_eq!(
+            parameters,
+            vec![("rest".to_owned(), "2026/09/log.txt".to_owned())]
+        );
+        assert_eq!(
+            table.find("GET", "/files/other/log.txt"),
+            RouteMatch::NotFound
+        );
+    }
+
+    #[test]
+    fn a_parameter_before_a_tail_still_stops_at_a_separator() {
+        let table = RouteTable::build([route(
+            1,
+            "/files/<name>-<path:rest>",
+            &["GET"],
+            vec![
+                ParameterSpec::new("name", ".+"),
+                ParameterSpec::new("rest", ".+").greedy(),
+            ],
+        )])
+        .unwrap();
+
+        let (_, parameters) = found(&table, "GET", "/files/report-2026/09");
+        assert_eq!(parameters[0], ("name".to_owned(), "report".to_owned()));
+        assert_eq!(
+            table.find("GET", "/files/deep/report-2026"),
+            RouteMatch::NotFound
+        );
+    }
+
+    #[test]
+    fn a_static_route_and_a_tail_at_the_same_place_coexist() {
+        let table = RouteTable::build([
+            route(
+                1,
+                "/files/<path:rest>",
+                &["GET"],
+                vec![ParameterSpec::new("rest", ".+").greedy()],
+            ),
+            route(2, "/files/index", &["GET"], Vec::new()),
+        ])
+        .unwrap();
+
+        assert_eq!(found(&table, "GET", "/files/index").0, 2);
+        assert_eq!(found(&table, "GET", "/files/index/more").0, 1);
     }
 
     #[test]

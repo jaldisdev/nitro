@@ -268,6 +268,55 @@ class TestReverse:
             Router().url_for("nowhere")
 
 
+class TestSegmentsWithSeveralParameters:
+    @pytest.fixture
+    def application(self):
+        from nitro import Nitro
+
+        app = Nitro(routes=[], middleware=[], debug=False)
+
+        @app.route(
+            '/photos/<int:owner>/photo_<int:identifier><regex("(?:_[0-9]+)?"):size>.<regex("jpg|png"):extension>',
+            name="photo",
+        )
+        async def photo(request, owner, identifier, size, extension):
+            return JSONResponse(
+                {"owner": owner, "identifier": identifier, "size": size, "extension": extension}
+            )
+
+        @app.route(
+            "/photos/<int:owner>/<slug:album>/photo_<int:identifier>.jpg", name="album_photo"
+        )
+        async def album_photo(request, owner, album, identifier):
+            return JSONResponse({"album": album, "identifier": identifier})
+
+        return app
+
+    async def test_each_parameter_is_matched_and_converted(self, application):
+        from nitro.testing import TestClient
+
+        response = await TestClient(application).get("/photos/7/photo_42_128.png")
+
+        assert response.json() == {"owner": 7, "identifier": 42, "size": "_128", "extension": "png"}
+
+    async def test_a_prefixed_segment_sits_beside_a_bare_parameter(self, application):
+        from nitro.testing import TestClient
+
+        client = TestClient(application)
+
+        assert (await client.get("/photos/7/holiday/photo_42.jpg")).json() == {
+            "album": "holiday",
+            "identifier": 42,
+        }
+        assert (await client.get("/photos/7/photo_42.gif")).status_code == 404
+
+    def test_the_path_reverses(self, application):
+        assert (
+            application.url_for("photo", owner=7, identifier=42, size="", extension="jpg")
+            == "/photos/7/photo_42.jpg"
+        )
+
+
 class TestMount:
     def test_routes_are_attached_under_the_prefix(self):
         inner = Router()

@@ -182,17 +182,37 @@ path did not name anything, which is what the client needs to be told.
 
 ## How matching works
 
-Two steps. A radix tree finds the routes whose *shape* fits the path, which is
-the part that runs on every request. The candidates it returns are then checked
-against what each of their parameters actually accepts, in registration order,
-and the first that passes wins.
+Routes are kept in a tree of path segments. A segment without parameters is
+looked up as text. A segment with parameters is matched by one expression built
+from its text and its parameters' expressions, so a segment can hold text around
+a parameter and more than one parameter:
 
-Two things follow from this that are worth knowing:
+```python
+patterns = [
+    HTTPRoute("/media/<int:owner>/photo_<int:id><regex(\"(?:_[0-9]+)?\"):size>.<regex(\"jpg|png\"):extension>", photo),
+    HTTPRoute("/media/<int:owner>/<slug:album>/photo_<int:id>.jpg", album_photo),
+]
+```
+
+Where parameters sit side by side, their expressions decide where one ends and
+the next begins, the way they would in a regular expression written out in full.
+
+At each level the text branch is tried first, then the expression branches and
+the catch-alls in the order they were registered. A branch that does not lead
+to a route is abandoned for the next, so a segment one expression rejects can
+still reach a route registered after it. The first route whose whole path
+matches and which answers the method wins.
+
+Some things that follow from this:
 
 - **Routes that differ only in converter can coexist.** `/things/<int:id>` and
-  `/things/<slug:name>` have the same shape; their expressions tell them apart.
+  `/things/<slug:name>` are both tried; their expressions tell them apart.
 - **A static segment beats a parameter.** `/users/new` wins over
-  `/users/<str:name>`, because the tree sees them as different shapes.
+  `/users/<str:name>` for a method both answer.
+- **A route that answers the method beats one that does not.** With
+  `/users/new` answering only `POST`, a `GET` for it reaches
+  `/users/<str:name>`. A 405 is only the answer when no matching route answers
+  the method.
 
 Where two routes genuinely overlap — `/things/<str:anything>` registered before
 `/things/<int:id>` — the earlier one wins. Register the narrower route first.

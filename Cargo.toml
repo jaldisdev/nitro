@@ -55,7 +55,6 @@ base64 = "0.23.1"
 prometheus = { version = "0.14.0", default-features = false }
 
 # Routing
-matchit = "0.9.2"
 regex = "1.12.3"
 
 # Python bindings (binding crates only)

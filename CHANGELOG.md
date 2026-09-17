@@ -79,6 +79,13 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Changed
 
+- The route matcher is Nitro's own rather than `matchit`. A path segment can
+  now hold text and several parameters, such as `photo_<int:id><size>.<ext>`,
+  and a segment with text before a parameter can sit beside a bare parameter in
+  the same position, which `matchit` refused at startup. A segment an
+  expression rejects falls through to routes registered after it, and a route
+  that answers the method now wins over a more specific one that does not,
+  instead of the request being a 405.
 - **Breaking.** `TEMPLATE_CACHE` defaults to `None`, turning bytecode caching
   on only when it names a cache. `MemcachedBytecodeCache` is gone: it read a
   Memcached client attribute no Nitro cache backend has, so it could not be
