@@ -20,9 +20,9 @@
 from datetime import datetime
 
 try:
-    import aioboto3
+    from aiobotocore.session import get_session
 except ImportError:
-    aioboto3 = None  # type: ignore
+    get_session = None  # type: ignore
 
 from nitro.storage.base import BaseStorage, StorageFile
 from nitro.utils.content import Content, file_object_for, read_content
@@ -42,7 +42,7 @@ class S3File(StorageFile):
         """Read file content."""
         if self._content is None:
             # Read entire file on first read
-            async with self.session.client("s3", **self.client_kwargs) as s3:
+            async with self.session.create_client("s3", **self.client_kwargs) as s3:
                 try:
                     response = await s3.get_object(Bucket=self.bucket_name, Key=self.key)
                     async with response["Body"] as stream:
@@ -61,9 +61,9 @@ class S3File(StorageFile):
 
 class S3Storage(BaseStorage):
     """
-    AWS S3 storage backend using aioboto3.
+    AWS S3 storage backend using aiobotocore.
 
-    Requires: pip install aioboto3
+    Requires: pip install aiobotocore
 
     Example configuration:
         STORAGES = {
@@ -83,9 +83,9 @@ class S3Storage(BaseStorage):
     """
 
     def __init__(self, location: str, params: dict) -> None:
-        if aioboto3 is None:
+        if get_session is None:
             raise ImportError(
-                "S3Storage requires aioboto3 package. Install it with: pip install aioboto3"
+                "S3Storage requires aiobotocore package. Install it with: pip install aiobotocore"
             )
 
         super().__init__(location, params)
@@ -98,16 +98,15 @@ class S3Storage(BaseStorage):
         self.endpoint_url = self.options.get("endpoint_url")
         self.default_acl = self.options.get("default_acl", "private")
 
-        # Create session
-        self.session = aioboto3.Session(
-            aws_access_key_id=self.aws_access_key_id,
-            aws_secret_access_key=self.aws_secret_access_key,
-            region_name=self.region_name,
-        )
+        self.session = get_session()
 
     def _get_client_kwargs(self) -> dict:
         """Get kwargs for creating S3 client."""
-        kwargs = {}
+        kwargs = {
+            "region_name": self.region_name,
+            "aws_access_key_id": self.aws_access_key_id,
+            "aws_secret_access_key": self.aws_secret_access_key,
+        }
         if self.endpoint_url:
             kwargs["endpoint_url"] = self.endpoint_url
         return kwargs
@@ -122,7 +121,7 @@ class S3Storage(BaseStorage):
         if body is None:
             body = await read_content(content)
 
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             extra_args = {}
             if self.default_acl:
                 extra_args["ACL"] = self.default_acl
@@ -143,7 +142,7 @@ class S3Storage(BaseStorage):
         return S3File(self.session, self.bucket_name, name, self._get_client_kwargs())
 
     async def read(self, name: str) -> bytes:
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             try:
                 response = await s3.get_object(Bucket=self.bucket_name, Key=name)
                 async with response["Body"] as stream:
@@ -152,7 +151,7 @@ class S3Storage(BaseStorage):
                 raise FileNotFoundError(f"File not found: {name}") from error
 
     async def delete(self, name: str) -> bool:
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             try:
                 await s3.head_object(Bucket=self.bucket_name, Key=name)
                 await s3.delete_object(Bucket=self.bucket_name, Key=name)
@@ -161,7 +160,7 @@ class S3Storage(BaseStorage):
                 return False
 
     async def exists(self, name: str) -> bool:
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             try:
                 await s3.head_object(Bucket=self.bucket_name, Key=name)
                 return True
@@ -175,7 +174,7 @@ class S3Storage(BaseStorage):
         Note: S3 doesn't have true directories, but we simulate them
         using common prefixes.
         """
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             prefix = path.rstrip("/") + "/" if path else ""
 
             paginator = s3.get_paginator("list_objects_v2")
@@ -202,7 +201,7 @@ class S3Storage(BaseStorage):
         return directories, files
 
     async def size(self, name: str) -> int:
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             try:
                 response = await s3.head_object(Bucket=self.bucket_name, Key=name)
                 return response["ContentLength"]
@@ -223,7 +222,7 @@ class S3Storage(BaseStorage):
     # backend cannot answer it: S3 does not record when an object was read.
 
     async def get_created_time(self, name: str) -> datetime:
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             try:
                 response = await s3.head_object(Bucket=self.bucket_name, Key=name)
                 return response["LastModified"]
@@ -231,7 +230,7 @@ class S3Storage(BaseStorage):
                 raise FileNotFoundError(f"File not found: {name}") from error
 
     async def get_modified_time(self, name: str) -> datetime:
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             try:
                 response = await s3.head_object(Bucket=self.bucket_name, Key=name)
                 return response["LastModified"]
@@ -240,7 +239,7 @@ class S3Storage(BaseStorage):
 
     async def copy(self, source: str, destination: str) -> str:
         """Efficient S3 server-side copy."""
-        async with self.session.client("s3", **self._get_client_kwargs()) as s3:
+        async with self.session.create_client("s3", **self._get_client_kwargs()) as s3:
             copy_source = {"Bucket": self.bucket_name, "Key": source}
 
             extra_args = {}
@@ -257,5 +256,4 @@ class S3Storage(BaseStorage):
         return destination
 
     async def close(self) -> None:
-        """Close the session."""
-        await self.session.close()
+        """Nothing to close: every operation opens and closes its own client."""

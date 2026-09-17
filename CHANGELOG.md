@@ -87,9 +87,16 @@ pre-1.0 caveat that minor versions may still break things.
   set of HTTP exceptions.
 - `BaseStorage.get_accessed_time` is no longer abstract; a backend that cannot
   answer raises `StorageOperationUnsupported`.
+- The `aws` extra installs `aiobotocore` rather than `aioboto3`, which `S3Storage`
+  and `SESBackend` now use directly. aioboto3 pins one exact aiobotocore release,
+  so installing the extra used to downgrade `boto3` and `aiobotocore` in any
+  project that already depended on newer ones.
 
 ### Fixed
 
+- `S3Storage.close()` awaited a `close()` the aioboto3 session never had, so
+  `storages.close_all()` raised `AttributeError` for any project with an S3
+  storage.
 - `FileResponse` built its `Content-Disposition` by interpolating the filename
   into a quoted string, so a name containing a quote or backslash truncated the
   header and a name outside ASCII arrived mangled. It now goes through

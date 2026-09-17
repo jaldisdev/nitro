@@ -1075,7 +1075,7 @@ class TestGetConnection:
 
         with (
             patch("nitro.settings.settings", settings),
-            patch("nitro.mail.backends.ses.aioboto3", MagicMock()),
+            patch("nitro.mail.backends.ses.get_session", MagicMock()),
         ):
             conn = get_connection(backend="nitro.mail.backends.ses.SESBackend")
 

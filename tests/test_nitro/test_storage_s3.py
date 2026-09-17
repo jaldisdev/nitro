@@ -19,15 +19,14 @@
 
 """What the S3 backend hands to its client.
 
-aioboto3 is an optional dependency and is not installed for the test run, so
+aiobotocore is an optional dependency and is not installed for the test run, so
 the session is faked. That is enough for what these cover: which of the shapes
 `save()` accepts reaches `put_object` as a file to be read, and which has to be
-collected into bytes first. Whether aioboto3 then uploads it correctly is
-aioboto3's business, and is not tested here.
+collected into bytes first. Whether aiobotocore then uploads it correctly is
+aiobotocore's business, and is not tested here.
 """
 
 import io
-from types import SimpleNamespace
 
 import pytest
 
@@ -51,19 +50,18 @@ class FakeClient:
 
 
 class FakeSession:
-    def __init__(self, **kwargs) -> None:
+    def __init__(self) -> None:
         self.client_object = FakeClient()
+        self.client_calls: list[dict] = []
 
-    def client(self, service_name: str, **kwargs) -> FakeClient:
+    def create_client(self, service_name: str, **kwargs) -> FakeClient:
+        self.client_calls.append({"service_name": service_name, **kwargs})
         return self.client_object
-
-    async def close(self) -> None:
-        return None
 
 
 @pytest.fixture
 def storage(monkeypatch):
-    monkeypatch.setattr(s3_backend, "aioboto3", SimpleNamespace(Session=FakeSession))
+    monkeypatch.setattr(s3_backend, "get_session", FakeSession)
     return S3Storage("bucket", {"OPTIONS": {"default_acl": None}})
 
 
@@ -113,9 +111,40 @@ async def test_a_chunk_iterator_is_collected_first(storage):
 
 @pytest.mark.asyncio
 async def test_the_acl_is_sent_when_one_is_configured(monkeypatch):
-    monkeypatch.setattr(s3_backend, "aioboto3", SimpleNamespace(Session=FakeSession))
+    monkeypatch.setattr(s3_backend, "get_session", FakeSession)
     storage = S3Storage("bucket", {"OPTIONS": {"default_acl": "private"}})
 
     await storage.save("key", b"content")
 
     assert storage.session.client_object.put_calls[-1]["ACL"] == "private"
+
+
+@pytest.mark.asyncio
+async def test_credentials_and_endpoint_reach_the_client(monkeypatch):
+    monkeypatch.setattr(s3_backend, "get_session", FakeSession)
+    storage = S3Storage(
+        "bucket",
+        {
+            "OPTIONS": {
+                "region_name": "eu-central-1",
+                "aws_access_key_id": "AKID",
+                "aws_secret_access_key": "SECRET",
+                "endpoint_url": "http://storage:9000",
+            }
+        },
+    )
+
+    await storage.save("key", b"content")
+
+    assert storage.session.client_calls[-1] == {
+        "service_name": "s3",
+        "region_name": "eu-central-1",
+        "aws_access_key_id": "AKID",
+        "aws_secret_access_key": "SECRET",
+        "endpoint_url": "http://storage:9000",
+    }
+
+
+@pytest.mark.asyncio
+async def test_closing_holds_nothing_to_release(storage):
+    await storage.close()

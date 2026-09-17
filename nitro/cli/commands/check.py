@@ -31,7 +31,7 @@ from nitro.settings import ImproperlyConfigured, ServerOptions, settings
 
 #: Packages a backend needs, by the setting that would select it.
 OPTIONAL_PACKAGES: dict[str, str] = {
-    "aioboto3": "AWS storage and email",
+    "aiobotocore": "AWS storage and email",
     "azure.storage.blob": "Azure storage",
     "emcache": "Memcached caching",
     "redis": "Redis caching",

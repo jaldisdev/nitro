@@ -19,7 +19,7 @@
 
 """The AWS SES email backend.
 
-Driven against a stand-in for aioboto3, like the SendGrid tests: what is worth
+Driven against a stand-in for aiobotocore, like the SendGrid tests: what is worth
 pinning is the request the backend builds and how it treats a failure, neither
 of which needs an AWS account.
 """
@@ -44,16 +44,17 @@ def message(subject: str = "Subject") -> EmailMessage:
 
 
 class FakeSession:
-    """Stands in for `aioboto3.Session`, handing out a fake SES client."""
+    """Stands in for aiobotocore's `AioSession`, handing out a fake SES client."""
 
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
+    def __init__(self):
         self.client_calls: list[str] = []
+        self.client_kwargs: list[dict] = []
         self.ses = MagicMock()
         self.ses.send_raw_email = AsyncMock(return_value={"MessageId": "abc-123"})
 
-    def client(self, name):
+    def create_client(self, name, **kwargs):
         self.client_calls.append(name)
+        self.client_kwargs.append(kwargs)
         context = MagicMock()
         context.__aenter__ = AsyncMock(return_value=self.ses)
         context.__aexit__ = AsyncMock(return_value=None)
@@ -62,14 +63,14 @@ class FakeSession:
 
 @pytest.fixture
 def backend():
-    with patch("nitro.mail.backends.ses.aioboto3", MagicMock()):
+    with patch("nitro.mail.backends.ses.get_session", MagicMock()):
         yield SESBackend(region_name="eu-central-1")
 
 
 class TestConstruction:
     def test_the_package_is_required(self):
-        with patch("nitro.mail.backends.ses.aioboto3", None):
-            with pytest.raises(ImportError, match="aioboto3"):
+        with patch("nitro.mail.backends.ses.get_session", None):
+            with pytest.raises(ImportError, match="aiobotocore"):
                 SESBackend()
 
     def test_it_declares_the_settings_it_wants(self):
@@ -110,7 +111,7 @@ class TestSending:
         assert sent == 2
 
     async def test_a_configuration_set_is_included_when_given(self):
-        with patch("nitro.mail.backends.ses.aioboto3", MagicMock()):
+        with patch("nitro.mail.backends.ses.get_session", MagicMock()):
             backend = SESBackend(configuration_set_name="tracked")
 
         session = FakeSession()
@@ -125,6 +126,35 @@ class TestSending:
             await backend.send_messages([message()])
 
         assert "ConfigurationSetName" not in session.ses.send_raw_email.await_args.kwargs
+
+    async def test_region_and_credentials_reach_the_client(self):
+        with patch("nitro.mail.backends.ses.get_session", MagicMock()):
+            backend = SESBackend(
+                region_name="eu-central-1",
+                aws_access_key_id="AKID",
+                aws_secret_access_key="SECRET",
+                aws_session_token="TOKEN",
+            )
+
+        session = FakeSession()
+        with patch.object(backend, "_session", session):
+            await backend.send_messages([message()])
+
+        assert session.client_kwargs == [
+            {
+                "region_name": "eu-central-1",
+                "aws_access_key_id": "AKID",
+                "aws_secret_access_key": "SECRET",
+                "aws_session_token": "TOKEN",
+            }
+        ]
+
+    async def test_unset_credentials_are_left_to_the_default_chain(self, backend):
+        session = FakeSession()
+        with patch.object(backend, "_session", session):
+            await backend.send_messages([message()])
+
+        assert session.client_kwargs == [{"region_name": "eu-central-1"}]
 
 
 class TestFailures:
@@ -158,7 +188,7 @@ class TestFailures:
                 await backend.send_messages([message()])
 
     async def test_a_configured_default_is_used_when_nothing_is_passed(self):
-        with patch("nitro.mail.backends.ses.aioboto3", MagicMock()):
+        with patch("nitro.mail.backends.ses.get_session", MagicMock()):
             backend = SESBackend(fail_silently=True)
 
         session = FakeSession()

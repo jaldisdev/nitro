@@ -21,13 +21,15 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 try:
-    import aioboto3
+    from aiobotocore.session import get_session
 except ImportError:
-    aioboto3 = None  # type: ignore
+    get_session = None  # type: ignore
 
 from nitro.mail.backends.base import BaseEmailBackend
 
 if TYPE_CHECKING:
+    from aiobotocore.session import AioSession
+
     from nitro.mail.message import EmailMessage
 
 
@@ -38,7 +40,7 @@ class SESBackend(BaseEmailBackend):
     """
     Email backend using AWS Simple Email Service (SES).
 
-    Requires: pip install aioboto3
+    Requires: pip install aiobotocore
 
     Example configuration:
         EMAIL_BACKEND = 'nitro.mail.backends.ses.SESBackend'
@@ -69,9 +71,9 @@ class SESBackend(BaseEmailBackend):
         configuration_set_name: str | None = None,
         **kwargs,
     ) -> None:
-        if aioboto3 is None:
+        if get_session is None:
             raise ImportError(
-                "SESBackend requires aioboto3 package. Install it with: pip install aioboto3"
+                "SESBackend requires aiobotocore package. Install it with: pip install aiobotocore"
             )
 
         super().__init__(**kwargs)
@@ -82,7 +84,7 @@ class SESBackend(BaseEmailBackend):
         self.aws_session_token = aws_session_token
         self.configuration_set_name = configuration_set_name
 
-        self._session: aioboto3.Session | None = None
+        self._session: AioSession | None = None
 
     async def open(self) -> bool:
         """
@@ -91,21 +93,7 @@ class SESBackend(BaseEmailBackend):
         if self._session is not None:
             return False
 
-        # Build session kwargs
-        session_kwargs = {
-            "region_name": self.region_name,
-        }
-
-        if self.aws_access_key_id:
-            session_kwargs["aws_access_key_id"] = self.aws_access_key_id
-
-        if self.aws_secret_access_key:
-            session_kwargs["aws_secret_access_key"] = self.aws_secret_access_key
-
-        if self.aws_session_token:
-            session_kwargs["aws_session_token"] = self.aws_session_token
-
-        self._session = aioboto3.Session(**session_kwargs)
+        self._session = get_session()
         return True
 
     async def close(self) -> None:
@@ -133,8 +121,19 @@ class SESBackend(BaseEmailBackend):
                 raise ConnectionError("the AWS session could not be built")
             return 0
 
+        client_kwargs = {"region_name": self.region_name}
+
+        if self.aws_access_key_id:
+            client_kwargs["aws_access_key_id"] = self.aws_access_key_id
+
+        if self.aws_secret_access_key:
+            client_kwargs["aws_secret_access_key"] = self.aws_secret_access_key
+
+        if self.aws_session_token:
+            client_kwargs["aws_session_token"] = self.aws_session_token
+
         sent = 0
-        async with self._session.client("ses") as client:
+        async with self._session.create_client("ses", **client_kwargs) as client:
             for message in email_messages:
                 try:
                     await self._send(client, message)
