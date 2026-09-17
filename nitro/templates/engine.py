@@ -92,7 +92,7 @@ class Jinja2:
         env_options = {
             "loader": loader,
             "auto_reload": options.get("auto_reload", False),
-            "autoescape": True,  # Always autoescape for security
+            "autoescape": options.get("autoescape", True),
             "enable_async": True,
         }
 

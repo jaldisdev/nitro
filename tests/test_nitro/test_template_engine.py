@@ -474,6 +474,24 @@ class TestTemplateSyncRendering:
 
 
 # ---------------------------------------------------------------------------
+# Autoescaping
+# ---------------------------------------------------------------------------
+
+
+class TestAutoescape:
+    async def test_escapes_by_default(self, tdir):
+        (tdir / "page.html").write_text("{{ value }}")
+        rendered = await make_engine(tdir).render_to_string("page.html", {"value": "<b>"})
+        assert rendered == "&lt;b&gt;"
+
+    async def test_an_engine_can_turn_it_off(self, tdir):
+        (tdir / "mail.txt").write_text("{{ value }}")
+        engine = make_engine(tdir, options={"autoescape": False})
+        rendered = await engine.render_to_string("mail.txt", {"value": "<b>"})
+        assert rendered == "<b>"
+
+
+# ---------------------------------------------------------------------------
 # MemcachedBytecodeCache
 # ---------------------------------------------------------------------------
 

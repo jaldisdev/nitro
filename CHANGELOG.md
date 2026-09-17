@@ -94,6 +94,8 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Fixed
 
+- A template engine's `OPTIONS["autoescape"]` was ignored and autoescaping
+  was always on, so the documented plain-text mail engine escaped its output.
 - `S3Storage.close()` awaited a `close()` the aioboto3 session never had, so
   `storages.close_all()` raised `AttributeError` for any project with an S3
   storage.
