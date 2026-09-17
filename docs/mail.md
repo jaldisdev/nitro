@@ -18,15 +18,16 @@ from nitro.mail import send_email
 
 await send_email(
     subject="Welcome",
-    body="Thanks for signing up.",
-    to=["ada@example.com"],
+    message="Thanks for signing up.",
+    recipient_list=["ada@example.com"],
+    html_message="<p>Thanks for signing up.</p>",
 )
 ```
 
 ## Building a message
 
 ```python
-from nitro.mail import EmailMessage
+from nitro.mail import EmailAttachment, EmailMessage
 
 message = EmailMessage(
     subject="Your report",
@@ -35,11 +36,13 @@ message = EmailMessage(
     cc=["team@example.com"],
     reply_to=["support@example.com"],
 )
-message.attach("report.pdf", pdf_bytes, "application/pdf")
-message.attach_alternative("<p>Attached.</p>", "text/html")
+message.html = "<p>Attached.</p>"
+message.attach(EmailAttachment(filename="report.pdf", content=pdf_bytes, mimetype="application/pdf"))
 
 await message.send()
 ```
+
+`EmailAttachment.from_file(path)` reads one from disk and guesses its type.
 
 ## Backends
 
@@ -47,7 +50,7 @@ await message.send()
 |---|---|
 | `nitro.mail.backends.console.ConsoleBackend` | nothing — prints instead of sending |
 | `nitro.mail.backends.smtp.SMTPBackend` | nothing |
-| `nitro.mail.backends.oauth_smtp.OAuthSMTPBackend` | `nitro-framework[email-oauth]` |
+| `nitro.mail.backends.oauth_smtp.OAuth2SMTPBackend` | `nitro-framework[email-oauth]` |
 | `nitro.mail.backends.ses.SESBackend` | `nitro-framework[aws]` |
 | `nitro.mail.backends.sendgrid.SendGridBackend` | `nitro-framework[sendgrid]` |
 
@@ -59,7 +62,14 @@ prints its messages rather than failing or silently dropping them.
 ```python
 from nitro.mail import send_mass_email
 
-await send_mass_email([first, second, third])
+await send_mass_email([
+    ("Welcome", "Thanks for signing up.", None, ["ada@example.com"], "<p>Thanks.</p>"),
+    ("Update", "Something changed.", None, ["grace@example.com"]),
+])
 ```
+
+Each entry is `(subject, message, from_email, recipient_list)` with an optional
+HTML message as a fifth element; a `from_email` of `None` uses
+`DEFAULT_FROM_EMAIL`.
 
 One connection is opened for the batch rather than one per message.

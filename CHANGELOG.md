@@ -94,6 +94,12 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Fixed
 
+- The mail documentation described APIs that do not exist: `send_email` with
+  `body`/`to`, `EmailMessage.attach(name, content, mimetype)`,
+  `attach_alternative`, `send_mass_email` taking messages, and an
+  `OAuthSMTPBackend`. It now shows `message`/`recipient_list`,
+  `attach(EmailAttachment(...))`, the `html` attribute, the tuples
+  `send_mass_email` takes, and `OAuth2SMTPBackend`.
 - A template engine's `OPTIONS["autoescape"]` was ignored and autoescaping
   was always on, so the documented plain-text mail engine escaped its output.
 - `S3Storage.close()` awaited a `close()` the aioboto3 session never had, so
