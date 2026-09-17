@@ -199,6 +199,13 @@ TEMPLATES: list[dict[str, Any]] = [
 # An engine's own OPTIONS["bytecode_cache"] takes precedence.
 TEMPLATE_CACHE: str | None = None
 
+
+# Where `nitro static collect` gathers files from, and the directory it
+# gathers them into — what a deployment serves as they are, whether by
+# `nitro.staticfiles.StaticFiles` or by whatever sits in front of it.
+STATIC_DIRS: list[str] = []
+STATIC_ROOT: str | None = None
+
 CACHES: dict[str, dict[str, Any]] = {
     "default": {
         "BACKEND": "nitro.cache.backends.MemoryCache",

@@ -72,6 +72,13 @@ class TestDiscovery:
         found = {command.name for command in commands_in("nitro.cli.commands")}
         assert {"version", "shell", "check"} <= found
 
+    def test_a_groups_subcommands_stay_under_it(self, runner, full_cli):
+        found = {command.name for command in commands_in("nitro.cli.commands")}
+
+        assert "static" in found
+        assert "collect" not in found, "a subcommand is reached through its group alone"
+        assert "collect" not in full_cli.commands
+
     def test_serving_is_not_a_command_of_its_own(self, runner, full_cli):
         found = {command.name for command in commands_in("nitro.cli.commands")}
 
@@ -351,3 +358,107 @@ class TestShell:
         namespace = build_namespace()
         assert "nitro" in namespace
         assert "settings" in namespace
+
+
+class TestStatic:
+    @pytest.fixture
+    def collected(self, tmp_path, monkeypatch):
+        """A source directory and the root to collect it into."""
+        source = tmp_path / "assets"
+        (source / "css").mkdir(parents=True)
+        (source / "css" / "site.css").write_text("body {}")
+        (source / "logo.svg").write_text("<svg/>")
+        root = tmp_path / "collected"
+
+        monkeypatch.setattr(settings, "STATIC_DIRS", [str(source)], raising=False)
+        monkeypatch.setattr(settings, "STATIC_ROOT", str(root), raising=False)
+        return source, root
+
+    def test_the_files_land_under_the_root(self, runner, full_cli, collected):
+        _, root = collected
+
+        result = runner.invoke(full_cli, ["static", "collect"])
+
+        assert result.exit_code == 0, result.output
+        assert (root / "css" / "site.css").read_text() == "body {}"
+        assert (root / "logo.svg").read_text() == "<svg/>"
+        assert "2 copied" in result.output
+
+    def test_collecting_again_copies_nothing(self, runner, full_cli, collected):
+        runner.invoke(full_cli, ["static", "collect"])
+
+        result = runner.invoke(full_cli, ["static", "collect"])
+
+        assert result.exit_code == 0, result.output
+        assert "0 copied, 2 unchanged" in result.output
+
+    def test_a_changed_file_is_copied_again(self, runner, full_cli, collected):
+        source, root = collected
+        runner.invoke(full_cli, ["static", "collect"])
+        (source / "logo.svg").write_text("<svg viewBox='0 0 1 1'/>")
+
+        result = runner.invoke(full_cli, ["static", "collect"])
+
+        assert "1 copied, 1 unchanged" in result.output
+        assert (root / "logo.svg").read_text() == "<svg viewBox='0 0 1 1'/>"
+
+    def test_the_first_directory_named_wins(self, runner, full_cli, tmp_path, monkeypatch):
+        first, second = tmp_path / "first", tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        (first / "logo.svg").write_text("mine")
+        (second / "logo.svg").write_text("theirs")
+        root = tmp_path / "collected"
+        monkeypatch.setattr(settings, "STATIC_DIRS", [str(first), str(second)], raising=False)
+        monkeypatch.setattr(settings, "STATIC_ROOT", str(root), raising=False)
+
+        result = runner.invoke(full_cli, ["static", "collect"])
+
+        assert result.exit_code == 0, result.output
+        assert (root / "logo.svg").read_text() == "mine"
+
+    def test_clearing_removes_what_is_no_longer_collected(self, runner, full_cli, collected):
+        _, root = collected
+        runner.invoke(full_cli, ["static", "collect"])
+        (root / "stale.css").write_text("gone")
+
+        result = runner.invoke(full_cli, ["static", "collect", "--clear"])
+
+        assert result.exit_code == 0, result.output
+        assert not (root / "stale.css").exists()
+        assert (root / "logo.svg").exists()
+
+    def test_a_missing_root_is_reported(self, runner, full_cli, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "STATIC_DIRS", [str(tmp_path)], raising=False)
+        monkeypatch.setattr(settings, "STATIC_ROOT", None, raising=False)
+
+        result = runner.invoke(full_cli, ["static", "collect"])
+
+        assert result.exit_code != 0
+        assert "STATIC_ROOT" in result.output
+
+    def test_no_source_directories_is_reported(self, runner, full_cli, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "STATIC_DIRS", [], raising=False)
+        monkeypatch.setattr(settings, "STATIC_ROOT", str(tmp_path / "collected"), raising=False)
+
+        result = runner.invoke(full_cli, ["static", "collect"])
+
+        assert result.exit_code != 0
+        assert "STATIC_DIRS" in result.output
+
+    def test_a_directory_that_is_not_there_is_named_and_skipped(
+        self, runner, full_cli, tmp_path, monkeypatch
+    ):
+        source = tmp_path / "assets"
+        source.mkdir()
+        (source / "logo.svg").write_text("<svg/>")
+        monkeypatch.setattr(
+            settings, "STATIC_DIRS", [str(tmp_path / "nowhere"), str(source)], raising=False
+        )
+        monkeypatch.setattr(settings, "STATIC_ROOT", str(tmp_path / "collected"), raising=False)
+
+        result = runner.invoke(full_cli, ["static", "collect"])
+
+        assert result.exit_code == 0, result.output
+        assert "nowhere" in result.output
+        assert "1 copied" in result.output

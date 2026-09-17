@@ -144,11 +144,24 @@ def commands_in(package_name: str) -> list[click.Command]:
 
 
 def _commands_in_module(module: object) -> list[click.Command]:
-    return [
+    """The commands a module defines, without the subcommands of its groups.
+
+    A subcommand is an ordinary module attribute too — ``@things.command()``
+    binds one — so taking every command in sight would register each of them at
+    the top level as well as under its group.
+    """
+    found = [
         value
         for name, value in vars(module).items()
         if not name.startswith("_") and isinstance(value, click.Command)
     ]
+    grouped = {
+        id(subcommand)
+        for command in found
+        if isinstance(command, click.Group)
+        for subcommand in command.commands.values()
+    }
+    return [command for command in found if id(command) not in grouped]
 
 
 def register_commands(group: click.Group, package_name: str) -> None:

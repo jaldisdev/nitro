@@ -216,6 +216,10 @@ A path that climbs out of the directory is a 404, and so is a symlink pointing
 out of it unless `follow_symlink=True` says otherwise. A directory is a 403
 rather than a listing, since listing publishes names nothing asked to publish.
 
+A deployment serving one directory gathers it with `nitro static collect`,
+which copies `STATIC_DIRS` into `STATIC_ROOT`. See [the
+CLI](cli.md#collecting-static-files).
+
 With `html=True` a directory is served by its `index.html` and a miss by a
 `404.html` if there is one, which is what a single-page application needs.
 

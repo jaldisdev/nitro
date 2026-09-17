@@ -100,6 +100,7 @@ constructor argument.
 | `COMMAND_MODULES` | Packages searched for extra CLI commands. |
 | `LOGGING` | Python logging, merged over Nitro's defaults. Not the server's log, which is `SERVER_LOG_*`. See [logging](logging.md). |
 | `ROUTES` | The module holding the route table, which defines `patterns`. See [routing](routing.md). |
+| `STATIC_DIRS`, `STATIC_ROOT` | Where `nitro static collect` gathers static files from, and the directory it gathers them into. See [the CLI](cli.md#collecting-static-files). |
 | `TEMPLATES`, `TEMPLATE_CACHE` | See [templates](templates.md). |
 | `CACHES` | See [caching](cache.md). |
 | `STORAGES` | See [storage](storage.md). |

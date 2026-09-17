@@ -11,6 +11,13 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Added
 
+- `nitro static collect`, which copies every file in `STATIC_DIRS` into
+  `STATIC_ROOT` for a deployment to serve. A file is copied only when the
+  destination is missing or differs in size or modification time, the first
+  directory listed wins a path two of them hold, and `--clear` empties the
+  destination first. Command discovery now leaves a group's subcommands under
+  their group instead of registering each of them at the top level as well.
+
 - `nitro.testing.TestClient`, which drives an application in-process over
   HTTP, WebSocket and WebTransport. Routes are found by the compiled matcher,
   now also available on its own as `nitro._nitro.RouteMatcher`, and file

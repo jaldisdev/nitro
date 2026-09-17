@@ -9,6 +9,7 @@ nitro --help
 | `nitro APPLICATION` | Serves an application. |
 | `nitro check` | Reports configuration problems, including a `LOGGING` setting that cannot be applied; exits non-zero when it finds any. |
 | `nitro shell` | An interactive shell with the project loaded. |
+| `nitro static collect` | Gathers `STATIC_DIRS` into `STATIC_ROOT` for a deployment to serve. |
 | `nitro version` | The installed version. |
 
 ## Serving
@@ -110,6 +111,32 @@ app.serve(reload=True)   # regardless of RELOAD
 app.serve(reload=False)  # regardless of RELOAD
 ```
 
+## Collecting static files
+
+```sh
+nitro static collect
+```
+
+A deployment serves its static files from one directory, while a project keeps
+them wherever they are written — an app's own, a package's, a build's output.
+`collect` copies every file in `STATIC_DIRS` into `STATIC_ROOT`, which is what
+`nitro.staticfiles.StaticFiles`, or whatever sits in front of it, then serves.
+
+```python
+STATIC_DIRS = ["myproject/assets", "build/static"]
+STATIC_ROOT = "/srv/static"
+```
+
+A file is copied when the destination is missing or differs in size or
+modification time, so collecting again over an existing directory costs the
+little that changed. `--clear` empties the destination first, which is how a
+file that is no longer collected stops being served.
+
+Where two directories hold the same relative path the one listed first wins, so
+a project overrides a file it takes from elsewhere by naming its own directory
+first. A directory that is not there is named and skipped rather than failing
+the run.
+
 ## Commands of your own
 
 Any `click.Command` defined at module level in a package listed in
@@ -133,6 +160,25 @@ def backfill(since: str) -> None:
 
 ```sh
 nitro backfill --since 2026-01-01
+```
+
+Groups are registered as one command, and their subcommands are reached
+through them alone:
+
+```python
+# myproject/commands/account.py
+@click.group("account")
+def account() -> None:
+    """Accounts."""
+
+
+@account.command("create")
+def create() -> None:
+    ...
+```
+
+```sh
+nitro account create
 ```
 
 A package that cannot be imported is logged and skipped rather than taking the
