@@ -1,0 +1,8 @@
+# A project building Nitro from this checkout passes it as a build context,
+# and the Rust build output alone runs to hundreds of megabytes
+target/
+**/__pycache__/
+.git/
+.venv/
+.pytest_cache/
+nitro/_nitro*.so
