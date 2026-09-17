@@ -18,14 +18,19 @@
 #
 
 import asyncio
+import base64
+import logging
 from importlib import import_module
 from pathlib import Path
 from typing import Any
 
 import jinja2
 from jinja2 import ChoiceLoader, FileSystemLoader, TemplateNotFound
+from jinja2.bccache import Bucket, BytecodeCache
 
 from nitro.templates.exceptions import TemplateDoesNotExist, TemplateSyntaxError
+
+logger = logging.getLogger(__name__)
 
 
 def import_string(dotted_path: str) -> Any:
@@ -80,15 +85,19 @@ class Jinja2:
 
         loader = ChoiceLoader(loaders) if len(loaders) > 1 else (loaders[0] if loaders else None)
 
-        # Get bytecode cache if specified
+        # An explicit bytecode cache wins over the project-wide TEMPLATE_CACHE
         bytecode_cache = None
         if "bytecode_cache" in options:
             cache_cls = options["bytecode_cache"]
             if isinstance(cache_cls, str):
                 cache_cls = import_string(cache_cls)
             bytecode_cache = cache_cls()
+        else:
+            from nitro.settings import settings
 
-        # Create environment with basic options
+            if settings.TEMPLATE_CACHE is not None:
+                bytecode_cache = CacheBytecodeCache(settings.TEMPLATE_CACHE)
+
         env_options = {
             "loader": loader,
             "auto_reload": options.get("auto_reload", False),
@@ -194,8 +203,19 @@ class Jinja2:
         Returns:
             Rendered template string
         """
+        await self.warm_bytecode()
         template = self.get_template(template_name)
         return await template.render_to_string(context)
+
+    async def warm_bytecode(self) -> None:
+        """Load compiled bytecode from the project's cache, when one is configured."""
+        if isinstance(self.env.bytecode_cache, CacheBytecodeCache):
+            await self.env.bytecode_cache.warm(self.env)
+
+    async def flush_bytecode(self) -> None:
+        """Store what was compiled since the last flush in the project's cache."""
+        if isinstance(self.env.bytecode_cache, CacheBytecodeCache):
+            await self.env.bytecode_cache.flush()
 
     def render_to_string_sync(
         self, template_name: str, context: dict[str, Any] | None = None
@@ -249,16 +269,20 @@ class Template:
                 result = await coro
                 context.update(result)
 
+        await self.engine.warm_bytecode()
         try:
             # Use render_async if available (Jinja2 3.0+)
             if hasattr(self.template, "render_async"):
-                return await self.template.render_async(context)
+                rendered = await self.template.render_async(context)
             else:
                 # Fall back to sync rendering in executor
                 loop = asyncio.get_event_loop()
-                return await loop.run_in_executor(None, self.template.render, context)
+                rendered = await loop.run_in_executor(None, self.template.render, context)
         except jinja2.TemplateError as e:
             raise TemplateSyntaxError(str(e)) from e
+        # Templates an include or extends reached for the first time were compiled during the render
+        await self.engine.flush_bytecode()
+        return rendered
 
     def render_to_string_sync(self, context: dict[str, Any] | None = None) -> str:
         """
@@ -284,23 +308,100 @@ class Template:
             raise TemplateSyntaxError(str(e)) from e
 
 
-class MemcachedBytecodeCache(jinja2.MemcachedBytecodeCache):
+class CacheBytecodeCache(BytecodeCache):
     """
-    Caches bytecode of parsed template in memcached.
+    Compiled template bytecode kept in one of the project's caches.
 
-    This is optional and only used if specified in template configuration.
+    Jinja loads and stores bytecode synchronously while it loads a template, and
+    a project cache can only be reached with an await. So Jinja is served from
+    this process's own copy: `warm` fills that copy from the cache before a
+    render, and `flush` hands back whatever was compiled in the meantime.
     """
 
-    def __init__(self):
-        """
-        Initialize bytecode cache using Nitro's cache system.
-        """
-        from nitro.cache import DEFAULT_CACHE_ALIAS, caches
-        from nitro.settings import settings
+    key_prefix = "nitro.templates.bytecode"
 
-        cache = caches[getattr(settings, "TEMPLATE_CACHE", DEFAULT_CACHE_ALIAS)]
+    def __init__(self, alias: str) -> None:
+        self.alias = alias
+        self._local: dict[str, bytes] = {}
+        self._pending: dict[str, bytes] = {}
+        self._warmed = False
 
-        self.client = cache._cache
-        self.prefix = "template/"
-        self.timeout = None
-        self.ignore_memcache_errors = True
+    def load_bytecode(self, bucket: Bucket) -> None:
+        data = self._local.get(bucket.key)
+        if data is not None:
+            # A checksum that no longer matches the source leaves the bucket empty,
+            # so a changed template is compiled afresh
+            bucket.bytecode_from_string(data)
+
+    def dump_bytecode(self, bucket: Bucket) -> None:
+        data = bucket.bytecode_to_string()
+        self._local[bucket.key] = data
+        self._pending[bucket.key] = data
+
+    def clear(self) -> None:
+        self._local.clear()
+        self._pending.clear()
+
+    def _cache_key(self, key: str) -> str:
+        return f"{self.key_prefix}:{key}"
+
+    def _template_keys(self, environment: jinja2.Environment) -> list[str]:
+        loader = environment.loader
+        if loader is None:
+            return []
+        try:
+            names = loader.list_templates()
+        except TypeError:
+            # A loader that cannot enumerate its templates still writes through;
+            # only reading ahead of a render is out of reach
+            return []
+        keys = []
+        for name in names:
+            _source, filename, _uptodate = loader.get_source(environment, name)
+            keys.append(self.get_cache_key(name, filename))
+        return keys
+
+    async def warm(self, environment: jinja2.Environment) -> None:
+        """Read the bytecode of every template the loader knows, once per process.
+
+        Every template rather than the one about to render, because the ones it
+        includes or extends are loaded in the middle of the render, where there
+        is no way to await the cache.
+        """
+        if self._warmed:
+            return
+
+        from nitro.cache import caches
+
+        keys = await asyncio.to_thread(self._template_keys, environment)
+        try:
+            stored = await caches[self.alias].get_many([self._cache_key(key) for key in keys])
+        except Exception:
+            # The cache is an optimisation: without it templates are compiled, not lost
+            logger.exception("template bytecode could not be read from the %r cache", self.alias)
+            return
+
+        for key in keys:
+            value = stored.get(self._cache_key(key))
+            if value is not None and key not in self._local:
+                self._local[key] = base64.b64decode(value)
+        self._warmed = True
+
+    async def flush(self) -> None:
+        """Store bytecode compiled since the last flush."""
+        if not self._pending:
+            return
+
+        from nitro.cache import caches
+
+        pending, self._pending = self._pending, {}
+        # Base64 so the value survives a JSON serializer as well as pickle
+        data = {
+            self._cache_key(key): base64.b64encode(value).decode("ascii")
+            for key, value in pending.items()
+        }
+        try:
+            await caches[self.alias].set_many(data, timeout=0)
+        except Exception:
+            logger.exception("template bytecode could not be written to the %r cache", self.alias)
+            self._pending = {**pending, **self._pending}

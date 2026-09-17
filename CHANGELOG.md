@@ -11,6 +11,11 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Added
 
+- `TEMPLATE_CACHE` now does what the documentation said: compiled template
+  bytecode is kept in the named cache, so a worker that starts renders without
+  compiling again. Each process serves Jinja from its own copy, read from the
+  cache before its first render and written back after each render, because
+  Jinja loads bytecode synchronously and a cache is reached with an await.
 - `LOGGING`, a `dictConfig` mapping for Python logging, merged by name over
   defaults that write the `nitro` logger to stderr in the server log's text
   layout. It is applied by the command line and by `app.serve()`, never on
@@ -67,6 +72,10 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Changed
 
+- **Breaking.** `TEMPLATE_CACHE` defaults to `None`, turning bytecode caching
+  on only when it names a cache. `MemcachedBytecodeCache` is gone: it read a
+  Memcached client attribute no Nitro cache backend has, so it could not be
+  constructed against one.
 - **Breaking.** The `SERVER` settings mapping is gone. Its keys are now flat
   top-level settings prefixed with `SERVER_` — `SERVER_PORT`, `SERVER_WORKERS`,
   `SERVER_TLS_CERT` and so on — matching how every other subsystem's settings
@@ -94,14 +103,14 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Fixed
 
+- A template engine's `OPTIONS["autoescape"]` was ignored and autoescaping
+  was always on, so the documented plain-text mail engine escaped its output.
 - The mail documentation described APIs that do not exist: `send_email` with
   `body`/`to`, `EmailMessage.attach(name, content, mimetype)`,
   `attach_alternative`, `send_mass_email` taking messages, and an
   `OAuthSMTPBackend`. It now shows `message`/`recipient_list`,
   `attach(EmailAttachment(...))`, the `html` attribute, the tuples
   `send_mass_email` takes, and `OAuth2SMTPBackend`.
-- A template engine's `OPTIONS["autoescape"]` was ignored and autoescaping
-  was always on, so the documented plain-text mail engine escaped its output.
 - `S3Storage.close()` awaited a `close()` the aioboto3 session never had, so
   `storages.close_all()` raised `AttributeError` for any project with an S3
   storage.

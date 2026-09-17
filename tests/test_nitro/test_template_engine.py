@@ -492,56 +492,109 @@ class TestAutoescape:
 
 
 # ---------------------------------------------------------------------------
-# MemcachedBytecodeCache
+# CacheBytecodeCache
 # ---------------------------------------------------------------------------
 
 
-class TestMemcachedBytecodeCache:
-    def test_initialises_with_mocked_cache(self):
-        from nitro.templates.engine import MemcachedBytecodeCache
+class _TemplateCacheSettings:
+    TEMPLATE_CACHE = "templates"
 
-        mock_inner = MagicMock()
-        mock_cache = MagicMock()
-        mock_cache._cache = mock_inner
 
-        mock_caches = MagicMock()
-        mock_caches.__getitem__ = MagicMock(return_value=mock_cache)
+@pytest.fixture
+def template_cache():
+    from nitro.cache.backends.memory import MemoryCache
 
-        mock_settings = MagicMock()
-        mock_settings.TEMPLATE_CACHE = "default"
+    cache = MemoryCache("", {})
+    with (
+        patch("nitro.settings.settings", _TemplateCacheSettings()),
+        patch("nitro.cache.caches", {"templates": cache}),
+    ):
+        yield cache
 
-        with (
-            patch("nitro.cache.caches", mock_caches),
-            patch("nitro.cache.DEFAULT_CACHE_ALIAS", "default"),
-            patch("nitro.settings.settings", mock_settings),
-        ):
-            cache = MemcachedBytecodeCache()
 
-        assert cache.client is mock_inner
-        assert cache.prefix == "template/"
-        assert cache.timeout is None
-        assert cache.ignore_memcache_errors is True
+@pytest.fixture
+def compilations(monkeypatch):
+    calls: list[str] = []
+    original = jinja2.Environment.compile
 
-    def test_falls_back_to_default_alias_when_setting_absent(self):
-        from nitro.templates.engine import MemcachedBytecodeCache
+    def counting(self, source, name=None, filename=None, raw=False, defer_init=False):
+        calls.append(name)
+        return original(self, source, name, filename, raw, defer_init)
 
-        mock_inner = MagicMock()
-        mock_cache = MagicMock()
-        mock_cache._cache = mock_inner
+    monkeypatch.setattr(jinja2.Environment, "compile", counting)
+    return calls
 
-        mock_caches = MagicMock()
-        mock_caches.__getitem__ = MagicMock(return_value=mock_cache)
 
-        mock_settings = MagicMock(spec=[])  # no TEMPLATE_CACHE attribute
+def write_templates(tdir):
+    (tdir / "base.html").write_text("<main>{% block body %}{% endblock %}</main>")
+    (tdir / "page.html").write_text(
+        '{% extends "base.html" %}{% block body %}{{ value }}{% endblock %}'
+    )
 
-        with (
-            patch("nitro.cache.caches", mock_caches),
-            patch("nitro.cache.DEFAULT_CACHE_ALIAS", "default"),
-            patch("nitro.settings.settings", mock_settings),
-        ):
-            cache = MemcachedBytecodeCache()
 
-        assert cache.client is mock_inner
+class TestCacheBytecodeCache:
+    def test_no_bytecode_cache_without_the_setting(self, tdir):
+        assert make_engine(tdir).env.bytecode_cache is None
+
+    def test_an_explicit_bytecode_cache_takes_precedence(self, tdir, template_cache):
+        engine = make_engine(tdir, options={"bytecode_cache": jinja2.FileSystemBytecodeCache})
+        assert isinstance(engine.env.bytecode_cache, jinja2.FileSystemBytecodeCache)
+
+    async def test_a_render_stores_the_template_and_what_it_extends(self, tdir, template_cache):
+        from nitro.templates.engine import CacheBytecodeCache
+
+        write_templates(tdir)
+        await make_engine(tdir).render_to_string("page.html", {"value": "x"})
+
+        stored = [key for key in template_cache._cache if CacheBytecodeCache.key_prefix in key]
+        assert len(stored) == 2
+
+    async def test_a_new_process_renders_without_compiling(
+        self, tdir, template_cache, compilations
+    ):
+        write_templates(tdir)
+        await make_engine(tdir).render_to_string("page.html", {"value": "x"})
+        assert sorted(compilations) == ["base.html", "page.html"]
+
+        compilations.clear()
+        rendered = await make_engine(tdir).render_to_string("page.html", {"value": "y"})
+
+        assert rendered == "<main>y</main>"
+        assert compilations == []
+
+    async def test_a_changed_template_is_compiled_again(self, tdir, template_cache, compilations):
+        write_templates(tdir)
+        await make_engine(tdir).render_to_string("page.html", {"value": "x"})
+
+        (tdir / "page.html").write_text(
+            '{% extends "base.html" %}{% block body %}[{{ value }}]{% endblock %}'
+        )
+        compilations.clear()
+        rendered = await make_engine(tdir).render_to_string("page.html", {"value": "y"})
+
+        assert rendered == "<main>[y]</main>"
+        assert compilations == ["page.html"]
+
+    async def test_a_template_reached_through_get_template_is_stored_after_its_render(
+        self, tdir, template_cache, compilations
+    ):
+        write_templates(tdir)
+        await make_engine(tdir).get_template("page.html").render_to_string({"value": "x"})
+
+        compilations.clear()
+        await make_engine(tdir).render_to_string("page.html", {"value": "y"})
+        assert compilations == []
+
+    async def test_an_unreachable_cache_still_renders(self, tdir, template_cache, caplog):
+        write_templates(tdir)
+        template_cache.get_many = MagicMock(side_effect=ConnectionError("down"))
+        template_cache.set_many = MagicMock(side_effect=ConnectionError("down"))
+
+        rendered = await make_engine(tdir).render_to_string("page.html", {"value": "x"})
+
+        assert rendered == "<main>x</main>"
+        assert "could not be read" in caplog.text
+        assert "could not be written" in caplog.text
 
 
 # ---------------------------------------------------------------------------

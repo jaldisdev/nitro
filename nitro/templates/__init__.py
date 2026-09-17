@@ -17,7 +17,7 @@
 # limitations under the License.
 #
 
-from nitro.templates.engine import Jinja2, MemcachedBytecodeCache, Template
+from nitro.templates.engine import CacheBytecodeCache, Jinja2, Template
 from nitro.templates.exceptions import (
     TemplateDoesNotExist,
     TemplateError,
@@ -26,8 +26,8 @@ from nitro.templates.exceptions import (
 from nitro.templates.templates import templates
 
 __all__ = [
+    "CacheBytecodeCache",
     "Jinja2",
-    "MemcachedBytecodeCache",
     "Template",
     "TemplateDoesNotExist",
     "TemplateError",

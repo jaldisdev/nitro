@@ -194,9 +194,10 @@ TEMPLATES: list[dict[str, Any]] = [
     }
 ]
 
-# The cache alias used for compiled template bytecode, when a template engine
-# is configured to cache it.
-TEMPLATE_CACHE: str = "default"
+# The cache alias compiled template bytecode is kept in, so a worker that
+# starts does not compile every template again. None compiles in each process.
+# An engine's own OPTIONS["bytecode_cache"] takes precedence.
+TEMPLATE_CACHE: str | None = None
 
 CACHES: dict[str, dict[str, Any]] = {
     "default": {

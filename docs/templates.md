@@ -58,9 +58,23 @@ Without `using`, the first configured engine is used.
 
 ## Caching compiled templates
 
-An engine can keep compiled bytecode in one of the project's caches, which
-avoids recompiling on every worker start:
+Compiled bytecode can be kept in one of the project's caches, so a worker that
+starts does not compile every template again:
 
 ```python
 TEMPLATE_CACHE = "default"
 ```
+
+It is off unless set, and it needs a cache every worker reaches: a
+`MemoryCache` only holds what the process that compiled it already has.
+
+Jinja reads bytecode synchronously while it loads a template, and a cache is
+reached with an await, so each process works from its own copy. Before its first
+render it reads the bytecode of every template the engine can list — not just the
+one being rendered, since those it extends or includes are loaded mid-render —
+and after each render it stores whatever was compiled. A changed template no
+longer matches the checksum stored with its bytecode and is compiled afresh.
+
+A cache that cannot be reached is logged and rendering carries on, compiling as
+it would without one. An engine's own `OPTIONS["bytecode_cache"]`, such as
+Jinja's `FileSystemBytecodeCache`, takes precedence over the setting.
