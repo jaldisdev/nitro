@@ -86,6 +86,7 @@ Start with [the overview](docs/overview.md).
 | [Middleware](docs/middleware.md) | Wrapping handlers |
 | [Sessions](docs/sessions.md) | Server-side state, and the origin check that guards it |
 | [Caching](docs/cache.md) · [Storage](docs/storage.md) · [Templates](docs/templates.md) · [Mail](docs/mail.md) | Batteries |
+| [Logging](docs/logging.md) | The `LOGGING` setting, and how it differs from the server's log |
 | [Observability](docs/observability.md) | Prometheus metrics |
 | [Command line](docs/cli.md) | Serving, `check`, `shell` |
 | [Deployment](docs/deployment.md) | Workers, TLS, HTTP/3, draining |

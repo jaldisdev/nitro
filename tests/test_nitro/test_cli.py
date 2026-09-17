@@ -236,6 +236,37 @@ class TestCheck:
 
         assert result.exit_code == 0, result.output
 
+    @pytest.mark.usefixtures("isolated_logging")
+    def test_a_logging_setting_that_cannot_be_applied_is_reported(
+        self, runner, full_cli, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
+        monkeypatch.setattr(
+            settings,
+            "LOGGING",
+            {"handlers": {"broken": {"class": "nowhere.MissingHandler"}}},
+            raising=False,
+        )
+
+        result = runner.invoke(full_cli, ["check"])
+
+        assert result.exit_code != 0
+        assert "LOGGING cannot be applied: Unable to configure handler 'broken'" in result.output
+
+    @pytest.mark.usefixtures("isolated_logging")
+    def test_a_logging_setting_that_applies_passes(self, runner, full_cli, monkeypatch):
+        monkeypatch.setattr(settings, "DEBUG", True, raising=False)
+        monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)
+        monkeypatch.setattr(
+            settings, "LOGGING", {"loggers": {"nitro": {"level": "WARNING"}}}, raising=False
+        )
+
+        result = runner.invoke(full_cli, ["check"])
+
+        assert result.exit_code == 0, result.output
+        assert "LOGGING applies" in result.output
+
     def test_optional_packages_are_listed_when_asked(self, runner, full_cli, monkeypatch):
         monkeypatch.setattr(settings, "DEBUG", True, raising=False)
         monkeypatch.setattr(settings, "SERVER_HTTP", "1", raising=False)

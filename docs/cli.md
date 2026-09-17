@@ -7,7 +7,7 @@ nitro --help
 | Command | Does |
 |---|---|
 | `nitro APPLICATION` | Serves an application. |
-| `nitro check` | Reports configuration problems; exits non-zero when it finds any. |
+| `nitro check` | Reports configuration problems, including a `LOGGING` setting that cannot be applied; exits non-zero when it finds any. |
 | `nitro shell` | An interactive shell with the project loaded. |
 | `nitro version` | The installed version. |
 

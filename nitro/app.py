@@ -39,6 +39,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
 from nitro.di import cache_for, existing_cache, resolve_dependencies
+from nitro.log import configure_logging
 from nitro.middleware.stack import MiddlewareStack
 from nitro.protocols.exceptions import (
     ExceptionHandlerRegistry,
@@ -418,6 +419,8 @@ class Nitro:
             if __name__ == "__main__":
                 app.serve()
         """
+        configure_logging()
+
         if reload_requested(reload):
             # Imported only once reloading is settled on, so a server that is
             # not reloading never loads the supervisor at all.

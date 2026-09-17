@@ -169,6 +169,10 @@ SERVER_ACCESS_LOG_FORMAT = "combined"
 `RUST_LOG` overrides `SERVER_LOG_LEVEL` when it is set, which is useful for turning up
 detail on a running deployment without changing configuration.
 
+These configure the compiled server's logs only. Records from the framework's
+`nitro.*` loggers and from your application go through Python's logging, which
+is configured by `LOGGING`; see [logging](logging.md).
+
 ## Metrics
 
 ```python
@@ -190,5 +194,6 @@ nitro check
 ```
 
 Reports configuration that will not work — HTTP/3 without a certificate, an
-empty `SECRET_KEY` or `ALLOWED_HOSTS` outside debug — and exits non-zero when it
-finds any, so it can gate a release.
+empty `SECRET_KEY` or `ALLOWED_HOSTS` outside debug, a `LOGGING` setting that
+cannot be applied — and exits non-zero when it finds any, so it can gate a
+release.

@@ -26,6 +26,7 @@ import sys
 
 import click
 
+from nitro.log import apply_logging_settings
 from nitro.settings import ImproperlyConfigured, ServerOptions, settings
 
 #: Packages a backend needs, by the setting that would select it.
@@ -133,6 +134,19 @@ def check(verbose: bool) -> None:
     except ImproperlyConfigured as error:
         problems += not _report(False, f"server options: {error}")
         options = None
+
+    try:
+        logging_configured = bool(settings.LOGGING)
+    except ImproperlyConfigured:
+        logging_configured = False
+    if logging_configured:
+        # Only a real application can tell: a handler whose class does not
+        # import, or whose file cannot be opened, looks like any other entry.
+        logging_problem = apply_logging_settings()
+        if logging_problem is None:
+            _report(True, "LOGGING applies")
+        else:
+            problems += not _report(False, f"LOGGING cannot be applied: {logging_problem}")
 
     if options is not None:
         if options.http == "auto" or options.http == "3":

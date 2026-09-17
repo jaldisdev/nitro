@@ -38,6 +38,7 @@ import click
 
 from nitro import __version__
 from nitro.cli.serve import serve
+from nitro.log import configure_logging
 
 logger = logging.getLogger("nitro.cli")
 
@@ -184,6 +185,7 @@ def main() -> None:
     if working_directory not in sys.path:
         sys.path.insert(0, working_directory)
 
+    configure_logging()
     register_commands(cli, BUILTIN_COMMAND_PACKAGE)
     load_project_commands(cli)
     cli()

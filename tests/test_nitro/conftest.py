@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import re
 import signal
@@ -182,3 +183,39 @@ def hello_app() -> str:
         async def index(request):
             return PlainTextResponse("hello")
     """
+
+
+@pytest.fixture
+def isolated_logging():
+    """Put logging back the way the test found it.
+
+    `dictConfig` rewires loggers for the whole process, and a handler left
+    behind would keep writing to a stream that pytest has since closed.
+    """
+    manager = logging.Logger.manager
+    loggers = [
+        logging.root,
+        *(
+            candidate
+            for candidate in manager.loggerDict.values()
+            if isinstance(candidate, logging.Logger)
+        ),
+    ]
+    saved = [
+        (logger, logger.handlers[:], logger.level, logger.propagate, logger.disabled)
+        for logger in loggers
+    ]
+    known = set(manager.loggerDict)
+
+    yield
+
+    for name in set(manager.loggerDict) - known:
+        created = manager.loggerDict[name]
+        if isinstance(created, logging.Logger):
+            created.handlers.clear()
+            created.setLevel(logging.NOTSET)
+    for logger, handlers, level, propagate, disabled in saved:
+        logger.handlers[:] = handlers
+        logger.setLevel(level)
+        logger.propagate = propagate
+        logger.disabled = disabled

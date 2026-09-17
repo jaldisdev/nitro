@@ -11,6 +11,12 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Added
 
+- `LOGGING`, a `dictConfig` mapping for Python logging, merged by name over
+  defaults that write the `nitro` logger to stderr in the server log's text
+  layout. It is applied by the command line and by `app.serve()`, never on
+  import. A setting that cannot be applied falls back to the defaults with a
+  warning rather than stopping the server, and `nitro check` reports it. The
+  server's own log is still configured by `SERVER_LOG_*` alone.
 - `ALLOWED_HOSTS` is now enforced. The compiled server checks every request's
   `Host` against it and answers `400` before the request reaches the
   application. An empty list still answers for any name, and `nitro check`

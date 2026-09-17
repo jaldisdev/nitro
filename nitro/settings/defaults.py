@@ -54,6 +54,12 @@ TIME_ZONE: str = "Europe/Zurich"
 USE_TZ: bool = True
 
 
+# Python logging, as a logging.config.dictConfig mapping. Its formatters,
+# filters, handlers and loggers are merged by name over Nitro's defaults, which
+# write the "nitro" logger to stderr. The server's own log is configured by the
+# SERVER_LOG_* settings instead.
+LOGGING: dict[str, Any] = {}
+
 # Import paths searched for additional CLI commands.
 COMMAND_MODULES: list[str] = []
 

@@ -62,7 +62,7 @@ it first.
 | `SERVER_ALT_SVC` | `"auto"` | Advertising HTTP/3: `"auto"`, `"off"`, or a verbatim header value. |
 | `SERVER_DRAIN_TIMEOUT` | `30.0` | Seconds in-flight work gets once shutdown starts. |
 | `SERVER_HEADER` | `"nitro"` | `None` omits the header. |
-| `SERVER_LOG_LEVEL`, `SERVER_LOG_DESTINATION`, `SERVER_LOG_FORMAT` | `"info"`, `"stderr"`, `"pretty"` | The server log. A destination other than `stdout`/`stderr` is a file path. |
+| `SERVER_LOG_LEVEL`, `SERVER_LOG_DESTINATION`, `SERVER_LOG_FORMAT` | `"info"`, `"stderr"`, `"pretty"` | The server log. A destination other than `stdout`/`stderr` is a file path. Python's loggers are configured by `LOGGING` instead; see [logging](logging.md). |
 | `SERVER_ACCESS_LOG`, `SERVER_ACCESS_LOG_DESTINATION`, `SERVER_ACCESS_LOG_FORMAT` | `False`, `"stdout"`, `"combined"` | The access log, configured separately. |
 
 ### Where a value comes from
@@ -98,6 +98,7 @@ constructor argument.
 | `CORS_*` | Read by `CORSMiddleware`. See [middleware](middleware.md). |
 | `SECURE_*` | Read by `SecurityHeadersMiddleware`. See [middleware](middleware.md). |
 | `COMMAND_MODULES` | Packages searched for extra CLI commands. |
+| `LOGGING` | Python logging, merged over Nitro's defaults. Not the server's log, which is `SERVER_LOG_*`. See [logging](logging.md). |
 | `ROUTES` | The module holding the route table, which defines `patterns`. See [routing](routing.md). |
 | `TEMPLATES`, `TEMPLATE_CACHE` | See [templates](templates.md). |
 | `CACHES` | See [caching](cache.md). |
