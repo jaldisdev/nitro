@@ -50,7 +50,7 @@ class FakeSession:
         self.client_calls: list[str] = []
         self.client_kwargs: list[dict] = []
         self.ses = MagicMock()
-        self.ses.send_raw_email = AsyncMock(return_value={"MessageId": "abc-123"})
+        self.ses.send_email = AsyncMock(return_value={"MessageId": "abc-123"})
 
     def create_client(self, name, **kwargs):
         self.client_calls.append(name)
@@ -98,11 +98,34 @@ class TestSending:
         with patch.object(backend, "_session", session):
             assert await backend.send_messages([message()]) == 1
 
-        assert session.client_calls == ["ses"]
-        request = session.ses.send_raw_email.await_args.kwargs
-        assert request["Source"] == "sender@example.com"
-        assert request["Destinations"] == ["recipient@example.com"]
-        assert b"Subject" in request["RawMessage"]["Data"]
+        assert session.client_calls == ["sesv2"], "the v2 API, not ses"
+        request = session.ses.send_email.await_args.kwargs
+        assert request["FromEmailAddress"] == "sender@example.com"
+        assert request["Destination"] == {"ToAddresses": ["recipient@example.com"]}
+        assert b"Subject" in request["Content"]["Raw"]["Data"]
+
+    async def test_every_recipient_is_addressed_on_the_envelope(self, backend):
+        blind = EmailMessage(
+            subject="Subject",
+            body="Body",
+            from_email="sender@example.com",
+            to=["recipient@example.com"],
+            cc=["copied@example.com"],
+            bcc=["hidden@example.com"],
+        )
+        session = FakeSession()
+        with patch.object(backend, "_session", session):
+            await backend.send_messages([blind])
+
+        request = session.ses.send_email.await_args.kwargs
+        assert request["Destination"] == {
+            "ToAddresses": [
+                "recipient@example.com",
+                "copied@example.com",
+                "hidden@example.com",
+            ]
+        }
+        assert b"hidden@example.com" not in request["Content"]["Raw"]["Data"]
 
     async def test_several_messages_are_counted(self, backend):
         session = FakeSession()
@@ -118,14 +141,14 @@ class TestSending:
         with patch.object(backend, "_session", session):
             await backend.send_messages([message()])
 
-        assert session.ses.send_raw_email.await_args.kwargs["ConfigurationSetName"] == "tracked"
+        assert session.ses.send_email.await_args.kwargs["ConfigurationSetName"] == "tracked"
 
     async def test_no_configuration_set_when_none_is_configured(self, backend):
         session = FakeSession()
         with patch.object(backend, "_session", session):
             await backend.send_messages([message()])
 
-        assert "ConfigurationSetName" not in session.ses.send_raw_email.await_args.kwargs
+        assert "ConfigurationSetName" not in session.ses.send_email.await_args.kwargs
 
     async def test_region_and_credentials_reach_the_client(self):
         with patch("nitro.mail.backends.ses.get_session", MagicMock()):
@@ -160,7 +183,7 @@ class TestSending:
 class TestFailures:
     async def test_a_failure_is_raised_by_default(self, backend):
         session = FakeSession()
-        session.ses.send_raw_email = AsyncMock(side_effect=RuntimeError("rejected"))
+        session.ses.send_email = AsyncMock(side_effect=RuntimeError("rejected"))
 
         with patch.object(backend, "_session", session):
             with pytest.raises(RuntimeError, match="rejected"):
@@ -168,7 +191,7 @@ class TestFailures:
 
     async def test_a_failure_is_swallowed_when_asked(self, backend, caplog):
         session = FakeSession()
-        session.ses.send_raw_email = AsyncMock(side_effect=RuntimeError("rejected"))
+        session.ses.send_email = AsyncMock(side_effect=RuntimeError("rejected"))
 
         with patch.object(backend, "_session", session):
             assert await backend.send_messages([message()], fail_silently=True) == 0
@@ -177,7 +200,7 @@ class TestFailures:
         # It used to be, so one caller's choice leaked into the next send over
         # the same connection.
         session = FakeSession()
-        session.ses.send_raw_email = AsyncMock(side_effect=RuntimeError("rejected"))
+        session.ses.send_email = AsyncMock(side_effect=RuntimeError("rejected"))
 
         with patch.object(backend, "_session", session):
             await backend.send_messages([message()], fail_silently=True)
@@ -192,7 +215,7 @@ class TestFailures:
             backend = SESBackend(fail_silently=True)
 
         session = FakeSession()
-        session.ses.send_raw_email = AsyncMock(side_effect=RuntimeError("rejected"))
+        session.ses.send_email = AsyncMock(side_effect=RuntimeError("rejected"))
 
         with patch.object(backend, "_session", session):
             assert await backend.send_messages([message()]) == 0

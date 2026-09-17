@@ -86,6 +86,10 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Changed
 
+- `SESBackend` calls the SES v2 API (`sesv2`, `SendEmail`) instead of v1
+  (`ses`, `SendRawEmail`). Messages still go as raw MIME and the `EMAIL_AWS_*`
+  settings are unchanged, but sending now needs the `ses:SendEmail` IAM
+  permission.
 - The route matcher is Nitro's own rather than `matchit`. A path segment can
   now hold text and several parameters, such as `photo_<int:id><size>.<ext>`,
   and a segment with text before a parameter can sit beside a bare parameter in

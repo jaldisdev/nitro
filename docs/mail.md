@@ -51,7 +51,7 @@ await message.send()
 | `nitro.mail.backends.console.ConsoleBackend` | nothing — prints instead of sending |
 | `nitro.mail.backends.smtp.SMTPBackend` | nothing |
 | `nitro.mail.backends.oauth_smtp.OAuth2SMTPBackend` | `nitro-framework[email-oauth]` |
-| `nitro.mail.backends.ses.SESBackend` | `nitro-framework[aws]` |
+| `nitro.mail.backends.ses.SESBackend` | `nitro-framework[aws]`, and the `ses:SendEmail` permission |
 | `nitro.mail.backends.sendgrid.SendGridBackend` | `nitro-framework[sendgrid]` |
 
 `ConsoleBackend` is the default, so a project that has not configured mail

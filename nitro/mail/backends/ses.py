@@ -18,7 +18,7 @@
 #
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 try:
     from aiobotocore.session import get_session
@@ -38,9 +38,10 @@ logger = logging.getLogger(__name__)
 
 class SESBackend(BaseEmailBackend):
     """
-    Email backend using AWS Simple Email Service (SES).
+    Email backend using the AWS Simple Email Service (SES) v2 API.
 
-    Requires: pip install aiobotocore
+    Requires: pip install aiobotocore, and the `ses:SendEmail` IAM permission
+    rather than the `ses:SendRawEmail` the v1 API needed.
 
     Example configuration:
         EMAIL_BACKEND = 'nitro.mail.backends.ses.SESBackend'
@@ -133,7 +134,7 @@ class SESBackend(BaseEmailBackend):
             client_kwargs["aws_session_token"] = self.aws_session_token
 
         sent = 0
-        async with self._session.create_client("ses", **client_kwargs) as client:
+        async with self._session.create_client("sesv2", **client_kwargs) as client:
             for message in email_messages:
                 try:
                     await self._send(client, message)
@@ -154,20 +155,20 @@ class SESBackend(BaseEmailBackend):
         from_addr = email_message.get_from_email()
         recipients = email_message.recipients()
 
-        # Build SES request
-        request = {
-            "Source": from_addr,
-            "Destinations": recipients,
-            "RawMessage": {
-                "Data": mime_message.as_bytes(),
+        # The envelope, so a Bcc is addressed here and named in no header.
+        request: dict[str, Any] = {
+            "FromEmailAddress": from_addr,
+            "Destination": {"ToAddresses": recipients},
+            "Content": {
+                "Raw": {
+                    "Data": mime_message.as_bytes(),
+                },
             },
         }
 
-        # Add configuration set if specified
         if self.configuration_set_name:
             request["ConfigurationSetName"] = self.configuration_set_name
 
-        # Send via SES
-        response = await ses_client.send_raw_email(**request)
+        response = await ses_client.send_email(**request)
 
         logger.debug("a message was accepted by SES as %s", response.get("MessageId"))
