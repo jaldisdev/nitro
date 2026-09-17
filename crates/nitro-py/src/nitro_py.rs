@@ -36,6 +36,8 @@ fn _nitro(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__doc__", "Compiled server core for the Nitro framework.")?;
 
     module.add_class::<server::Server>()?;
+    module.add_class::<server::RouteMatcher>()?;
+    module.add_function(wrap_pyfunction!(dispatch::file_response_parts, module)?)?;
     module.add_class::<scope::HttpScope>()?;
     module.add_class::<headers::Headers>()?;
     module.add_class::<protocol::HttpProtocol>()?;

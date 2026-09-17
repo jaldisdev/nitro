@@ -22,8 +22,9 @@
 use std::sync::Arc;
 
 use nitro_core::headers::Headers as CoreHeaders;
-use pyo3::exceptions::PyKeyError;
+use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::pybacked::PyBackedStr;
 use pyo3::types::{PyList, PyTuple};
 
 /// A read-only, dict-like view of a request's headers.
@@ -55,6 +56,19 @@ impl Headers {
 
 #[pymethods]
 impl Headers {
+    /// Headers built from `(name, value)` pairs, a name repeating once per value.
+    #[new]
+    #[pyo3(signature = (items=Vec::new()))]
+    fn construct(items: Vec<(PyBackedStr, PyBackedStr)>) -> PyResult<Self> {
+        let mut headers = CoreHeaders::new();
+        for (name, value) in items {
+            headers
+                .append(&name, &value)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        }
+        Ok(Self::new(headers))
+    }
+
     /// The first value for `name`, raising `KeyError` when it is absent.
     fn __getitem__(&self, name: &str) -> PyResult<String> {
         self.inner

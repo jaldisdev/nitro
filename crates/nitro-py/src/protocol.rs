@@ -289,7 +289,7 @@ fn body_bytes(body: &Bound<'_, PyAny>) -> PyResult<Bytes> {
     }))
 }
 
-fn build_headers(pairs: Vec<(PyBackedStr, PyBackedStr)>) -> PyResult<CoreHeaders> {
+pub(crate) fn build_headers(pairs: Vec<(PyBackedStr, PyBackedStr)>) -> PyResult<CoreHeaders> {
     let mut headers = CoreHeaders::new();
     for (name, value) in pairs {
         headers

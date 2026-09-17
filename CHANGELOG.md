@@ -11,6 +11,13 @@ pre-1.0 caveat that minor versions may still break things.
 
 ### Added
 
+- `nitro.testing.TestClient`, which drives an application in-process over
+  HTTP, WebSocket and WebTransport. Routes are found by the compiled matcher,
+  now also available on its own as `nitro._nitro.RouteMatcher`, and file
+  responses are answered by the server's file code, so neither is
+  reimplemented for tests. Cookies persist across requests, `stream()` reads a
+  response while it is produced, and `async with` runs the startup and shutdown
+  work a worker does.
 - `TEMPLATE_CACHE` now does what the documentation said: compiled template
   bytecode is kept in the named cache, so a worker that starts renders without
   compiling again. Each process serves Jinja from its own copy, read from the

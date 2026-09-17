@@ -19,23 +19,28 @@
 
 //! Handing a request to the Python application and collecting its answer.
 
+use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use http::StatusCode;
+use hyper::body::Body;
 use nitro_core::files::{OpenFile, ResolvedRange, resolve_range};
 use nitro_core::headers::Headers;
 use nitro_core::router::{RouteMatch, RouteTable};
 use nitro_core::transport::{Dispatch, HttpRequest, HttpResponse, ResponseBody, WebSocketRequest};
 use nitro_core::webtransport::WebTransportRequest;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::pybacked::PyBackedStr;
+use pyo3::types::{PyBytes, PyDict};
 use pyo3_async_runtimes::TaskLocals;
 use tokio::sync::oneshot;
 
 use crate::handoff::{self, Handoff, Pending};
 use crate::protocol::{
     FileRequest, HandlerOutcome, HttpProtocol, PreparedBody, PreparedResponse, WsTransport,
-    WtSession,
+    WtSession, build_headers,
 };
 use crate::scope::{HttpScope, WsScope, WtScope};
 
@@ -279,6 +284,65 @@ async fn file_response(status: u16, mut headers: Headers, request: FileRequest) 
             tracing::error!(%error, "a file could not be positioned for sending");
             HttpResponse::text(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
         }
+    }
+}
+
+/// What `response_file_range` would send, without a connection to send it on:
+/// the status, the headers and the whole body. The test client answers file
+/// responses through this, so they come out of the code the server uses.
+#[pyfunction]
+#[pyo3(signature = (status, headers, path, start=None, end=None))]
+pub fn file_response_parts<'py>(
+    python: Python<'py>,
+    status: u16,
+    headers: Vec<(PyBackedStr, PyBackedStr)>,
+    path: String,
+    start: Option<u64>,
+    end: Option<u64>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let headers = build_headers(headers)?;
+    let request = FileRequest {
+        path: PathBuf::from(path),
+        range: start.map(|start| (start, end)),
+    };
+    pyo3_async_runtimes::tokio::future_into_py(python, async move {
+        let response = file_response(status, headers, request).await;
+        let body = collect_body(response.body).await?;
+        let pairs: Vec<(String, String)> = response
+            .headers
+            .items()
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect();
+        Python::attach(|python| {
+            Ok((
+                response.status.as_u16(),
+                pairs,
+                PyBytes::new(python, &body).unbind(),
+            ))
+        })
+    })
+}
+
+async fn collect_body(body: ResponseBody) -> PyResult<Vec<u8>> {
+    match body {
+        ResponseBody::Empty => Ok(Vec::new()),
+        ResponseBody::Bytes(bytes) => Ok(bytes.to_vec()),
+        ResponseBody::File(mut file) => {
+            let mut collected = Vec::new();
+            while let Some(frame) =
+                std::future::poll_fn(|context| Pin::new(&mut file).poll_frame(context)).await
+            {
+                let frame = frame.map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                if let Ok(data) = frame.into_data() {
+                    collected.extend_from_slice(&data);
+                }
+            }
+            Ok(collected)
+        }
+        ResponseBody::Stream(_) => Err(PyRuntimeError::new_err(
+            "a file response was answered with a stream",
+        )),
     }
 }
 

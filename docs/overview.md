@@ -97,6 +97,7 @@ Steps 1 and 2 are compiled. Steps 3 and 4 are yours.
 | Prometheus metrics | [observability.md](observability.md) |
 | The command line | [cli.md](cli.md) |
 | Running in production | [deployment.md](deployment.md) |
+| Testing an application in-process | [testing.md](testing.md) |
 
 ## Requirements
 

@@ -90,6 +90,7 @@ Start with [the overview](docs/overview.md).
 | [Observability](docs/observability.md) | Prometheus metrics |
 | [Command line](docs/cli.md) | Serving, `check`, `shell` |
 | [Deployment](docs/deployment.md) | Workers, TLS, HTTP/3, draining |
+| [Testing](docs/testing.md) | Driving an application in-process |
 
 ## Layout
 

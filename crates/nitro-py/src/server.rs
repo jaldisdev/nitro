@@ -37,11 +37,12 @@ use nitro_core::config::ServerConfig;
 use nitro_core::lifecycle::drain::{DrainCoordinator, DrainOutcome};
 use nitro_core::lifecycle::init_tracing;
 use nitro_core::lifecycle::signals::ShutdownController;
-use nitro_core::router::{ParameterSpec, RouteDefinition, RouteTable};
+use nitro_core::router::{ParameterSpec, RouteDefinition, RouteMatch, RouteTable};
 use nitro_core::transport::accept::{self, BoundSockets};
 use nitro_core::transport::tls::TlsMaterial;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple};
 use pyo3_async_runtimes::TaskLocals;
 
 use crate::config;
@@ -318,6 +319,51 @@ fn build_routes(specifications: Vec<RouteSpec>) -> PyResult<RouteTable> {
         });
 
     RouteTable::build(definitions).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+/// The compiled route table without a server around it.
+///
+/// Lets a request be routed in-process exactly as the server routes it, which
+/// is what the test client needs.
+#[pyclass(name = "RouteMatcher", module = "nitro._nitro", frozen)]
+pub struct RouteMatcher {
+    routes: RouteTable,
+}
+
+#[pymethods]
+impl RouteMatcher {
+    #[new]
+    fn construct(routes: Vec<RouteSpec>) -> PyResult<Self> {
+        Ok(Self {
+            routes: build_routes(routes)?,
+        })
+    }
+
+    /// `(route_id, path_params, allowed_methods)` for `method` and `path`, as
+    /// the scope attributes of the same names would carry them.
+    fn find<'py>(
+        &self,
+        python: Python<'py>,
+        method: &str,
+        path: &str,
+    ) -> PyResult<(Option<u64>, Bound<'py, PyDict>, Bound<'py, PyTuple>)> {
+        let path_params = PyDict::new(python);
+        match self.routes.find(method, path) {
+            RouteMatch::Found {
+                route_id,
+                parameters,
+            } => {
+                for (name, value) in parameters {
+                    path_params.set_item(name, value)?;
+                }
+                Ok((Some(route_id), path_params, PyTuple::empty(python)))
+            }
+            RouteMatch::MethodNotAllowed { allowed } => {
+                Ok((None, path_params, PyTuple::new(python, allowed)?))
+            }
+            RouteMatch::NotFound => Ok((None, path_params, PyTuple::empty(python))),
+        }
+    }
 }
 
 // ── signals ──────────────────────────────────────────────────────────────────

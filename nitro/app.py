@@ -687,7 +687,7 @@ class Nitro:
         # its own. Sharing one across a fork means two processes reading the
         # same socket, so each worker starts with none.
         from nitro.cache import reset_caches
-        from nitro.di import open_worker_dependencies, reset_worker_dependencies
+        from nitro.di import reset_worker_dependencies
         from nitro.intercom import reset_connections
         from nitro.storage import reset_storages
 
@@ -696,33 +696,36 @@ class Nitro:
         reset_storages()
         reset_worker_dependencies()
 
-        # Worker-scoped dependencies are built before anything is served, so a
-        # pool that cannot connect stops this worker instead of failing the
-        # first request that asked for it.
-        loop.run_until_complete(
-            open_worker_dependencies(route.dependencies for route in self.routes)
-        )
-        self._run_callbacks(loop, self._startup_callbacks, "startup")
+        loop.run_until_complete(self._start())
 
     def __shutdown__(self, loop: asyncio.AbstractEventLoop) -> None:
         """Run shutdown callbacks after the worker has stopped serving."""
+        loop.run_until_complete(self._stop())
+
+    async def _start(self) -> None:
+        """What a worker does before serving, on a loop that is already running
+        — which is how the test client runs it."""
+        from nitro.di import open_worker_dependencies
+
+        # Worker-scoped dependencies are built before anything is served, so a
+        # pool that cannot connect stops this worker instead of failing the
+        # first request that asked for it.
+        await open_worker_dependencies(route.dependencies for route in self.routes)
+        await self._run_callbacks(self._startup_callbacks, "startup")
+
+    async def _stop(self) -> None:
         from nitro.di import close_worker_dependencies
 
-        self._run_callbacks(loop, self._shutdown_callbacks, "shutdown")
+        await self._run_callbacks(self._shutdown_callbacks, "shutdown")
         # After the callbacks: one of them may still want what a worker-scoped
         # dependency is holding.
-        loop.run_until_complete(close_worker_dependencies())
+        await close_worker_dependencies()
 
-    def _run_callbacks(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        callbacks: list[LifecycleCallback],
-        stage: str,
-    ) -> None:
+    async def _run_callbacks(self, callbacks: list[LifecycleCallback], stage: str) -> None:
         for callback in callbacks:
             result = callback()
             if inspect.isawaitable(result):
-                loop.run_until_complete(result)
+                await result
             logger.debug("%s callback %s completed", stage, getattr(callback, "__name__", callback))
 
     def __repr__(self) -> str:
