@@ -384,11 +384,29 @@ impl WebSocketReceiver {
     }
 }
 
+/// A peer that goes away without closing is an ended connection, not a failure:
+/// a browser tab closing, a reloading server, a dropped network. Reporting those
+/// as transport failures would make every handler recognise them by their text.
 fn transport_error(error: tokio_tungstenite::tungstenite::Error) -> WebSocketError {
+    use std::io::ErrorKind;
+
     use tokio_tungstenite::tungstenite::Error;
+    use tokio_tungstenite::tungstenite::error::ProtocolError;
 
     match error {
         Error::ConnectionClosed | Error::AlreadyClosed => WebSocketError::Closed,
+        Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => WebSocketError::Closed,
+        Error::Io(failure)
+            if matches!(
+                failure.kind(),
+                ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::BrokenPipe
+                    | ErrorKind::UnexpectedEof
+            ) =>
+        {
+            WebSocketError::Closed
+        }
         other => WebSocketError::Transport(other.to_string()),
     }
 }
@@ -411,6 +429,48 @@ mod tests {
             HeaderValue::from_static("dGhlIHNhbXBsZSBub25jZQ=="),
         );
         headers
+    }
+
+    #[test]
+    fn a_peer_that_vanishes_reads_as_a_closed_connection() {
+        use std::io::ErrorKind;
+
+        use tokio_tungstenite::tungstenite::Error;
+        use tokio_tungstenite::tungstenite::error::ProtocolError;
+
+        let vanished = [
+            Error::ConnectionClosed,
+            Error::AlreadyClosed,
+            Error::Protocol(ProtocolError::ResetWithoutClosingHandshake),
+            Error::Io(ErrorKind::ConnectionReset.into()),
+            Error::Io(ErrorKind::BrokenPipe.into()),
+            Error::Io(ErrorKind::UnexpectedEof.into()),
+        ];
+
+        for error in vanished {
+            let reported = transport_error(error);
+            assert!(
+                matches!(reported, WebSocketError::Closed),
+                "expected a closed connection, got {reported:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_real_transport_failure_is_still_reported_as_one() {
+        use std::io::ErrorKind;
+
+        use tokio_tungstenite::tungstenite::Error;
+        use tokio_tungstenite::tungstenite::error::ProtocolError;
+
+        assert!(matches!(
+            transport_error(Error::Io(ErrorKind::PermissionDenied.into())),
+            WebSocketError::Transport(_)
+        ));
+        assert!(matches!(
+            transport_error(Error::Protocol(ProtocolError::WrongHttpMethod)),
+            WebSocketError::Transport(_)
+        ));
     }
 
     #[test]

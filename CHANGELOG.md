@@ -9,6 +9,14 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+### Fixed
+
+- A WebSocket peer that goes away without a closing handshake — a browser tab
+  closing, a reloading server, a dropped network — now raises
+  `WebSocketDisconnect` like any other ended connection, instead of a
+  `RuntimeError` naming a transport failure that handlers had to recognise by
+  its text. A genuine transport failure is still reported as one.
+
 ## [0.2.0] - 2026-09-18
 
 ### Added

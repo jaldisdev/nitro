@@ -610,7 +610,18 @@ async fn next_message(
             return Ok(None);
         };
 
-        match message.map_err(socket_error)? {
+        let message = match message {
+            Ok(message) => message,
+            // The connection ending is the end of the stream, however it ended
+            Err(WebSocketError::Closed) => {
+                *guard = None;
+                phase.store(PHASE_CLOSED, Ordering::Release);
+                return Ok(None);
+            }
+            Err(failure) => return Err(socket_error(failure)),
+        };
+
+        match message {
             WebSocketMessage::Text(text) => {
                 return Python::attach(|python| {
                     Ok(Some(text.into_pyobject(python)?.into_any().unbind()))
