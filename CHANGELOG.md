@@ -9,6 +9,8 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-18
+
 ### Added
 
 - `nitro static collect`, which copies every file in `STATIC_DIRS` into
