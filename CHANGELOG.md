@@ -9,6 +9,15 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+### Changed
+
+- The packages in `COMMAND_MODULES` are imported only when a command that is
+  not built in is asked for, or when the commands are listed. Serving and the
+  built-in commands — `nitro static collect`, a reload supervisor — no longer
+  import the project's commands, and with them the project.
+- A project command no longer replaces a built-in command of the same name; it
+  is skipped with a warning.
+
 ### Fixed
 
 - A WebSocket peer that goes away without a closing handshake — a browser tab

@@ -17,6 +17,8 @@
 # limitations under the License.
 #
 
+import sys
+
 import click
 import pytest
 from click.testing import CliRunner
@@ -128,6 +130,53 @@ class TestDiscovery:
         load_project_commands(group)
 
         assert "COMMAND_MODULES" in caplog.text
+
+
+class TestLazyProjectCommands:
+    """Project commands import the project, so they are loaded only once one
+    could be meant: a built-in command, or serving, never pays for them."""
+
+    @pytest.fixture
+    def project_commands(self, tmp_path, monkeypatch):
+        package = tmp_path / "lazy_commands"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        (package / "greet.py").write_text(
+            "import click\n\n\n@click.command('greet')\ndef greet():\n    click.echo('hello')\n\n\n"
+            "@click.command('version')\ndef version():\n    click.echo('not the built-in')\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(settings, "COMMAND_MODULES", ["lazy_commands"], raising=False)
+        yield
+        for name in ("lazy_commands", "lazy_commands.greet"):
+            sys.modules.pop(name, None)
+
+    def test_a_built_in_command_leaves_them_unimported(self, runner, full_cli, project_commands):
+        result = runner.invoke(full_cli, ["version"])
+
+        assert result.exit_code == 0
+        assert "lazy_commands" not in sys.modules
+
+    def test_serving_leaves_them_unimported(self, runner, full_cli, project_commands):
+        runner.invoke(full_cli, ["no_such_module:app"])
+
+        assert "lazy_commands" not in sys.modules
+
+    def test_one_is_found_when_named(self, runner, full_cli, project_commands):
+        result = runner.invoke(full_cli, ["greet"])
+
+        assert result.exit_code == 0
+        assert "hello" in result.output
+
+    def test_they_are_listed_in_the_help(self, runner, full_cli, project_commands):
+        assert "greet" in runner.invoke(full_cli, ["--help"]).output
+
+    def test_one_cannot_take_a_built_in_name(self, runner, full_cli, project_commands, caplog):
+        runner.invoke(full_cli, ["greet"])
+        result = runner.invoke(full_cli, ["version"])
+
+        assert "not the built-in" not in result.output
+        assert "'version'" in caplog.text
 
 
 class TokenSessionMiddleware(SessionMiddleware):

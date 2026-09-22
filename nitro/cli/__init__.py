@@ -71,6 +71,32 @@ class RootCommand(click.Group):
         }
         settings.update(kwargs.pop("context_settings", None) or {})
         super().__init__(*args, context_settings=settings, **kwargs)
+        self._project_commands_loaded = False
+
+    def get_command(self, context: click.Context, name: str) -> click.Command | None:
+        command = super().get_command(context, name)
+        # An application specifier always carries a colon, and naming one is
+        # no reason to import the project's commands.
+        if command is None and ":" not in name and self._load_project_commands():
+            command = super().get_command(context, name)
+        return command
+
+    def list_commands(self, context: click.Context) -> list[str]:
+        self._load_project_commands()
+        return super().list_commands(context)
+
+    def _load_project_commands(self) -> bool:
+        """Register the project's commands the first time one could be meant.
+
+        Importing them imports the project, which neither a built-in command
+        nor serving has any use for — and a reload supervisor would pay for it
+        on every start. Returns whether this call was the one that loaded them.
+        """
+        if self._project_commands_loaded:
+            return False
+        self._project_commands_loaded = True
+        load_project_commands(self)
+        return True
 
     def resolve_command(
         self, context: click.Context, args: list[str]
@@ -165,7 +191,21 @@ def _commands_in_module(module: object) -> list[click.Command]:
 
 
 def register_commands(group: click.Group, package_name: str) -> None:
+    """Add the commands of `package_name` to `group`, never replacing one.
+
+    Project commands are registered only once one is asked for, so a built-in
+    has already answered to its name by then; letting a project command take
+    it over would make the name mean one thing or the other depending on what
+    was run first.
+    """
     for command in commands_in(package_name):
+        if command.name in group.commands:
+            logger.warning(
+                "command %r from %r is already taken; keeping the one registered first",
+                command.name,
+                package_name,
+            )
+            continue
         group.add_command(command)
 
 
@@ -200,5 +240,4 @@ def main() -> None:
 
     configure_logging()
     register_commands(cli, BUILTIN_COMMAND_PACKAGE)
-    load_project_commands(cli)
     cli()

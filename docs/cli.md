@@ -142,6 +142,11 @@ the run.
 Any `click.Command` defined at module level in a package listed in
 `COMMAND_MODULES` is registered automatically.
 
+The packages are imported only when a command that is not built in is asked
+for, or when the commands are listed, so serving and the built-in commands
+never import the project's commands. A project command cannot take a built-in
+command's name: it is skipped with a warning.
+
 ```python
 COMMAND_MODULES = ["myproject.commands"]
 ```
