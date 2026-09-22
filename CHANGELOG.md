@@ -9,6 +9,8 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-22
+
 ### Changed
 
 - The packages in `COMMAND_MODULES` are imported only when a command that is

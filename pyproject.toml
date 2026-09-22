@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "nitro-framework"
-version = "0.2.0"
+version = "0.3.0"
 description = "Async-first Python web framework with a bundled Rust server"
 readme = "README.md"
 requires-python = ">=3.13"

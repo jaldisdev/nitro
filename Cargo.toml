@@ -11,14 +11,14 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Mario Ritzerfeld <oss@jaldis.com>"]
 repository = "https://github.com/jaldisdev/nitro"
 
 [workspace.dependencies]
-nitro-core = { path = "crates/nitro-core", version = "0.2.0" }
-nitro-observability = { path = "crates/nitro-observability", version = "0.2.0" }
-intercom-core = { path = "crates/intercom-core", version = "0.2.0" }
+nitro-core = { path = "crates/nitro-core", version = "0.3.0" }
+nitro-observability = { path = "crates/nitro-observability", version = "0.3.0" }
+intercom-core = { path = "crates/intercom-core", version = "0.3.0" }
 
 # Async runtime
 tokio = { version = "1.53.1", features = ["full"] }
