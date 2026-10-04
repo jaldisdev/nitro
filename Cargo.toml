@@ -40,7 +40,7 @@ h3-webtransport = "0.1.2"
 h3-datagram = "0.0.2"
 
 # TLS
-rustls = { version = "0.23.43", default-features = false, features = ["tls12", "ring", "logging", "std"] }
+rustls = { version = "0.23.45", default-features = false, features = ["tls12", "ring", "logging", "std"] }
 rustls-pemfile = "2.2.0"
 # Default features would bring aws-lc-rs. Everything here uses ring, and a
 # second crypto provider compiled into the wheel is weight nothing calls.
