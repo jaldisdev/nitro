@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.13", "3.14"]
+        python-version: ["3.13", "3.14", "3.15"]
     services:
       redis:
         image: redis:8
@@ -67,8 +67,9 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-      # emcache publishes nothing for 3.14, so the Memcached backend is only
-      # exercised by the 3.13 leg of the matrix; on 3.14 its tests skip.
+      # emcache publishes nothing for 3.14 or later, so the Memcached backend
+      # is only exercised by the 3.13 leg of the matrix; elsewhere its tests
+      # skip.
       memcached:
         image: memcached:alpine
         ports: ["11211:11211"]

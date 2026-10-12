@@ -27,8 +27,8 @@ docker run -d -p 6379:6379 redis:8
 docker run -d -p 11211:11211 memcached:alpine
 ```
 
-`emcache` publishes nothing for Python 3.14, so the Memcached tests can only
-run on 3.13. CI covers that leg.
+`emcache` publishes nothing for Python 3.14 or later, so the Memcached tests
+can only run on 3.13. CI covers that leg.
 
 ## Before you open a pull request
 

@@ -39,9 +39,9 @@ never connected to.
 `MemoryCache` is per process. With more than one worker each has its own, so it
 suits caching that can differ between workers and not sessions.
 
-`MemcachedCache` needs emcache, which publishes nothing for Python 3.14 — the
-extra is marked accordingly and will not install there. Use `RedisCache` on
-3.14 until emcache catches up.
+`MemcachedCache` needs emcache, which publishes nothing for Python 3.14 or
+later — the extra is marked accordingly and will not install there. Use
+`RedisCache` on 3.14 and newer until emcache catches up.
 
 ## What is stored
 
