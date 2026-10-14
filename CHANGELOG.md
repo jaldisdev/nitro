@@ -9,6 +9,27 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-14
+
+### Added
+
+- Python 3.15 is tested and released against. The abi3 wheel already ran there;
+  the classifier and a matrix leg now say so. `MemcachedCache` still needs
+  3.13, since emcache publishes nothing for 3.14 or later.
+
+### Changed
+
+- The Rust dependencies were refreshed, quinn among them, from 0.11.11 to
+  0.11.12.
+- The `dev` extra holds aioquic below 1.6. From that release it checks a
+  response's `Content-Length` against the bytes it received without exempting
+  HEAD, so it rejects the HEAD responses RFC 9110 asks for.
+
+### Security
+
+- The TLS floor is now rustls 0.23.45, which fixes the TLS 1.3 encryption level
+  check. 0.3.0 accepted 0.23.43, which does not carry that fix.
+
 ## [0.3.0] - 2026-09-22
 
 ### Changed

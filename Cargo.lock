@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "futures-util",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-py"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "nitro-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "nitro-observability"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1090,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "nitro-py"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "futures-util",
