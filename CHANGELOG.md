@@ -9,6 +9,17 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+### Changed
+
+- An assignment to the `settings` proxy is kept on the proxy, where it shadows
+  the resolved value, rather than written through to the resolved settings.
+  `del settings.NAME` drops the assignment and restores what resolution
+  produced, where it used to raise `AttributeError`: `Settings` copies the
+  defaults onto itself, so writing through and then deleting left a hole where
+  a default had been. Deleting is how `monkeypatch.setattr` undoes a name the
+  proxy did not hold, so from pytest 9.2 the tests could not put back a
+  setting they had changed.
+
 ## [0.3.2] - 2026-11-04
 
 ### Added

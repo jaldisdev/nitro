@@ -94,11 +94,18 @@ class TestLazySettings:
             lazy._not_a_setting
         assert lazy.configured is False
 
-    def test_assignment_writes_through(self, monkeypatch):
+    def test_an_assignment_shadows_the_resolved_value(self, monkeypatch):
         monkeypatch.delenv(ENVIRONMENT_VARIABLE, raising=False)
         lazy = LazySettings()
         lazy.DEBUG = True
         assert lazy.DEBUG is True
+
+    def test_deleting_an_assignment_restores_the_resolved_value(self, monkeypatch):
+        monkeypatch.delenv(ENVIRONMENT_VARIABLE, raising=False)
+        lazy = LazySettings()
+        lazy.DEBUG = True
+        del lazy.DEBUG
+        assert lazy.DEBUG is False
 
     def test_reset_reloads_on_next_read(self, tmp_path, monkeypatch):
         monkeypatch.delenv(ENVIRONMENT_VARIABLE, raising=False)

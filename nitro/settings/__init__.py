@@ -82,25 +82,24 @@ class LazySettings:
     _wrapped: Settings | None
 
     def __init__(self) -> None:
-        object.__setattr__(self, "_wrapped", None)
+        self._wrapped = None
 
     def _setup(self) -> Settings:
         resolved = Settings(os.environ.get(ENVIRONMENT_VARIABLE))
-        object.__setattr__(self, "_wrapped", resolved)
+        self._wrapped = resolved
         return resolved
 
+    # An assignment is kept on the proxy, where it shadows the resolved value,
+    # rather than written through to the resolved settings. Deleting it then
+    # restores what resolution produced, instead of leaving a hole where a
+    # default was: `Settings` copies the defaults onto itself, so a name
+    # deleted there is gone for the rest of the process. That is what undoing
+    # a `monkeypatch.setattr` does, since the name is not one the proxy held.
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
             raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
         resolved = self._wrapped or self._setup()
         return getattr(resolved, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name.startswith("_"):
-            object.__setattr__(self, name, value)
-            return
-        resolved = self._wrapped or self._setup()
-        setattr(resolved, name, value)
 
     @property
     def configured(self) -> bool:
@@ -112,7 +111,7 @@ class LazySettings:
 
         Intended for tests that change the environment between cases.
         """
-        object.__setattr__(self, "_wrapped", None)
+        self._wrapped = None
 
     def __repr__(self) -> str:
         if self._wrapped is None:
