@@ -102,6 +102,38 @@ uses the cache's `add`, which claims a key and checks it is free in one
 operation; a read followed by a write would let two requests be handed the same
 key.
 
+## Sessions created somewhere else
+
+Where the rows are written at sign-in and nowhere else, `create` has no answer
+to give. Say so, and a write to a connection that is not in a session fails
+where it is written:
+
+```python
+class DatabaseSessions:
+    allocates_keys = False
+
+    async def create(self, data: dict, timeout: int) -> str:
+        raise SessionError("sessions are created at sign-in, not by writing to one")
+```
+
+Nothing else changes: a connection carrying a key the store does hold reads and
+writes as it always did. Without the attribute, `set` is taken at its word and
+the refusal surfaces from the save after the handler has already answered,
+which is a 500 on work that succeeded and a traceback pointing at the
+middleware rather than at the line that wrote.
+
+A handler that may run outside a session — an API token names none — asks
+before storing:
+
+```python
+if await request.state.session.writable():
+    await request.state.session.set("region", "eu")
+```
+
+`writable()` reads the bag to answer. A key the store has nothing under is
+dropped on the way, so a session that has expired or been revoked is one the
+key alone cannot tell you about.
+
 ## Where the key travels
 
 `read_key` and `write_key` are the seam. By default they use a cookie. An
@@ -235,6 +267,7 @@ async for message in socket.iter_text():
 | `await session.flush()` | Delete it, drop the key. |
 | `await session.cycle()` | New key, same contents. |
 | `await session.touch()` | Extend it without rewriting. |
+| `await session.writable()` | Whether a write to it could be read back. |
 | `await session.save(force=False)` | The middleware calls this for you. |
 | `session.key` | `None` until there is something to keep. |
 | `session.modified` | |

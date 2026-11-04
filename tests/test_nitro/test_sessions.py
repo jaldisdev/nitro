@@ -392,6 +392,96 @@ class TestStoreProtocol:
         assert store.bags == {"k1": {"a": 1}}
 
 
+class ExternalStore(DirectStore):
+    """A store whose sessions are made elsewhere, the way a sign-in writes a row."""
+
+    allocates_keys = False
+
+    async def create(self, data: dict[str, Any], timeout: int) -> str:
+        raise SessionError("sessions are created at sign-in, not by writing to one")
+
+
+class TestAStoreThatDoesNotAllocate:
+    async def test_storing_without_a_key_is_refused_at_the_write(self):
+        session = make_session(store=ExternalStore(MemoryCache("", {})))
+
+        with pytest.raises(SessionError, match="no session key"):
+            await session.set("region", "eu")
+
+        assert session.modified is False
+
+    async def test_a_key_the_store_has_nothing_under_is_refused_too(self):
+        """The case that reaches a handler: a key whose session expired or was revoked."""
+        session = make_session("gone", store=ExternalStore(MemoryCache("", {})))
+
+        with pytest.raises(SessionError):
+            await session.set("region", "eu")
+
+        assert session.key is None
+
+    async def test_an_emptying_call_stays_a_quiet_no_op(self):
+        session = make_session(store=ExternalStore(MemoryCache("", {})))
+
+        assert await session.pop("region") is None
+        await session.clear()
+
+        assert session.modified is False
+
+    async def test_a_session_the_store_does_hold_is_written_as_usual(self):
+        store = ExternalStore(MemoryCache("", {}))
+        await store.write("held", {"region": "eu"}, TIMEOUT)
+        session = make_session("held", store=store)
+
+        assert await session.writable() is True
+        await session.set("region", "uk")
+        await session.save()
+
+        assert await store.read("held") == {"region": "uk"}
+
+    async def test_a_store_that_allocates_is_writable_without_a_key(self):
+        assert await make_session().writable() is True
+
+    async def test_an_older_store_is_taken_as_allocating(self):
+        """`allocates_keys` is absent on a store written before it existed."""
+
+        class DictStore:
+            async def read(self, key):
+                return None
+
+            async def create(self, data, timeout):
+                return "k1"
+
+            async def write(self, key, data, timeout):
+                pass
+
+            async def remove(self, key):
+                pass
+
+            async def touch(self, key, timeout):
+                return False
+
+        session = Session(None, DictStore(), TIMEOUT)
+
+        assert await session.writable() is True
+        await session.set("region", "eu")
+        await session.save()
+
+        assert session.key == "k1"
+
+    async def test_the_middleware_never_reaches_the_refusal(self):
+        """The handler's own write fails, rather than the save after it answered."""
+        store = ExternalStore(MemoryCache("", {}))
+
+        async def remember(request):
+            await request.state.session.set("region", "eu")
+            return HttpResponse(b"stored")
+
+        middleware = SessionMiddleware(store=store)
+
+        with pytest.raises(SessionError):
+            await middleware.__http__(make_request("GET", "/"), remember)
+
+
 class TestAgainstRedis:
     """The store over a real Redis, when there is one.
 

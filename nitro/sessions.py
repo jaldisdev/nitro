@@ -81,6 +81,13 @@ class SessionStore(Protocol):
     outlives an eviction, or one an application already queries for its own
     reasons. :class:`CacheSessionStore` is the default and is enough for state
     that may be lost.
+
+    A store whose sessions are created elsewhere — rows an application writes
+    at sign-in and nowhere else — says so with an ``allocates_keys = False``
+    attribute, and :meth:`Session.set` then refuses a bag with no key at the
+    write instead of reaching a :meth:`create` that cannot answer. The
+    attribute is optional and taken as true when it is absent, since a store
+    predating it had no way to get a key but `create`.
     """
 
     async def read(self, key: str) -> dict[str, Any] | None:
@@ -193,6 +200,23 @@ class Session:
         """Whether the bag has been read. A session nothing touched has not."""
         return self._data is not None
 
+    async def writable(self) -> bool:
+        """Whether something stored in this bag could be read back.
+
+        False for a bag with no key in a store that does not allocate them:
+        the application creates its sessions itself and this connection is not
+        in one. An API token naming no session, and a key whose session has
+        expired or been revoked, both arrive here — so a handler storing
+        something a later request has to find asks this first.
+
+        A coroutine rather than a property because the answer is not in the
+        key: a key the store has nothing under is dropped when the bag is read,
+        and reading it is what settles the question.
+        """
+        await self._load()
+
+        return self._key is not None or getattr(self._store, "allocates_keys", True)
+
     async def _load(self) -> dict[str, Any]:
         if self._data is not None:
             return self._data
@@ -218,7 +242,19 @@ class Session:
         return data.get(name, default)
 
     async def set(self, name: str, value: Any) -> None:
-        """Store `value` under `name`."""
+        """Store `value` under `name`.
+
+        Raises :class:`SessionError` when the bag has nowhere to be written
+        back to, which :meth:`writable` answers without raising. The refusal
+        belongs here rather than at the save that would otherwise fail: by then
+        the handler has answered the request and the frame that wrote is gone.
+        """
+        if not await self.writable():
+            raise SessionError(
+                f"nothing can be stored under {name!r}: this connection carries no session key, "
+                f"and {type(self._store).__name__} does not allocate one"
+            )
+
         data = await self._load()
         data[name] = value
         self._modified = True

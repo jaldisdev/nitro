@@ -9,6 +9,16 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+### Added
+
+- A `SessionStore` whose sessions are created elsewhere — rows an application
+  writes at sign-in — declares `allocates_keys = False`, and `Session.set` then
+  refuses a bag with no key where it is written instead of reaching a `create`
+  that cannot answer. `Session.writable()` asks the same question without
+  raising, reading the bag to answer it, since a key the store has nothing
+  under is dropped rather than adopted. Stores without the attribute are taken
+  as allocating, as they were.
+
 ## [0.3.1] - 2026-10-14
 
 ### Added
