@@ -39,6 +39,6 @@ the wire so a service written in another language can read them.
 
 from nitro_intercom._intercom import Intercom, Listener, Reader
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 __all__ = ["Intercom", "Listener", "Reader", "__version__"]

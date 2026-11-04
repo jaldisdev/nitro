@@ -9,6 +9,8 @@ pre-1.0 caveat that minor versions may still break things.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-04
+
 ### Added
 
 - A `SessionStore` whose sessions are created elsewhere — rows an application
